@@ -391,11 +391,20 @@ fn apply_block_householder_on_the_left_in_place_generic<
 	let N = householder_basis.ncols();
 	make_guard!(TAIL);
 	let midpoint = M.head_partition(N, TAIL);
-	if let (Some(householder_basis), Some(matrix), 1, true) = (
+	// The N == 1 kernel below is one sequential rank-one update per target column, and a panel of a
+	// tall blocked QR is made almost entirely of those. When the caller asks for parallelism and
+	// there is enough work to pay for its temporaries, the generic path below is the better one: it
+	// partitions the target's columns and threads its two matrix products, which this one cannot.
+	let big_rank_one = householder_basis.nrows().unbound()
+		* matrix.ncols().unbound()
+		>= 8 * 1024;
+	let use_simd = N.unbound() == 1
+		&& T::SIMD_CAPABILITIES.is_simd()
+		&& !(crate::utils::thread::parallelism_degree(par) > 1 && big_rank_one);
+	if let (Some(householder_basis), Some(matrix), true) = (
 		householder_basis.try_as_col_major(),
 		matrix.rb_mut().try_as_col_major_mut(),
-		N.unbound(),
-		T::SIMD_CAPABILITIES.is_simd(),
+		use_simd,
 	) {
 		struct ApplyOnLeft<'a, 'TAIL, 'K, T: ComplexField, const CONJ: bool> {
 			tau_inv: &'a T,
@@ -851,4 +860,183 @@ pub fn apply_block_householder_sequence_transpose_on_the_right_in_place_with_con
 		par,
 		stack,
 	)
+}
+
+#[cfg(all(test, feature = "rayon"))]
+mod tests {
+	use super::{
+		apply_block_householder_transpose_on_the_left_in_place_scratch,
+		apply_block_householder_transpose_on_the_left_in_place_with_conj,
+		make_householder_in_place,
+	};
+	use crate::dyn_stack::{MemBuffer, MemStack};
+	use crate::{Conj, Mat, Par};
+	use num_complex::ComplexFloat;
+	use reborrow::ReborrowMut;
+
+	/// The `N == 1` kernel is one sequential rank-one update per target column, and it is skipped in
+	/// favour of the generic path -- which partitions the columns and threads its products -- when
+	/// the caller asks for threads and the update is large enough to pay for that path's
+	/// temporaries. The two must compute the same map, at the sizes that take that branch and at the
+	/// sizes that do not.
+	fn check_f64(m: usize, k: usize) {
+		let pool = rayon::ThreadPoolBuilder::new()
+			.num_threads(4)
+			.build()
+			.unwrap();
+		// A unit-lower basis and its 1x1 compact-WY factor, as a QR panel leaves them.
+		let mut a: Mat<f64> =
+			Mat::from_fn(m, 1, |i, _| ((i % 7) as f64) * 0.25 - 0.75);
+		let tau = {
+			let mut col = a.as_mut().col_mut(0);
+			let (mut head, tail) = col.rb_mut().split_at_row_mut(1);
+			let tau = make_householder_in_place(&mut head[0], tail).tau;
+			head[0] = 1.0;
+			tau
+		};
+		let factor = Mat::<f64>::from_fn(1, 1, |_, _| tau);
+		let target: Mat<f64> = Mat::from_fn(m, k, |i, j| {
+			(((i * 5 + j * 11) % 9) as f64) * 0.125 - 0.5
+		});
+		let mut mem = MemBuffer::new(
+			apply_block_householder_transpose_on_the_left_in_place_scratch::<f64>(
+				m, 1, k,
+			),
+		);
+		let mut sequential = target.clone();
+		apply_block_householder_transpose_on_the_left_in_place_with_conj(
+			a.as_ref(),
+			factor.as_ref(),
+			Conj::Yes,
+			sequential.as_mut(),
+			Par::Seq,
+			MemStack::new(&mut mem),
+		);
+		let mut threaded = target.clone();
+		pool.install(|| {
+			apply_block_householder_transpose_on_the_left_in_place_with_conj(
+				a.as_ref(),
+				factor.as_ref(),
+				Conj::Yes,
+				threaded.as_mut(),
+				Par::rayon(4),
+				MemStack::new(&mut mem),
+			)
+		});
+		for i in 0..m {
+			for j in 0..k {
+				let d = (threaded[(i, j)] - sequential[(i, j)]).abs();
+				assert!(d < 1e-12, "({i}, {j}): {d}");
+			}
+		}
+	}
+
+	/// The complex scalars take the same branch, through the conjugated kernel.
+	fn check_c64(m: usize, k: usize) {
+		use num_complex::Complex64 as C64;
+		let pool = rayon::ThreadPoolBuilder::new()
+			.num_threads(4)
+			.build()
+			.unwrap();
+		let mut a: Mat<C64> = Mat::from_fn(m, 1, |i, _| {
+			C64::new(((i % 7) as f64) * 0.25 - 0.75, 0.125)
+		});
+		let tau = {
+			let mut col = a.as_mut().col_mut(0);
+			let (mut head, tail) = col.rb_mut().split_at_row_mut(1);
+			let tau = make_householder_in_place(&mut head[0], tail).tau;
+			head[0] = C64::new(1.0, 0.0);
+			tau
+		};
+		let factor = Mat::<C64>::from_fn(1, 1, |_, _| C64::new(tau, 0.0));
+		let target: Mat<C64> = Mat::from_fn(m, k, |i, j| {
+			C64::new((((i * 5 + j * 11) % 9) as f64) * 0.125 - 0.5, 0.0)
+		});
+		let mut mem = MemBuffer::new(
+			apply_block_householder_transpose_on_the_left_in_place_scratch::<C64>(
+				m, 1, k,
+			),
+		);
+		let mut sequential = target.clone();
+		apply_block_householder_transpose_on_the_left_in_place_with_conj(
+			a.as_ref(),
+			factor.as_ref(),
+			Conj::Yes,
+			sequential.as_mut(),
+			Par::Seq,
+			MemStack::new(&mut mem),
+		);
+		let mut threaded = target.clone();
+		pool.install(|| {
+			apply_block_householder_transpose_on_the_left_in_place_with_conj(
+				a.as_ref(),
+				factor.as_ref(),
+				Conj::Yes,
+				threaded.as_mut(),
+				Par::rayon(4),
+				MemStack::new(&mut mem),
+			)
+		});
+		for i in 0..m {
+			for j in 0..k {
+				let d = (threaded[(i, j)] - sequential[(i, j)]).abs();
+				assert!(d < 1e-12, "({i}, {j}): {d}");
+			}
+		}
+	}
+
+	#[test]
+	fn threaded_rank_one_matches_the_sequential_one() {
+		check_f64(2048, 8);
+		check_f64(16384, 1);
+		// Small enough to stay on the sequential kernel, which is the same map.
+		check_f64(64, 8);
+		check_c64(2048, 8);
+		check_c64(64, 8);
+	}
+
+	/// On both paths the reflector maps its own vector to its negative -- `v^H v = 2 tau` is what
+	/// makes `H v = -v` -- which is the one exact property the kernel's convention fixes.
+	#[test]
+	fn rank_one_negates_its_own_reflector_column() {
+		let (m, pool) = (
+			2048usize,
+			rayon::ThreadPoolBuilder::new()
+				.num_threads(4)
+				.build()
+				.unwrap(),
+		);
+		let mut a: Mat<f64> =
+			Mat::from_fn(m, 1, |i, _| if i % 13 == 0 { 3.0 } else { 0.25 });
+		let tau = {
+			let mut col = a.as_mut().col_mut(0);
+			let (mut head, tail) = col.rb_mut().split_at_row_mut(1);
+			let tau = make_householder_in_place(&mut head[0], tail).tau;
+			head[0] = 1.0;
+			tau
+		};
+		let factor = Mat::<f64>::from_fn(1, 1, |_, _| tau);
+		let mut mem = MemBuffer::new(
+			apply_block_householder_transpose_on_the_left_in_place_scratch::<f64>(
+				m, 1, 1,
+			),
+		);
+		for par in [Par::Seq, Par::rayon(4)] {
+			let mut out = a.clone();
+			pool.install(|| {
+				apply_block_householder_transpose_on_the_left_in_place_with_conj(
+					a.as_ref(),
+					factor.as_ref(),
+					Conj::Yes,
+					out.as_mut(),
+					par,
+					MemStack::new(&mut mem),
+				)
+			});
+			let err = (0..m)
+				.map(|i| (out[(i, 0)] + a[(i, 0)]).abs())
+				.fold(0.0, f64::max);
+			assert!(err < 1e-12, "{err}");
+		}
+	}
 }
