@@ -547,11 +547,18 @@ fn apply_block_householder_on_the_left_in_place_generic<
 		// help -- and that is exactly the shape a tall blocked QR's panel and its trailing update
 		// take. Split the rows instead, one `N x K` partial per thread, then add them: the partials
 		// are tiny against the target. `1T` and short targets keep the products below unchanged.
+		// Splitting the rows is a split along the reduction's depth: it adds parallel work there, and
+		// it adds `threads` partials of `N x K` to write, read and add. It pays only while the serial
+		// kernel it replaces is depth-bound, which is a property of the shape, not of one size: a
+		// sweep over `M` against `K` at eight threads puts the crossover at `M ~ 2 K` -- a reduction
+		// four times deeper than it is wide gains 3-4x, and one as wide as it is deep (the 512x512
+		// trailing update, `M = 512`, `K = 496`) loses for the partials it pays for. The thread and
+		// work floors keep small problems on the products below.
 		let threads = crate::utils::thread::parallelism_degree(par);
 		let row_split = cfg!(feature = "rayon")
 			&& threads > 1
+			&& M.unbound() >= 2 * K.unbound()
 			&& M.unbound() >= 4 * threads
-			&& N.unbound() * 4 * threads <= M.unbound()
 			&& M.unbound() * K.unbound() >= 8 * 1024;
 		if row_split {
 			#[cfg(feature = "rayon")]
