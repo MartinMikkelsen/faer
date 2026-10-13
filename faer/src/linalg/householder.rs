@@ -196,17 +196,73 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 			one(),
 			par,
 		);
-		triangular::matmul(
-			householder_factor.rb_mut(),
-			acc_structure,
-			Accum::Add,
-			basis_bot.adjoint(),
-			BlockStructure::Rectangular,
-			basis_bot,
-			BlockStructure::Rectangular,
-			one(),
-			par,
-		);
+		// `T += V_bot^H V_bot` reduces over every row below the basis' diagonal, so on a tall panel
+		// it is one serial kernel per task with an `n x n` output -- the same shape as the reduction
+		// the block apply splits, and it does not scale for the same reason: 0.271 ms at eight
+		// threads for `m = 4096, n = 16`, against 0.040 when its rows are split. The partials here
+		// are `n x n` each, tiny against the basis, and only the strict upper triangle is stored
+		// (the diagonal is the caller's `tau`), so the split costs almost nothing.
+		let threads = crate::utils::thread::parallelism_degree(par);
+		let rows = basis_bot.nrows().unbound();
+		let deep = cfg!(feature = "rayon")
+			&& threads > 1
+			&& rows >= 2 * n
+			&& rows >= 4 * threads
+			&& rows * n * n >= 8 * 1024;
+		if deep {
+			#[cfg(feature = "rayon")]
+			{
+				use rayon::prelude::*;
+				let chunk = rows.div_ceil(threads);
+				let n_chunks = rows.div_ceil(chunk);
+				let mut partials = vec![T::zero(); n_chunks * n * n];
+				let source = basis_bot;
+				partials.par_chunks_mut(n * n).enumerate().for_each(
+					|(index, part)| {
+						let lo = index * chunk;
+						let hi = rows.min(lo + chunk);
+						let mut part =
+							MatMut::from_column_major_slice_mut(part, n, n);
+						matmul_with_conj(
+							part.rb_mut(),
+							Accum::Replace,
+							source.subrows(lo, hi - lo).transpose(),
+							Conj::Yes,
+							source.subrows(lo, hi - lo),
+							Conj::No,
+							one(),
+							Par::Seq,
+						);
+					},
+				);
+				for index in 0..n_chunks {
+					let part = MatRef::from_column_major_slice(
+						&partials[index * n * n..(index + 1) * n * n],
+						n,
+						n,
+					);
+					for col in 0..n {
+						for row in 0..col {
+							householder_factor[(row, col)] =
+								householder_factor[(row, col)].clone()
+									+ part[(row, col)].clone();
+						}
+					}
+				}
+			}
+		} else {
+			triangular::matmul(
+				householder_factor.rb_mut(),
+				acc_structure,
+				Accum::Add,
+				basis_bot.adjoint(),
+				BlockStructure::Rectangular,
+				basis_bot,
+				BlockStructure::Rectangular,
+				one(),
+				par,
+			);
+		}
 	} else {
 		let prev_block_count =
 			householder_factor.nrows().msrv_div_ceil(prev_block_size);
@@ -1139,6 +1195,59 @@ mod tests {
 				assert!(d < 1e-10, "({i}, {j}): {d}");
 			}
 		}
+	}
+
+	/// The flat branch of `upgrade_householder_factor` builds `T = diag(tau) + strict_upper(V^H V)`,
+	/// and its deep half runs on one thread per task unless the reduction's rows are split across
+	/// the caller's threads. Both must produce the same `T`, diagonal `tau`s included.
+	fn check_upgrade(m: usize, n: usize) {
+		let pool = rayon::ThreadPoolBuilder::new()
+			.num_threads(4)
+			.build()
+			.unwrap();
+		let basis: Mat<f64> = Mat::from_fn(m, n, |i, j| {
+			((i * 3 + j * 7) % 11) as f64 * 0.25 - 1.0
+		});
+		let taus = |tile: &mut Mat<f64>| {
+			for j in 0..n {
+				tile[(j, j)] = 1.5 + j as f64;
+			}
+		};
+		let mut sequential = Mat::<f64>::zeros(n, n);
+		taus(&mut sequential);
+		upgrade_householder_factor(
+			sequential.as_mut(),
+			basis.as_ref(),
+			n,
+			1,
+			Par::Seq,
+		);
+		let mut threaded = Mat::<f64>::zeros(n, n);
+		taus(&mut threaded);
+		pool.install(|| {
+			upgrade_householder_factor(
+				threaded.as_mut(),
+				basis.as_ref(),
+				n,
+				1,
+				Par::rayon(4),
+			)
+		});
+		for col in 0..n {
+			for row in 0..n {
+				let d = (threaded[(row, col)] - sequential[(row, col)]).abs();
+				assert!(d < 1e-12, "({row}, {col}): {d}");
+			}
+		}
+	}
+
+	#[test]
+	fn threaded_upgrade_matches_the_sequential_one() {
+		check_upgrade(4096, 16);
+		check_upgrade(2048, 8);
+		check_upgrade(4096, 1);
+		// Below the split's floors: the products must still be right.
+		check_upgrade(64, 8);
 	}
 
 	#[test]
