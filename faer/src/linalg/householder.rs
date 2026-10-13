@@ -541,35 +541,121 @@ fn apply_block_householder_on_the_left_in_place_generic<
 				}
 			},
 		};
+		// The reduction `tmp = V^H C` has an `N x K` output and reduces over every row of the
+		// target. The products below are good at that while the output is wide; with `N` small and
+		// the target long they are one serial reduction inside one task, so the column split cannot
+		// help -- and that is exactly the shape a tall blocked QR's panel and its trailing update
+		// take. Split the rows instead, one `N x K` partial per thread, then add them: the partials
+		// are tiny against the target. `1T` and short targets keep the products below unchanged.
+		let threads = crate::utils::thread::parallelism_degree(par);
+		let row_split = cfg!(feature = "rayon")
+			&& threads > 1
+			&& M.unbound() >= 4 * threads
+			&& N.unbound() * 4 * threads <= M.unbound()
+			&& M.unbound() * K.unbound() >= 8 * 1024;
+		if row_split {
+			#[cfg(feature = "rayon")]
+			{
+				use rayon::prelude::*;
+				let rows = M.unbound();
+				let (n, k) = (N.unbound(), K.unbound());
+				// The first `n` rows carry the unit diagonal; below them the basis is rectangular.
+				let split_at = n;
+				let chunk = rows.div_ceil(threads);
+				let n_chunks = rows.div_ceil(chunk);
+				let mut partials = vec![T::zero(); n_chunks * n * k];
+				let source = matrix.rb().as_dyn_rows().as_dyn_cols();
+				let top_basis = essentials_top.as_dyn_rows().as_dyn_cols();
+				let bot_basis = essentials_bot.as_dyn_rows().as_dyn_cols();
+				let conj = Conj::Yes.compose(conj_lhs);
+				partials.par_chunks_mut(n * k).enumerate().for_each(
+					|(index, part)| {
+						let lo = index * chunk;
+						let hi = rows.min(lo + chunk);
+						let mut part =
+							MatMut::from_column_major_slice_mut(part, n, k);
+						let top_hi = split_at.min(hi);
+						if lo < top_hi {
+							triangular::matmul_with_conj(
+								part.rb_mut(),
+								BlockStructure::Rectangular,
+								Accum::Replace,
+								top_basis.transpose(),
+								BlockStructure::UnitTriangularUpper,
+								conj,
+								source.subrows(lo, top_hi - lo),
+								BlockStructure::Rectangular,
+								Conj::No,
+								one(),
+								Par::Seq,
+							);
+						}
+						let bot_lo = split_at.max(lo);
+						if hi > bot_lo {
+							matmul_with_conj(
+								part.rb_mut(),
+								if lo < top_hi {
+									Accum::Add
+								} else {
+									Accum::Replace
+								},
+								bot_basis
+									.transpose()
+									.subcols(bot_lo - split_at, hi - bot_lo),
+								conj,
+								source.subrows(bot_lo, hi - bot_lo),
+								Conj::No,
+								one(),
+								Par::Seq,
+							);
+						}
+					},
+				);
+				let mut tmp_dynamic =
+					tmp.rb_mut().as_dyn_rows_mut().as_dyn_cols_mut();
+				for col in 0..k {
+					for row in 0..n {
+						let mut sum = T::zero();
+						for index in 0..n_chunks {
+							sum +=
+								partials[index * n * k + row + col * n].clone();
+						}
+						tmp_dynamic[(row, col)] = sum;
+					}
+				}
+			}
+		}
 		let func = |(mut tmp, mut matrix): (
 			MatMut<'_, T, Dim<'N>>,
 			MatMut<'_, T, Dim<'M>>,
 		)| {
 			let (mut top, mut bot) =
 				matrix.rb_mut().split_rows_with_mut(midpoint);
-			triangular::matmul_with_conj(
-				tmp.rb_mut(),
-				BlockStructure::Rectangular,
-				Accum::Replace,
-				essentials_top.transpose(),
-				BlockStructure::UnitTriangularUpper,
-				Conj::Yes.compose(conj_lhs),
-				top.rb(),
-				BlockStructure::Rectangular,
-				Conj::No,
-				one(),
-				inner_parallelism,
-			);
-			matmul_with_conj(
-				tmp.rb_mut(),
-				Accum::Add,
-				essentials_bot.transpose(),
-				Conj::Yes.compose(conj_lhs),
-				bot.rb(),
-				Conj::No,
-				one(),
-				inner_parallelism,
-			);
+			if !row_split {
+				triangular::matmul_with_conj(
+					tmp.rb_mut(),
+					BlockStructure::Rectangular,
+					Accum::Replace,
+					essentials_top.transpose(),
+					BlockStructure::UnitTriangularUpper,
+					Conj::Yes.compose(conj_lhs),
+					top.rb(),
+					BlockStructure::Rectangular,
+					Conj::No,
+					one(),
+					inner_parallelism,
+				);
+				matmul_with_conj(
+					tmp.rb_mut(),
+					Accum::Add,
+					essentials_bot.transpose(),
+					Conj::Yes.compose(conj_lhs),
+					bot.rb(),
+					Conj::No,
+					one(),
+					inner_parallelism,
+				);
+			}
 			if forward {
 				triangular_solve::solve_lower_triangular_in_place_with_conj(
 					householder_factor.transpose(),
@@ -867,7 +953,7 @@ mod tests {
 	use super::{
 		apply_block_householder_transpose_on_the_left_in_place_scratch,
 		apply_block_householder_transpose_on_the_left_in_place_with_conj,
-		make_householder_in_place,
+		make_householder_in_place, upgrade_householder_factor,
 	};
 	use crate::dyn_stack::{MemBuffer, MemStack};
 	use crate::{Conj, Mat, Par};
@@ -983,6 +1069,77 @@ mod tests {
 				assert!(d < 1e-12, "({i}, {j}): {d}");
 			}
 		}
+	}
+
+	/// The same for a panel of reflectors: `b > 1` gives the row split both kinds of basis -- the
+	/// unit-triangular top and the rectangular bottom -- and is the shape a trailing update takes.
+	fn check_panel(m: usize, b: usize, k: usize) {
+		let pool = rayon::ThreadPoolBuilder::new()
+			.num_threads(4)
+			.build()
+			.unwrap();
+		let mut a: Mat<f64> = Mat::from_fn(m, b, |i, j| {
+			if i == j {
+				4.0 + i as f64
+			} else {
+				((i * 3 + j * 7) % 5) as f64 * 0.25 - 0.5
+			}
+		});
+		let mut tile = Mat::<f64>::zeros(b, b);
+		{
+			let mut qr = a.as_mut();
+			for j in 0..b {
+				let mut col = qr.rb_mut().col_mut(j).subrows_mut(j, m - j);
+				let (mut head, tail) = col.rb_mut().split_at_row_mut(1);
+				let info = make_householder_in_place(&mut head[0], tail);
+				tile[(j, j)] = info.tau;
+				head[0] = 1.0;
+			}
+		}
+		let mut factor = tile.clone();
+		upgrade_householder_factor(factor.as_mut(), a.as_ref(), b, 1, Par::Seq);
+		let target: Mat<f64> = Mat::from_fn(m, k, |i, j| {
+			(((i * 5 + j * 11) % 9) as f64) * 0.125 - 0.5
+		});
+		let mut mem = MemBuffer::new(
+			apply_block_householder_transpose_on_the_left_in_place_scratch::<f64>(
+				m, b, k,
+			),
+		);
+		let mut sequential = target.clone();
+		apply_block_householder_transpose_on_the_left_in_place_with_conj(
+			a.as_ref(),
+			factor.as_ref(),
+			Conj::Yes,
+			sequential.as_mut(),
+			Par::Seq,
+			MemStack::new(&mut mem),
+		);
+		let mut threaded = target.clone();
+		pool.install(|| {
+			apply_block_householder_transpose_on_the_left_in_place_with_conj(
+				a.as_ref(),
+				factor.as_ref(),
+				Conj::Yes,
+				threaded.as_mut(),
+				Par::rayon(4),
+				MemStack::new(&mut mem),
+			)
+		});
+		for i in 0..m {
+			for j in 0..k {
+				let d = (threaded[(i, j)] - sequential[(i, j)]).abs();
+				assert!(d < 1e-10, "({i}, {j}): {d}");
+			}
+		}
+	}
+
+	#[test]
+	fn threaded_panel_matches_the_sequential_one() {
+		check_panel(2048, 4, 32);
+		check_panel(4096, 16, 240);
+		// Not tall enough for the row split: the column path must still be right.
+		check_panel(128, 8, 16);
 	}
 
 	#[test]
