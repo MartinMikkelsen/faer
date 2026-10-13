@@ -554,6 +554,41 @@ fn dot2x2<T: RealField>(
 	}
 	(acc0, acc1, acc2, acc3)
 }
+/// Normalizes the eigenvector columns of `u` to unit 2-norm. For a real Schur
+/// form `h`, a conjugate pair `j`, `j + 1` (`h[(j + 1, j)] != 0`) is scaled by a
+/// common factor so the represented complex eigenvector `re + i * im` has unit
+/// 2-norm. This is the normalization contract `xGEEV` provides.
+fn normalize_eigenvectors<T: ComplexField>(
+	mut u: MatMut<'_, T>,
+	h: MatRef<'_, T>,
+) {
+	let n = u.nrows();
+	let mut j = 0;
+	while j < n {
+		let paired = T::IS_REAL && j + 1 < n && h[(j + 1, j)] != zero::<T>();
+		let nrm = if paired {
+			u.rb().col(j).norm_l2().hypot(&u.rb().col(j + 1).norm_l2())
+		} else {
+			u.rb().col(j).norm_l2()
+		};
+		if nrm != zero::<T::Real>() {
+			let inv: T = nrm.recip().to_cplx();
+			for i in 0..n {
+				u[(i, j)] *= inv.copy();
+				if paired {
+					u[(i, j + 1)] *= inv.copy();
+				}
+			}
+		}
+		j += if paired { 2 } else { 1 };
+	}
+}
+/// Returns `false` if a returned eigenvector column is nonfinite or
+/// degenerate, which means the normalization contract could not be met.
+fn eigenvectors_ok<T: ComplexField>(u: MatRef<'_, T>) -> bool {
+	u.is_all_finite()
+		&& (0..u.ncols()).all(|j| u.col(j).norm_l2() > zero::<T::Real>())
+}
 pub(crate) fn evd_from_real_schur_imp<T: RealField>(
 	A: MatRef<'_, T>,
 	V: MatMut<'_, T>,
@@ -582,7 +617,7 @@ pub(crate) fn evd_from_real_schur_imp<T: RealField>(
 			for i in 0..k {
 				V[(i, k)] = -&A[(i, k)];
 			}
-			solve_real_shifted_upper_quasi_triangular_system(
+			let scale = solve_real_shifted_upper_quasi_triangular_system(
 				A.submatrix(0, 0, k, k),
 				p.copy(),
 				V.rb_mut().subrows_mut(0, k).col_mut(k),
@@ -590,6 +625,10 @@ pub(crate) fn evd_from_real_schur_imp<T: RealField>(
 				par,
 				params,
 			);
+			// The pivot is not part of the back-substituted slice, so it must
+			// carry the accumulated rescaling factor for the column direction
+			// to be preserved.
+			V[(k, k)] *= scale;
 		} else {
 			let ref p = A[(k, k)].copy();
 			let ref q = A[(k, k - 1)].abs().sqrt() * A[(k - 1, k)].abs().sqrt();
@@ -606,7 +645,7 @@ pub(crate) fn evd_from_real_schur_imp<T: RealField>(
 				V[(i, k - 1)] = -&V[(k - 1, k - 1)] * &A[(i, k - 1)];
 				V[(i, k)] = -&V[(k, k)] * &A[(i, k)];
 			}
-			solve_cplx_shifted_upper_quasi_triangular_system(
+			let scale = solve_cplx_shifted_upper_quasi_triangular_system(
 				A.submatrix(0, 0, k - 1, k - 1),
 				p.copy(),
 				q.copy(),
@@ -615,6 +654,8 @@ pub(crate) fn evd_from_real_schur_imp<T: RealField>(
 				par,
 				params,
 			);
+			V[(k - 1, k - 1)] *= scale.copy();
+			V[(k, k)] *= scale;
 			k -= 1;
 		}
 	}
@@ -656,7 +697,7 @@ pub(crate) fn evd_from_cplx_schur_imp<T: ComplexField>(
 				V[(i, k)] = -&A[(i, k)];
 			}
 		}
-		solve_shifted_upper_triangular_system(
+		let scale = solve_shifted_upper_triangular_system(
 			A.submatrix(0, 0, k, k),
 			conj_A,
 			p.copy(),
@@ -665,6 +706,8 @@ pub(crate) fn evd_from_cplx_schur_imp<T: ComplexField>(
 			par,
 			params,
 		);
+		let scale: T = scale.to_cplx();
+		V[(k, k)] *= scale;
 	}
 }
 fn solve_real_shifted_upper_quasi_triangular_system<T: RealField>(
@@ -674,7 +717,7 @@ fn solve_real_shifted_upper_quasi_triangular_system<T: RealField>(
 	norm: T,
 	par: Par,
 	params: EvdFromSchurParams,
-) {
+) -> T {
 	let n = A.nrows();
 	let one = one::<T>;
 	let zero = zero::<T>;
@@ -682,6 +725,13 @@ fn solve_real_shifted_upper_quasi_triangular_system<T: RealField>(
 	let ref p = p;
 	let mut x = x;
 	let ref norm = norm;
+	// While the shift `A[i, i] - p` is clamped to `eps * norm`, back
+	// substitution can grow the solution by `1 / (eps * norm)` per row and
+	// overflow for finite input. Whenever a computed entry exceeds this bound
+	// the whole slice is rescaled; the factor is also returned so the caller
+	// can apply it to the pivot entry, keeping the eigenvector direction.
+	let big = sqrt_max_positive::<T>();
+	let mut scale = one();
 	if par.degree() == 0 || n < params.recursion_threshold {
 		let mut i = n;
 		loop {
@@ -704,6 +754,14 @@ fn solve_real_shifted_upper_quasi_triangular_system<T: RealField>(
 				if x[i] != zero() {
 					x[i] /= z;
 				}
+				let m = x[i].abs();
+				if m > big {
+					let r = m.recip();
+					for j in 0..x.nrows() {
+						x[j] *= r.copy();
+					}
+					scale *= r;
+				}
 			} else {
 				let (dot0, dot1) = dot2x1(
 					A.row(i - 1).subcols(i + 1, n - i - 1),
@@ -720,9 +778,20 @@ fn solve_real_shifted_upper_quasi_triangular_system<T: RealField>(
 				let ref inv_det = (a.abs2() - b * c).recip();
 				(x[i - 1], x[i]) =
 					((a * r0 - b * r1) * inv_det, (a * r1 - c * r0) * inv_det);
+				let a0 = x[i - 1].abs();
+				let a1 = x[i].abs();
+				let m = if a0 > a1 { a0 } else { a1 };
+				if m > big {
+					let r = m.recip();
+					for j in 0..x.nrows() {
+						x[j] *= r.copy();
+					}
+					scale *= r;
+				}
 				i -= 1;
 			}
 		}
+		scale
 	} else {
 		let mut mid = n / 2;
 		if A[(mid, mid - 1)] != zero() {
@@ -730,7 +799,7 @@ fn solve_real_shifted_upper_quasi_triangular_system<T: RealField>(
 		}
 		let (A00, A01, _, A11) = A.split_at(mid, mid);
 		let (mut x0, mut x1) = x.rb_mut().split_at_row_mut(mid);
-		solve_real_shifted_upper_quasi_triangular_system(
+		let f1 = solve_real_shifted_upper_quasi_triangular_system(
 			A11,
 			p.copy(),
 			x1.rb_mut(),
@@ -738,6 +807,12 @@ fn solve_real_shifted_upper_quasi_triangular_system<T: RealField>(
 			par,
 			params,
 		);
+		// The right block may have been rescaled; the left block's pending
+		// right-hand side must carry the same factor for the coupled system to
+		// stay consistent.
+		for j in 0..x0.nrows() {
+			x0[j] *= f1.copy();
+		}
 		linalg::matmul::matmul(
 			x0.rb_mut().as_mat_mut(),
 			Accum::Add,
@@ -746,7 +821,7 @@ fn solve_real_shifted_upper_quasi_triangular_system<T: RealField>(
 			-one(),
 			par,
 		);
-		solve_real_shifted_upper_quasi_triangular_system(
+		let f0 = solve_real_shifted_upper_quasi_triangular_system(
 			A00,
 			p.copy(),
 			x0.rb_mut(),
@@ -754,6 +829,10 @@ fn solve_real_shifted_upper_quasi_triangular_system<T: RealField>(
 			par,
 			params,
 		);
+		for j in 0..x1.nrows() {
+			x1[j] *= f0.copy();
+		}
+		f0 * f1
 	}
 }
 fn solve_cplx_shifted_upper_quasi_triangular_system<T: RealField>(
@@ -764,7 +843,7 @@ fn solve_cplx_shifted_upper_quasi_triangular_system<T: RealField>(
 	norm: T,
 	par: Par,
 	params: EvdFromSchurParams,
-) {
+) -> T {
 	let n = A.nrows();
 	let one = one::<T>;
 	let zero = zero::<T>;
@@ -773,6 +852,8 @@ fn solve_cplx_shifted_upper_quasi_triangular_system<T: RealField>(
 	let ref p = p;
 	let ref q = q;
 	let mut x = x;
+	let big = sqrt_max_positive::<T>();
+	let mut scale = one();
 	if par.degree() == 0 || n < params.recursion_threshold {
 		let mut i = n;
 		loop {
@@ -803,6 +884,17 @@ fn solve_cplx_shifted_upper_quasi_triangular_system<T: RealField>(
 				let ref x_im = x[(i, 1)].copy();
 				x[(i, 0)] = x_re * z_re - x_im * z_im;
 				x[(i, 1)] = x_re * z_im + x_im * z_re;
+				let a0 = x[(i, 0)].abs();
+				let a1 = x[(i, 1)].abs();
+				let m = if a0 > a1 { a0 } else { a1 };
+				if m > big {
+					let r = m.recip();
+					for j in 0..x.nrows() {
+						x[(j, 0)] *= r.copy();
+						x[(j, 1)] *= r.copy();
+					}
+					scale *= r;
+				}
 			} else {
 				let (re0, re1, im0, im1) = dot2x2(
 					A.row(i - 1).subcols(i + 1, n - i - 1),
@@ -841,9 +933,31 @@ fn solve_cplx_shifted_upper_quasi_triangular_system<T: RealField>(
 				x[(i - 1, 1)] = x0_re * z_im + x0_im * z_re;
 				x[(i, 0)] = x1_re * z_re - x1_im * z_im;
 				x[(i, 1)] = x1_re * z_im + x1_im * z_re;
+				let mut m = x[(i - 1, 0)].abs();
+				let v = x[(i - 1, 1)].abs();
+				if v > m {
+					m = v;
+				}
+				let v = x[(i, 0)].abs();
+				if v > m {
+					m = v;
+				}
+				let v = x[(i, 1)].abs();
+				if v > m {
+					m = v;
+				}
+				if m > big {
+					let r = m.recip();
+					for j in 0..x.nrows() {
+						x[(j, 0)] *= r.copy();
+						x[(j, 1)] *= r.copy();
+					}
+					scale *= r;
+				}
 				i -= 1;
 			}
 		}
+		scale
 	} else {
 		let mut mid = n / 2;
 		if A[(mid, mid - 1)] != zero() {
@@ -851,7 +965,7 @@ fn solve_cplx_shifted_upper_quasi_triangular_system<T: RealField>(
 		}
 		let (A00, A01, _, A11) = A.split_at(mid, mid);
 		let (mut x0, mut x1) = x.rb_mut().split_at_row_mut(mid);
-		solve_cplx_shifted_upper_quasi_triangular_system(
+		let f1 = solve_cplx_shifted_upper_quasi_triangular_system(
 			A11,
 			p.copy(),
 			q.copy(),
@@ -860,6 +974,10 @@ fn solve_cplx_shifted_upper_quasi_triangular_system<T: RealField>(
 			par,
 			params,
 		);
+		for j in 0..x0.nrows() {
+			x0[(j, 0)] *= f1.copy();
+			x0[(j, 1)] *= f1.copy();
+		}
 		linalg::matmul::matmul(
 			x0.rb_mut(),
 			Accum::Add,
@@ -868,7 +986,7 @@ fn solve_cplx_shifted_upper_quasi_triangular_system<T: RealField>(
 			-one(),
 			par,
 		);
-		solve_cplx_shifted_upper_quasi_triangular_system(
+		let f0 = solve_cplx_shifted_upper_quasi_triangular_system(
 			A00,
 			p.copy(),
 			q.copy(),
@@ -877,6 +995,11 @@ fn solve_cplx_shifted_upper_quasi_triangular_system<T: RealField>(
 			par,
 			params,
 		);
+		for j in 0..x1.nrows() {
+			x1[(j, 0)] *= f0.copy();
+			x1[(j, 1)] *= f0.copy();
+		}
+		f0 * f1
 	}
 }
 fn solve_shifted_upper_triangular_system<T: ComplexField>(
@@ -887,14 +1010,16 @@ fn solve_shifted_upper_triangular_system<T: ComplexField>(
 	norm: T::Real,
 	par: Par,
 	params: EvdFromSchurParams,
-) {
+) -> T::Real {
 	let n = A.nrows();
+	let mut scale = one::<T::Real>();
 	let one = one::<T>;
 	let zero = zero::<T>;
 	let ref eps = eps::<T::Real>();
 	let ref norm = norm;
 	let ref p = p;
 	let mut x = x;
+	let big = sqrt_max_positive::<T::Real>();
 	if par.degree() == 0 || n < params.recursion_threshold {
 		let mut i = n;
 		loop {
@@ -920,12 +1045,22 @@ fn solve_shifted_upper_triangular_system<T: ComplexField>(
 			if x[i] != zero() {
 				x[i] *= z.recip();
 			}
+			let m = x[i].abs();
+			if m > big {
+				let r = m.recip();
+				let rc: T = r.to_cplx();
+				for j in 0..x.nrows() {
+					x[j] *= rc.copy();
+				}
+				scale *= r;
+			}
 		}
+		scale
 	} else {
 		let mid = n / 2;
 		let (A00, A01, _, A11) = A.split_at(mid, mid);
 		let (mut x0, mut x1) = x.rb_mut().split_at_row_mut(mid);
-		solve_shifted_upper_triangular_system(
+		let f1 = solve_shifted_upper_triangular_system(
 			A11,
 			conj_A,
 			p.copy(),
@@ -934,6 +1069,10 @@ fn solve_shifted_upper_triangular_system<T: ComplexField>(
 			par,
 			params,
 		);
+		let f1c: T = f1.to_cplx();
+		for j in 0..x0.nrows() {
+			x0[j] *= f1c.copy();
+		}
 		linalg::matmul::matmul_with_conj(
 			x0.rb_mut().as_mat_mut(),
 			Accum::Add,
@@ -944,7 +1083,7 @@ fn solve_shifted_upper_triangular_system<T: ComplexField>(
 			-one(),
 			par,
 		);
-		solve_shifted_upper_triangular_system(
+		let f0 = solve_shifted_upper_triangular_system(
 			A00,
 			conj_A,
 			p.copy(),
@@ -953,6 +1092,11 @@ fn solve_shifted_upper_triangular_system<T: ComplexField>(
 			par,
 			params,
 		);
+		let f0c: T = f0.to_cplx();
+		for j in 0..x1.nrows() {
+			x1[j] *= f0c.copy();
+		}
+		f0 * f1
 	}
 }
 /// computes the layout of the workspace required to compute a matrix's
@@ -1080,7 +1224,7 @@ fn evd_imp<T: ComplexField>(
 		}
 	}
 	if const { T::IS_REAL } {
-		schur::real_schur::multishift_qr::<T::Real>(
+		let (info, _, _) = schur::real_schur::multishift_qr::<T::Real>(
 			unsafe { core::mem::transmute(Z.is_some()) },
 			unsafe { core::mem::transmute(H.rb_mut()) },
 			unsafe { core::mem::transmute(Z.rb_mut()) },
@@ -1092,8 +1236,11 @@ fn evd_imp<T: ComplexField>(
 			stack,
 			params.schur,
 		);
+		if info != 0 {
+			return Err(EvdError::NoConvergence);
+		}
 	} else {
-		schur::complex_schur::multishift_qr::<T>(
+		let (info, _, _) = schur::complex_schur::multishift_qr::<T>(
 			Z.is_some(),
 			H.rb_mut(),
 			Z.rb_mut(),
@@ -1104,6 +1251,9 @@ fn evd_imp<T: ComplexField>(
 			stack,
 			params.schur,
 		);
+		if info != 0 {
+			return Err(EvdError::NoConvergence);
+		}
 	}
 	let H = H.rb();
 	if let (Some(mut u), Some(Z)) = (u_right, Z.rb()) {
@@ -1136,6 +1286,10 @@ fn evd_imp<T: ComplexField>(
 			one(),
 			par,
 		);
+		normalize_eigenvectors(u.rb_mut(), H);
+		if !eigenvectors_ok(u.rb()) {
+			return Err(EvdError::NoConvergence);
+		}
 	}
 	if let (Some(mut u), Some(Z)) = (u_left, Z.rb()) {
 		let (mut X, _) = unsafe { temp_mat_uninit::<T, _, _>(n, n, stack) };
@@ -1169,13 +1323,21 @@ fn evd_imp<T: ComplexField>(
 			one(),
 			par,
 		);
+		normalize_eigenvectors(u.rb_mut(), H);
+		if !eigenvectors_ok(u.rb()) {
+			return Err(EvdError::NoConvergence);
+		}
 	}
 	Ok(())
 }
 /// computes the matrix $A$'s eigendecomposition
 ///
 /// the eigenvalues are stored in $S$, the left eigenvectors in $U_L$, and the
-/// right eigenvectors in $U_R$
+/// right eigenvectors in $U_R$.
+///
+/// every eigenvector is scaled to unit 2-norm. if the Schur iteration does not
+/// converge, or the back substitution would overflow for a finite input,
+/// [`EvdError::NoConvergence`] is returned instead of nonfinite entries.
 #[track_caller]
 pub fn evd_cplx<T: RealField>(
 	A: MatRef<'_, Complex<T>>,
@@ -1208,7 +1370,14 @@ pub fn evd_cplx<T: RealField>(
 /// computes the matrix $A$'s eigendecomposition
 ///
 /// the eigenvalues are stored in $S$, the left eigenvectors in $U_L$, and the
-/// right eigenvectors in $U_R$
+/// right eigenvectors in $U_R$.
+///
+/// every eigenvector is scaled to unit 2-norm: a real eigenvalue gets a unit
+/// norm column, and the two real columns `re` and `im` of a conjugate pair are
+/// scaled by a common factor so that `re + i * im` has unit 2-norm (the same
+/// contract `xGEEV` provides). if the Schur iteration does not converge, or the
+/// back substitution would overflow for a finite input,
+/// [`EvdError::NoConvergence`] is returned instead of nonfinite entries.
 #[track_caller]
 pub fn evd_real<T: RealField>(
 	A: MatRef<'_, T>,
@@ -1376,6 +1545,239 @@ mod general_tests {
 			}
 			.rand::<Mat<f64>>(rng);
 			test_real_evd(mat.as_ref());
+		}
+	}
+}
+#[cfg(test)]
+mod eig_2131_tests {
+	//! Regression tests for `tensor4all/tenferro-rs#2131`: the faer
+	//! eigendecomposition used to return eigenvectors that were neither
+	//! normalized nor overflow-safe. On the Jordan block `2 I + N` the back
+	//! substitution grew by `1 / (eps * norm)` per row, overflowing to `NaN`
+	//! for finite input (`f32` at `n >= 8`, `f64` at `n = 26`).
+	use super::*;
+	use crate::assert;
+	use dyn_stack::MemBuffer;
+
+	/// `||A v - lambda v|| / (||A||_1 * ||v||)`, where `||A||_1` is the maximum
+	/// absolute column sum.
+	fn relative_residual<T: RealField>(
+		mat: MatRef<'_, T>,
+		v: ColRef<'_, T>,
+		lambda: T,
+	) -> T {
+		let n = mat.nrows();
+		let mut anorm = zero::<T>();
+		for j in 0..n {
+			let mut col = zero::<T>();
+			for i in 0..n {
+				col += mat[(i, j)].abs1();
+			}
+			if col > anorm {
+				anorm = col;
+			}
+		}
+		let mut vnorm2 = zero::<T>();
+		let mut rnorm2 = zero::<T>();
+		for i in 0..n {
+			let mut acc = zero::<T>();
+			for j in 0..n {
+				acc += &mat[(i, j)] * &v[j];
+			}
+			acc -= &v[i] * &lambda;
+			rnorm2 += acc.abs2();
+			vnorm2 += v[i].abs2();
+		}
+		rnorm2.sqrt() / (anorm * vnorm2.sqrt())
+	}
+
+	fn evd_real_vectors<T: RealField>(
+		mat: MatRef<'_, T>,
+		params: Spec<EvdParams, T>,
+	) -> (Diag<T>, Diag<T>, Mat<T>, Mat<T>) {
+		let n = mat.nrows();
+		let mut s_re = Diag::zeros(n);
+		let mut s_im = Diag::zeros(n);
+		let mut u = Mat::zeros(n, n);
+		let mut ul = Mat::zeros(n, n);
+		let mut mem = MemBuffer::new(evd_scratch::<T>(
+			n,
+			ComputeEigenvectors::Yes,
+			ComputeEigenvectors::Yes,
+			Par::Seq,
+			params,
+		));
+		evd_real(
+			mat,
+			s_re.as_mut(),
+			s_im.as_mut(),
+			Some(ul.as_mut()),
+			Some(u.as_mut()),
+			Par::Seq,
+			MemStack::new(&mut mem),
+			params,
+		)
+		.unwrap();
+		(s_re, s_im, u, ul)
+	}
+
+	/// The Jordan block `2 I + N` with ones on the superdiagonal.
+	fn jordan<T: RealField>(n: usize) -> Mat<T> {
+		let two = from_f64::<T>(2.0);
+		let one = one::<T>();
+		Mat::<T>::from_fn(n, n, |i, j| {
+			if i == j {
+				two.copy()
+			} else if j == i + 1 {
+				one.copy()
+			} else {
+				zero::<T>()
+			}
+		})
+	}
+
+	fn check_jordan<T: RealField>(n: usize, threshold: usize, tol: f64) {
+		let params = Spec::new(EvdParams {
+			evd_from_schur: EvdFromSchurParams {
+				recursion_threshold: threshold,
+				..auto!(T)
+			},
+			..auto!(T)
+		});
+		let mat = jordan::<T>(n);
+		let (s_re, _, u, _) = evd_real_vectors(mat.as_ref(), params);
+		let tol = from_f64::<T>(tol);
+		for j in 0..n {
+			let v = u.col(j);
+			assert!(v.iter().all(|x| x.is_finite()));
+			assert!((v.norm_l2() - one::<T>()).abs() < from_f64::<T>(1e-5));
+			assert!(relative_residual(mat.as_ref(), v, s_re[j].copy()) < tol);
+		}
+	}
+
+	#[test]
+	fn jordan_eigenvectors_are_finite_and_unit_norm() {
+		// `threshold = 3` forces the recursive block solver; the default `64`
+		// keeps small sizes sequential and exercises the recursion for the
+		// larger ones. Both must produce finite, normalized, backward-stable
+		// eigenvectors.
+		for threshold in [3usize, 64] {
+			for n in [2, 4, 8, 20, 26, 30, 64, 65, 100] {
+				check_jordan::<f64>(n, threshold, 1e-10);
+			}
+			for n in [2, 4, 8, 16, 30] {
+				check_jordan::<f32>(n, threshold, 1e-3);
+			}
+		}
+	}
+
+	#[test]
+	fn conjugate_pair_eigenvector_has_unit_norm() {
+		// A real Schur form with four real eigenvalues in front of a 2x2
+		// conjugate pair, so the complex-shift quasi-triangular solver gets a
+		// prefix large enough for its recursive branch at `threshold = 4`.
+		fn run<T: RealField>(threshold: usize) {
+			let n = 6;
+			let mat = Mat::<T>::from_fn(n, n, |i, j| {
+				if i == j {
+					if i >= 4 {
+						zero::<T>()
+					} else {
+						from_f64::<T>((i + 1) as f64)
+					}
+				} else if i == 4 && j == 5 {
+					one::<T>()
+				} else if i == 5 && j == 4 {
+					-one::<T>()
+				} else if i + 2 <= j {
+					from_f64::<T>(0.25)
+				} else {
+					zero::<T>()
+				}
+			});
+			let params = Spec::new(EvdParams {
+				evd_from_schur: EvdFromSchurParams {
+					recursion_threshold: threshold,
+					..auto!(T)
+				},
+				..auto!(T)
+			});
+			let (s_re, s_im, u, ul) = evd_real_vectors(mat.as_ref(), params);
+			let tol = from_f64::<T>(1e-5);
+			// Right and left eigenvectors share the same conjugate-pair scaling.
+			let mut j = 0;
+			while j < n {
+				let v = u.col(j);
+				let vl = ul.col(j);
+				if s_im[j] == zero::<T>() {
+					assert!((v.norm_l2() - one::<T>()).abs() < tol);
+					assert!((vl.norm_l2() - one::<T>()).abs() < tol);
+					assert!(
+						relative_residual(mat.as_ref(), v, s_re[j].copy())
+							< from_f64::<T>(1e-4)
+					);
+					j += 1;
+				} else {
+					let nrm = v.norm_l2().hypot(&u.col(j + 1).norm_l2());
+					assert!((nrm - one::<T>()).abs() < tol);
+					let nrm = vl.norm_l2().hypot(&ul.col(j + 1).norm_l2());
+					assert!((nrm - one::<T>()).abs() < tol);
+					j += 2;
+				}
+			}
+		}
+		for threshold in [4usize, 64] {
+			run::<f64>(threshold);
+			run::<f32>(threshold);
+		}
+	}
+
+	#[test]
+	fn complex_eigenvectors_have_unit_norm() {
+		// `threshold = 4` drives the complex solver's recursive branch.
+		fn run<T: RealField>(threshold: usize) {
+			let n = 6;
+			let mat = Mat::<Complex<T>>::from_fn(n, n, |i, j| {
+				Complex::new(
+					from_f64::<T>(i as f64)
+						+ from_f64::<T>(j as f64) * from_f64::<T>(0.1),
+					from_f64::<T>(i as f64 - j as f64) * from_f64::<T>(0.3),
+				)
+			});
+			let params = Spec::new(EvdParams {
+				evd_from_schur: EvdFromSchurParams {
+					recursion_threshold: threshold,
+					..auto!(Complex<T>)
+				},
+				..auto!(Complex<T>)
+			});
+			let mut s = Diag::zeros(n);
+			let mut u = Mat::zeros(n, n);
+			let mut mem = MemBuffer::new(evd_scratch::<Complex<T>>(
+				n,
+				ComputeEigenvectors::No,
+				ComputeEigenvectors::Yes,
+				Par::Seq,
+				params,
+			));
+			evd_cplx(
+				mat.as_ref(),
+				s.as_mut(),
+				None,
+				Some(u.as_mut()),
+				Par::Seq,
+				MemStack::new(&mut mem),
+				params,
+			)
+			.unwrap();
+			let tol = from_f64::<T>(1e-5);
+			for j in 0..n {
+				assert!((u.col(j).norm_l2() - one::<T>()).abs() < tol);
+			}
+		}
+		for threshold in [4usize, 64] {
+			run::<f64>(threshold);
+			run::<f32>(threshold);
 		}
 	}
 }
