@@ -18,7 +18,7 @@ upstream `faer`.
 | Crate names | `faer` → `t4a-faer`, `faer-traits` → `t4a-faer-traits`. `[lib] name` stays `faer` / `faer_traits`, so downstream `use faer::...` is unchanged. |
 | Workspace | `faer-ffi` is excluded (the C API and its cbindgen build are unused by tensor4all). |
 | Publication | crates.io, in the order `t4a-faer-traits` then `t4a-faer`. The tag is `v<faer version>`. A version that is already on crates.io is skipped, so a release that bumps only one crate still succeeds. |
-| Released | `t4a-faer-traits 0.24.0` and `t4a-faer 0.24.4`, published from commit `3a6a9d6`. The published `src/**` is byte-identical to that commit, so `3a6a9d6` is the revision a consumer pins. A later commit needs a new version. |
+| Released | `t4a-faer-traits 0.24.0` and `t4a-faer 0.24.4`, published from commit `3a6a9d6`. The published `src/**` is byte-identical to that commit, so `3a6a9d6` is the revision a consumer pins. A later commit needs a new version. `t4a-faer 0.24.5` carries the unpivoted-QR fix for tlinalg-rs#28; it is `d16929bc` plus its version bump, so its `src/**` matches `d16929bc`, the revision `tlinalg` resolves once it moves off a git pin. |
 | LICENSE | A `LICENSE` copy lives in each crate directory so the published archive ships the MIT text (`license-file` next to `license` makes Cargo warn). |
 
 ## Experiments
