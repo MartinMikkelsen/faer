@@ -100,11 +100,23 @@ pub(crate) fn lu_in_place_recursion<I: Index, T: ComplexField>(
 			A.rb_mut().split_at_mut(block_size, block_size);
 		let A00 = A00.rb();
 		let A10 = A10.rb();
+		// The panel solve and the trailing product below are this level's whole
+		// parallel work, and the block size halves every level of the recursion, so
+		// past a few levels they are a fork and a join around a handful of thousands
+		// of flops. Below the size floor the swap stage already uses, take
+		// `Par::Seq`; the recursion keeps the caller's `par`, so every level decides
+		// for its own trailing update. The crossover comes from a sweep over 256x256,
+		// 512x512 and 1024x1024 threaded, not from one shape.
+		let par_here = if A11.nrows() * A11.ncols() > params.par_threshold {
+			par
+		} else {
+			Par::Seq
+		};
 		{
 			linalg::triangular_solve::solve_unit_lower_triangular_in_place(
 				A00.rb(),
 				A01.rb_mut(),
-				par,
+				par_here,
 			);
 		}
 		linalg::matmul::matmul(
@@ -113,7 +125,7 @@ pub(crate) fn lu_in_place_recursion<I: Index, T: ComplexField>(
 			A10.rb(),
 			A01.rb(),
 			-one::<T>(),
-			par,
+			par_here,
 		);
 		n_trans += lu_in_place_recursion(
 			A.rb_mut().get_mut(block_size..m, ..),
@@ -400,6 +412,49 @@ mod tests {
 			let U = U.as_ref();
 			let U = U.subrows(0, n);
 			assert!(p.inverse() * L * U ~ A);
+		}
+	}
+	fn factor_lu(A: &Mat<f64>, par: Par) -> (Mat<f64>, Vec<usize>, usize) {
+		let n = A.nrows();
+		let mut LU = A.cloned();
+		let perm = &mut *vec![0usize; n];
+		let perm_inv = &mut *vec![0usize; n];
+		let params: Spec<PartialPivLuParams, f64> = default();
+		let stack =
+			&mut MemBuffer::new(lu_in_place_scratch::<usize, f64>(n, n, par, params));
+		let stack = MemStack::new(stack);
+		let (info, _) = lu_in_place(LU.as_mut(), perm, perm_inv, par, stack, params);
+		(LU, perm.to_vec(), info.transposition_count)
+	}
+	/// The two products at a recursion level take `Par::Seq` while the trailing update is smaller
+	/// than `par_threshold`, instead of the caller's hint. That is a choice of how to schedule the
+	/// same arithmetic, so both sides of the floor have to return the same factorization: `96`,
+	/// `128` and `192` are below `128 * 128` at the top level, `256` and `512` above it, and every
+	/// level in between halves down through it.
+	#[test]
+	fn threaded_lu_matches_the_sequential_one() {
+		let rng = &mut StdRng::seed_from_u64(0);
+		let pool = rayon::ThreadPoolBuilder::new()
+			.num_threads(4)
+			.build()
+			.unwrap();
+		let approx_eq = CwiseMat(ApproxEq {
+			abs_tol: 1e-12,
+			rel_tol: 1e-12,
+		});
+		for n in [96, 128, 192, 256, 512] {
+			let A = CwiseMatDistribution {
+				nrows: n,
+				ncols: n,
+				dist: StandardNormal,
+			}
+			.rand::<Mat<f64>>(rng);
+			let (seq, perm_seq, trans_seq) = factor_lu(&A, Par::Seq);
+			let (par, perm_par, trans_par) =
+				pool.install(|| factor_lu(&A, Par::rayon(4)));
+			assert!(seq.as_ref() ~ par.as_ref());
+			assert!(perm_seq == perm_par);
+			assert!(trans_seq == trans_par);
 		}
 	}
 }
