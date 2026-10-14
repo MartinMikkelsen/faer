@@ -624,11 +624,18 @@ fn apply_block_householder_on_the_left_in_place_generic<
 		// trailing update, `M = 512`, `K = 496`) loses for the partials it pays for. The thread and
 		// work floors keep small problems on the products below.
 		let threads = crate::utils::thread::parallelism_degree(par);
+		// The split below slices the reduction's rows, but the top `n` rows carry the unit
+		// diagonal and are applied through their own `n x n` factor -- a chunk whose rows
+		// are a *subrange* of those `n` would need that factor column-sliced, and the
+		// triangular kernel cannot express the trapezoid that leaves. So the split is taken
+		// only while one chunk swallows the whole top block. Below that the products further
+		// down stay exactly as they were.
 		let row_split = cfg!(feature = "rayon")
 			&& threads > 1
 			&& M.unbound() >= 2 * K.unbound()
 			&& M.unbound() >= 4 * threads
-			&& M.unbound() * K.unbound() >= 8 * 1024;
+			&& M.unbound() * K.unbound() >= 8 * 1024
+			&& M.unbound().div_ceil(threads) >= N.unbound();
 		if row_split {
 			#[cfg(feature = "rayon")]
 			{
@@ -1269,6 +1276,17 @@ mod tests {
 		check_panel(4096, 16, 240);
 		// Not tall enough for the row split: the column path must still be right.
 		check_panel(128, 8, 16);
+	}
+
+	/// The row split slices the reduction's rows, but the top `n` rows are applied through one
+	/// `n x n` factor: the split is only valid while a single chunk carries that whole top block.
+	/// A panel wider than the row chunk does not -- and it used to trip the triangular shape
+	/// assertion (64 factor columns against a 32-row chunk) from `qr_in_place`, which is the abort
+	/// [tensor4all/faer#12](https://github.com/tensor4all/faer/issues/12) reports. Both sides of
+	/// the threshold must compute the same map.
+	#[test]
+	fn threaded_panel_narrower_than_the_row_chunk_matches_the_sequential_one() {
+		check_panel(256, 128, 64);
 	}
 
 	#[test]
