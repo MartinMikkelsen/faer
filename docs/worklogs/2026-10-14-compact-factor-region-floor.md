@@ -78,9 +78,12 @@ Consumer: [tensor4all/tlinalg-rs#56](https://github.com/tensor4all/tlinalg-rs/pu
     floor, which at 128x128 (`127² / 2 = 8064 < 49152`) closes it for the whole factorisation.
     The flat `eigh` reading (1.26 → 1.24 ms against MKL's 1.08 → 0.586) is therefore *this
     library's own floor doing its job*, not a dropped hint: MKL threads that size and faer
-    declines to. Whether the floor sits where it should is a measured question about the
+    declines to. Whether the floor sits where it should was a measured question about the
     crossover — the `M ~ 2K` episode in the ledger is the warning about moving such a constant
-    from the wrong cell — and it has not been measured. Not a lead to chase by reading.
+    from the wrong cell — and it **has since been measured**: forcing the gate open costs
+    3.1x at 128x128 and 1.5x at 256x256, and no lower floor buys anything, so the floor is where
+    it belongs. See `2026-10-14-evd-svd-floor-sweep.md`, which sweeps the bidiagonalisation's
+    floor the same way; both floors end up DROPPED, i.e. kept as they are.
   - `lu/partial_pivoting/factor.rs` is *not* missing its hint (panel solve, trailing
     matmul and recursion all take `par`, and its `par_threshold` is read), but
     `lu_factor` 512x512 b1 f64 scales only 1.85x from 1T to 8T where MKL reaches 4.9x.
