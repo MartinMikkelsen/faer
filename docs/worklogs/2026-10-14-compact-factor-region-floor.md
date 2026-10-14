@@ -68,7 +68,9 @@ Consumer: [tensor4all/tlinalg-rs#56](https://github.com/tensor4all/tlinalg-rs/pu
   - `svd/bidiag.rs`: `bidiag_in_place_scratch` discards its hint (`_ = par; _ =
     params;`) and `BidiagParams::par_threshold` is never read, so the bidiagonalisation
     is sequential however the caller calls. Consistent with `svd_values` being flat from
-    1T to 8T (128x128 b1 f64 1.412 → 1.433 ms against MKL's 0.704 → 0.678).
+    1T to 8T (128x128 b1 f64 1.412 → 1.433 ms against MKL's 0.704 → 0.678). Measured
+    and closed: `bidiag_in_place` (the worker) does read the threshold, and its floor
+    is load-bearing — see `2026-10-14-bidiag-parallel-hint.md`.
   - `evd/tridiag.rs` uses no parallel degree at all, and `eigh` is flat for the same
     shape (1.26 → 1.24 ms against MKL's 1.08 → 0.586).
   - `lu/partial_pivoting/factor.rs` is *not* missing its hint (panel solve, trailing
