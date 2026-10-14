@@ -31,6 +31,33 @@ rule files the task needs.
 * Every experiment carries one focused test. Run it locally; the fork CI gate is
   a build, not the full upstream suite (faer's test dependencies are heavy).
   The inherited upstream workflows still run their own heavier jobs.
-* When an experiment uncovers a likely upstream bug, report it to the fork
-  maintainer and get explicit permission before preparing or opening an upstream
-  issue or PR.
+* Upstream feedback is **deferred at this stage**: do not prepare or open an
+  upstream issue or PR and do not write to an upstream tracker, even for a defect
+  that is clearly upstream's. Measure it, record it in `docs/worklogs/` with the
+  upstream revision that was measured, and leave the decision to the maintainer.
+  Explicit permission is required before anything more than a record here.
+
+## Work Logs And Review Intent
+
+Follow the shared [Work Logs And Design
+Records](https://github.com/tensor4all/tensor4all-agent-rules/blob/main/rules/common/repository.md#work-logs-and-design-records)
+policy and the [local format](docs/worklogs/README.md). Keep a record for a
+nontrivial multi-phase change, a non-obvious design choice, or a performance
+experiment; small fixes and AI assistance alone do not require one. One file per
+change theme under `docs/worklogs/`, linked from its PR, and read the linked
+record when reviewing the decisions it explains.
+
+Every performance experiment in this fork needs one, because the fork's whole
+purpose is to be a measurable delta against upstream. `PATCHSET.md` says what the
+fork carries today; the record says why — the isolation, the candidates that were
+tried and dropped *with the measurement that dropped them*, and what the result
+establishes. It is how the difference from upstream and the course of an
+optimisation stay followable by someone who was not in the session, and how a
+dead end that cost a day is not tried twice.
+
+Keep complete performance results in the linked evidence (the campaigns'
+published pages) rather than copying them into the record, and say plainly when a
+number is a scan rather than a paired comparison, or when something is a
+hypothesis rather than a measurement. A lead nobody has measured yet goes under
+"what remains unverified" in the record of the experiment that uncovered it — the
+ledger lists what the fork *carries*, not what it suspects.
