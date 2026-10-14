@@ -146,6 +146,19 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 		return;
 	}
 	let n = essentials.ncols();
+	// Below, this function threads its `V^H V` products, and its own `deep` predicate states when
+	// the reduction has the shape to pay for that: deep against its `n x n` output, over a work
+	// floor, with at least one row per thread. Below that floor the same products still open a
+	// region each -- and a blocked factorisation calls this function once per block, at a block
+	// size the recursion halves every level, so a `128 x 128` QR pays the fork-join cost of
+	// `n`-wide reductions ~50 times for work the floor itself calls too small to split. The
+	// decision here is the floor, asked once: no region at all when the products below would not
+	// split either.
+	let threads = crate::utils::thread::parallelism_degree(par);
+	let deep_rows = essentials.nrows().unbound().saturating_sub(n);
+	let above_floor =
+		deep_rows >= 2 * n && deep_rows >= 4 * threads && deep_rows * n * n >= 8 * 1024;
+	let par = if above_floor { par } else { Par::Seq };
 	let mut householder_factor = householder_factor;
 	let essentials = essentials;
 	assert!(householder_factor.nrows() == householder_factor.ncols());
