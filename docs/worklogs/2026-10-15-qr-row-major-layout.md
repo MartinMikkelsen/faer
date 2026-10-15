@@ -16,9 +16,11 @@ one thread and 7.1x at eight. Consumer: `tlinalg-rs#46`.
   gone because it no longer describes anything.
 - **The arithmetic is unchanged, so the result is not a new factorization.** The
   copy lands the same matrix values in a column-major buffer and the factor is
-  copied back, so the factorization — the reflectors, `tau`, `R`, the rank
-  decision — is the column-major one. The focused test asserts equality of all
-  three, bit for bit, across `0x0, 3x0, 0x3, 1x7, 7x1, 2x3, 3x2, 4x4, 17x15,
+  copied back, so for an *adapted* shape the factorization — the reflectors,
+  `tau`, `R`, the rank decision — is the column-major one, bit for bit. A shape a
+  guard leaves on the direct path is not adapted and keeps its own kernels, so its
+  two orders agree only up to rounding. The focused test asserts the first group
+  bit for bit and the second up to rounding, across `0x0, 3x0, 0x3, 1x7, 7x1, 2x3, 3x2, 4x4, 17x15,
   16x16, 64x64, 300x17, 17x300, 256x64, 64x256` at `f64` and `c64`, sequential and
   threaded, and again with a view whose rows are walked backwards; a variant with
   an exactly zero leading column covers the one place the unblocked core stores a
@@ -122,7 +124,8 @@ one thread and 7.1x at eight. Consumer: `tlinalg-rs#46`.
   square matrix, and only when the caller passes a row-major matrix to
   `qr_in_place` itself. `MatRef::qr()`'s own `A.to_owned()` already hands the
   factorization a column-major copy, so the high-level path is unaffected.
-  `qr::col_pivoting` is not adapted and nothing in the campaign measures it.
+  `qr::col_pivoting` and both LU flavours were, in a companion row; the shapes
+  each guard leaves alone are covered by the records beside this one.
 - Limits, recorded and not taken: the wide class keeps a C-order penalty at four
   and eight threads that this is not (`256x4096` f64: 6.28 against 4.51 at four,
   5.06 against 3.22 at eight; one thread is parity). It is not a column walk the

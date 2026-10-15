@@ -1615,6 +1615,34 @@ impl<
 		where
 			T: Conjugate,
 		{
+			// `Mat::from_fn` fills column by column, so for a source whose
+			// columns are not the contiguous direction every read steps by the
+			// source's row stride and costs its own cache line -- on `512x512`
+			// f64 that is 1.01 ms against 0.057, and this is the first thing
+			// `partial_piv_lu`, `full_piv_lu` and `Qr::new` do with their
+			// argument. Stage the copy in tiles instead, as the row-major
+			// factorisations do.
+			//
+			// Only an already-canonical source: the tile copy reads the source's
+			// memory as `T::Canonical`, which is a reinterpretation and not the
+			// conjugation `Conj::apply` below performs, so a conjugated view (an
+			// `adjoint().to_owned()`, which the sparse factorisations use) has to
+			// keep the elementwise path.
+			let src = this.canonical();
+			if T::IS_CANONICAL
+				&& src.row_stride().element_stride().unsigned_abs() != 1
+			{
+				let mut out = Mat::<T::Canonical, Dim<'M>, Dim<'N>>::zeros(
+					this.nrows(),
+					this.ncols(),
+				);
+				crate::linalg::copy_across_layouts(
+					out.as_mut().as_dyn_stride_mut().as_dyn_mut(),
+					src.as_dyn_stride().as_dyn(),
+					crate::Par::Seq,
+				);
+				return out;
+			}
 			Mat::from_fn(this.nrows(), this.ncols(), |i, j| {
 				Conj::apply::<T>(this.at(i, j))
 			})

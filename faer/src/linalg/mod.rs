@@ -61,15 +61,15 @@ pub(crate) fn copy_across_layouts<T: ComplexField>(
 	src: MatRef<'_, T>,
 	par: Par,
 ) {
-	let n_tasks = Ord::min(
-		crate::utils::thread::parallelism_degree(par),
-		dst.ncols(),
-	)
-	.max(1);
-	if cfg!(feature = "rayon") && n_tasks > 1 {
-		#[cfg(feature = "rayon")]
-		{
-			use rayon::prelude::*;
+	#[cfg(feature = "rayon")]
+	{
+		use rayon::prelude::*;
+		let n_tasks = Ord::min(
+			crate::utils::thread::parallelism_degree(par),
+			dst.ncols(),
+		)
+		.max(1);
+		if n_tasks > 1 {
 			dst.rb_mut()
 				.par_col_partition_mut(n_tasks)
 				.zip_eq(src.par_col_partition(n_tasks))
@@ -77,13 +77,12 @@ pub(crate) fn copy_across_layouts<T: ComplexField>(
 			return;
 		}
 	}
+	let _ = par;
 	copy_across_layouts_block(dst.rb_mut(), src);
 }
-/// Does the copy `copy_transposed` describes, one tile at a time, reading the
-/// tile along whichever of the two is row-major and writing it along whichever
-/// is column-major. Staging it in a tile is what keeps each side's inner loop on
-/// its own contiguous direction: without it one side would step by the other's
-/// row stride, which is what this whole adaptation exists to avoid.
+/// One `16 x 16` tile of `copy_across_layouts`, on one thread: read the tile
+/// along whichever side is row-major and write it along whichever is
+/// column-major, so neither side steps by the other's row stride.
 fn copy_across_layouts_block<T: ComplexField>(
 	mut dst: MatMut<'_, T>,
 	src: MatRef<'_, T>,
@@ -327,7 +326,7 @@ mod tests {
 	use super::*;
 	use dyn_stack::MemBuffer;
 
-	/// A scalar the fixture can build and two factors can be compared with
+	/// A scalar the fixture can build and two results can be compared with
 	/// exactly -- exact because every entry point below runs the same arithmetic
 	/// on the same values once the copy has happened.
 	trait Entry: ComplexField {
@@ -361,31 +360,41 @@ mod tests {
 		h ^= h >> 29;
 		((h >> 11) as f64 / (1u64 << 53) as f64 - 0.5) * 10.0
 	}
-	/// The factor as stored in a column-major flat buffer and in a row-major one
-	/// must agree at every `(i, j)`, and so must anything the factorization
-	/// returned beside it.
-	fn compare<T: Entry>(m: usize, n: usize, what: &str, cm: &[T], rm: &[T]) {
-		for j in 0..n {
-			for i in 0..m {
-				if !cm[i + j * m].same(&rm[i * n + j]) {
-					panic!(
-						"{what} {m}x{n}: entry ({i}, {j}) differs between the two orders"
-					);
-				}
+	/// Everything the factorization left behind, as stored: the factor at every
+	/// `(i, j)`, then each array it wrote, entry by entry.
+	fn compare<T: Entry>(what: &str, cm: &[T], rm: &[T]) {
+		if cm.len() != rm.len() {
+			panic!("{what}: {} entries against {}", cm.len(), rm.len());
+		}
+		for k in 0..cm.len() {
+			if !cm[k].same(&rm[k]) {
+				panic!("{what}: entry {k} differs between the two orders");
 			}
 		}
 	}
-	fn same_perm<T: PartialEq + core::fmt::Debug>(what: &str, cm: &[T], rm: &[T]) {
+	fn same_exact<T: Entry>(what: &str, cm: &[T], rm: &[T]) {
+		compare(what, cm, rm);
+	}
+	fn same_index<T: PartialEq + core::fmt::Debug + Copy>(
+		what: &str,
+		cm: &[T],
+		rm: &[T],
+	) {
 		if cm != rm {
-			panic!("{what}: permutation {cm:?} against {rm:?}");
+			panic!("{what}: {cm:?} against {rm:?}");
 		}
 	}
-	/// The same matrix flat in each order.
-	fn fixture<T: Entry>(m: usize, n: usize) -> (Vec<T>, Vec<T>) {
+	/// The same matrix, flat in each order: `cm` column-major, `rm` row-major.
+	/// `flipped` builds both so that a view whose rows are walked backwards
+	/// represents the same matrix in each -- the row-major view is read from its
+	/// last row with a negative row stride.
+	fn fixture<T: Entry>(m: usize, n: usize, flipped: bool) -> (Vec<T>, Vec<T>) {
+		let flipped = flipped && m > 0 && n > 0;
+		let row_of = |i: usize| if flipped { m - 1 - i } else { i };
 		let mut cm = Vec::with_capacity(m * n);
 		for j in 0..n {
 			for i in 0..m {
-				cm.push(T::at(i, j));
+				cm.push(T::at(row_of(i), j));
 			}
 		}
 		let mut rm = Vec::with_capacity(m * n);
@@ -396,30 +405,58 @@ mod tests {
 		}
 		(cm, rm)
 	}
+	/// The row-major side's flat position for a factor entry read through a
+	/// `flipped` view: the view's row `i` is storage row `m - 1 - i`.
+	fn rm_strides(m: usize, n: usize, flipped: bool) -> (usize, isize, isize) {
+		if flipped && m > 0 && n > 0 {
+			((m - 1) * n, -(n as isize), 1)
+		} else {
+			(0, n as isize, 1)
+		}
+	}
+	fn compare_row_major<T: Entry>(
+		m: usize,
+		n: usize,
+		flipped: bool,
+		what: &str,
+		cm: &[T],
+		rm: &[T],
+	) {
+		let flipped = flipped && m > 0 && n > 0;
+		for j in 0..n {
+			for i in 0..m {
+				let k = if flipped { m - 1 - i } else { i };
+				if !cm[i + j * m].same(&rm[k * n + j]) {
+					panic!(
+						"{what} {m}x{n}: entry ({i}, {j}) differs between the two orders"
+					);
+				}
+			}
+		}
+	}
 
 	/// Every entry point that adapts a row-major matrix to a column-major one has
 	/// to leave behind the column-major factorization of the same matrix: same
-	/// factor, same `tau` matrix, same permutation. This is what says so, for the
-	/// column-pivoted QR and both LU flavours (the no-pivoting QR has its own
-	/// test beside its `qr_in_place`, with the shapes its guard leaves alone).
+	/// factor, same `tau` matrix, same permutations, same transposition count.
+	/// This is what says so, for the column-pivoted QR and both LU flavours (the
+	/// no-pivoting QR has its own test beside its `qr_in_place`, with the shapes
+	/// its guard leaves alone). Each shape is run with a plain row-major view and
+	/// with one whose rows are walked backwards, so the copy's own direction
+	/// branch is covered on a negative stride too.
 	#[test]
 	fn test_row_major_adaptation_matches_the_column_major_one() {
 		use crate::linalg::lu::full_pivoting::factor as flu;
 		use crate::linalg::lu::partial_pivoting::factor as plu;
 		use crate::linalg::qr::col_pivoting::factor as cpqr;
 
-		fn check_cpqr<T: Entry>(m: usize, n: usize, par: Par) {
+		fn check_cpqr<T: Entry>(m: usize, n: usize, flipped: bool, par: Par) {
 			let size = Ord::min(m, n);
 			let bs = cpqr::recommended_block_size::<T>(m, n);
-			let scratch = cpqr::qr_in_place_scratch::<usize, T>(
-				m,
-				n,
-				bs,
-				par,
-				default(),
-			);
-			let (mut cm, mut rm) = fixture::<T>(m, n);
-			let (mut h_cm, mut h_rm) = (vec![T::zero(); bs * size], vec![T::zero(); bs * size]);
+			let scratch =
+				cpqr::qr_in_place_scratch::<usize, T>(m, n, bs, par, default());
+			let (mut cm, mut rm) = fixture::<T>(m, n, flipped);
+			let mut h_cm = vec![T::zero(); bs * size];
+			let mut h_rm = vec![T::zero(); bs * size];
 			let mut p_cm = vec![0usize; n];
 			let mut p_rm = vec![0usize; n];
 			let mut pi_cm = vec![0usize; n];
@@ -428,105 +465,188 @@ mod tests {
 			           h: &mut [T],
 			           p: &mut [usize],
 			           pi: &mut [usize],
-			           (rs, cs): (isize, isize)| {
+			           (base, rs, cs): (usize, isize, isize)|
+			 -> cpqr::ColPivQrInfo {
 				unsafe {
 					cpqr::qr_in_place(
-					MatMut::from_raw_parts_mut(a.as_mut_ptr(), m, n, rs, cs),
-					MatMut::from_raw_parts_mut(
-						h.as_mut_ptr(),
-						bs,
-						size,
-						1,
-						bs as isize,
-					),
-					p,
-					pi,
-					par,
-					MemStack::new(&mut MemBuffer::new(scratch)),
-					default(),
-				);
+						MatMut::from_raw_parts_mut(
+							a.as_mut_ptr().add(base),
+							m,
+							n,
+							rs,
+							cs,
+						),
+						MatMut::from_raw_parts_mut(
+							h.as_mut_ptr(),
+							bs,
+							size,
+							1,
+							bs as isize,
+						),
+						p,
+						pi,
+						par,
+						MemStack::new(&mut MemBuffer::new(scratch)),
+						default(),
+					)
+					.0
 				}
 			};
-			run(&mut cm, &mut h_cm, &mut p_cm, &mut pi_cm, (1, m as isize));
-			run(&mut rm, &mut h_rm, &mut p_rm, &mut pi_rm, (n as isize, 1));
-			compare(m, n, "col_pivoting qr", &cm, &rm);
-			same_perm("col_pivoting qr", &h_cm, &h_rm);
-			same_perm("col_pivoting qr", &p_cm, &p_rm);
-			same_perm("col_pivoting qr", &pi_cm, &pi_rm);
+			let cm_info = run(&mut cm, &mut h_cm, &mut p_cm, &mut pi_cm, (0, 1, m as isize));
+			let rm_info = run(
+				&mut rm,
+				&mut h_rm,
+				&mut p_rm,
+				&mut pi_rm,
+				rm_strides(m, n, flipped),
+			);
+			compare_row_major(m, n, flipped, "col_pivoting qr", &cm, &rm);
+			same_exact("col_pivoting qr tau", &h_cm, &h_rm);
+			same_index("col_pivoting qr perm", &p_cm, &p_rm);
+			same_index("col_pivoting qr perm inv", &pi_cm, &pi_rm);
+			same_index(
+				"col_pivoting qr transpositions",
+				&[cm_info.transposition_count],
+				&[rm_info.transposition_count],
+			);
 		}
 
-		fn check_plu<T: Entry>(n: usize, par: Par) {
-			let scratch = plu::lu_in_place_scratch::<usize, T>(n, n, par, default());
-			let (mut cm, mut rm) = fixture::<T>(n, n);
-			let (mut p_cm, mut p_rm) = (vec![0usize; n], vec![0usize; n]);
-			let (mut pi_cm, mut pi_rm) = (vec![0usize; n], vec![0usize; n]);
+		fn check_plu<T: Entry>(m: usize, n: usize, flipped: bool, par: Par) {
+			let scratch = plu::lu_in_place_scratch::<usize, T>(m, n, par, default());
+			let (mut cm, mut rm) = fixture::<T>(m, n, flipped);
+			let mut p_cm = vec![0usize; m];
+			let mut p_rm = vec![0usize; m];
+			let mut pi_cm = vec![0usize; m];
+			let mut pi_rm = vec![0usize; m];
 			let run = |a: &mut [T],
 			           p: &mut [usize],
 			           pi: &mut [usize],
-			           (rs, cs): (isize, isize)| {
+			           (base, rs, cs): (usize, isize, isize)|
+			 -> plu::PartialPivLuInfo {
 				unsafe {
 					plu::lu_in_place(
-					MatMut::from_raw_parts_mut(a.as_mut_ptr(), n, n, rs, cs),
-					p,
-					pi,
-					par,
-					MemStack::new(&mut MemBuffer::new(scratch)),
-					default(),
-				);
+						MatMut::from_raw_parts_mut(
+							a.as_mut_ptr().add(base),
+							m,
+							n,
+							rs,
+							cs,
+						),
+						p,
+						pi,
+						par,
+						MemStack::new(&mut MemBuffer::new(scratch)),
+						default(),
+					)
+					.0
 				}
 			};
-			run(&mut cm, &mut p_cm, &mut pi_cm, (1, n as isize));
-			run(&mut rm, &mut p_rm, &mut pi_rm, (n as isize, 1));
-			compare(n, n, "partial pivoting lu", &cm, &rm);
-			same_perm("partial pivoting lu", &p_cm, &p_rm);
-			same_perm("partial pivoting lu", &pi_cm, &pi_rm);
+			let cm_info = run(&mut cm, &mut p_cm, &mut pi_cm, (0, 1, m as isize));
+			let rm_info =
+				run(&mut rm, &mut p_rm, &mut pi_rm, rm_strides(m, n, flipped));
+			compare_row_major(m, n, flipped, "partial pivoting lu", &cm, &rm);
+			same_index("partial pivoting lu perm", &p_cm, &p_rm);
+			same_index("partial pivoting lu perm inv", &pi_cm, &pi_rm);
+			same_index(
+				"partial pivoting lu transpositions",
+				&[cm_info.transposition_count],
+				&[rm_info.transposition_count],
+			);
 		}
 
-		fn check_flu<T: Entry>(n: usize, par: Par) {
-			let scratch = flu::lu_in_place_scratch::<usize, T>(n, n, par, default());
-			let (mut cm, mut rm) = fixture::<T>(n, n);
-			let (mut p_cm, mut p_rm) = (vec![0usize; n], vec![0usize; n]);
-			let (mut pi_cm, mut pi_rm) = (vec![0usize; n], vec![0usize; n]);
-			let (mut c_cm, mut c_rm) = (vec![0usize; n], vec![0usize; n]);
-			let (mut ci_cm, mut ci_rm) = (vec![0usize; n], vec![0usize; n]);
+		fn check_flu<T: Entry>(m: usize, n: usize, flipped: bool, par: Par) {
+			let scratch = flu::lu_in_place_scratch::<usize, T>(m, n, par, default());
+			let (mut cm, mut rm) = fixture::<T>(m, n, flipped);
+			let mut p_cm = vec![0usize; m];
+			let mut p_rm = vec![0usize; m];
+			let mut pi_cm = vec![0usize; m];
+			let mut pi_rm = vec![0usize; m];
+			let mut c_cm = vec![0usize; n];
+			let mut c_rm = vec![0usize; n];
+			let mut ci_cm = vec![0usize; n];
+			let mut ci_rm = vec![0usize; n];
 			let run = |a: &mut [T],
 			           p: &mut [usize],
 			           pi: &mut [usize],
 			           c: &mut [usize],
 			           ci: &mut [usize],
-			           (rs, cs): (isize, isize)| {
+			           (base, rs, cs): (usize, isize, isize)|
+			 -> flu::FullPivLuInfo {
 				unsafe {
 					flu::lu_in_place(
-					MatMut::from_raw_parts_mut(a.as_mut_ptr(), n, n, rs, cs),
-					p,
-					pi,
-					c,
-					ci,
-					par,
-					MemStack::new(&mut MemBuffer::new(scratch)),
-					default(),
-				);
+						MatMut::from_raw_parts_mut(
+							a.as_mut_ptr().add(base),
+							m,
+							n,
+							rs,
+							cs,
+						),
+						p,
+						pi,
+						c,
+						ci,
+						par,
+						MemStack::new(&mut MemBuffer::new(scratch)),
+						default(),
+					)
+					.0
 				}
 			};
-			run(&mut cm, &mut p_cm, &mut pi_cm, &mut c_cm, &mut ci_cm, (1, n as isize));
-			run(&mut rm, &mut p_rm, &mut pi_rm, &mut c_rm, &mut ci_rm, (n as isize, 1));
-			compare(n, n, "full pivoting lu", &cm, &rm);
-			same_perm("full pivoting lu", &p_cm, &p_rm);
-			same_perm("full pivoting lu", &c_cm, &c_rm);
+			let cm_info =
+				run(&mut cm, &mut p_cm, &mut pi_cm, &mut c_cm, &mut ci_cm, (0, 1, m as isize));
+			let rm_info = run(
+				&mut rm,
+				&mut p_rm,
+				&mut pi_rm,
+				&mut c_rm,
+				&mut ci_rm,
+				rm_strides(m, n, flipped),
+			);
+			compare_row_major(m, n, flipped, "full pivoting lu", &cm, &rm);
+			same_index("full pivoting lu row perm", &p_cm, &p_rm);
+			same_index("full pivoting lu row perm inv", &pi_cm, &pi_rm);
+			same_index("full pivoting lu col perm", &c_cm, &c_rm);
+			same_index("full pivoting lu col perm inv", &ci_cm, &ci_rm);
+			same_index(
+				"full pivoting lu transpositions",
+				&[cm_info.transposition_count],
+				&[rm_info.transposition_count],
+			);
 		}
 
-		for (m, n) in [(1, 1), (2, 2), (16, 16), (17, 15), (64, 64), (300, 17), (64, 256)] {
-			for par in [Par::Seq, Par::rayon(8)] {
-				check_cpqr::<f64>(m, n, par);
-				check_cpqr::<crate::c64>(m, n, par);
+		for (m, n) in [
+			(1, 1),
+			(2, 2),
+			(16, 16),
+			(17, 15),
+			(64, 64),
+			(300, 17),
+			(64, 256),
+			(300, 8),
+		] {
+			for flipped in [false, true] {
+				for par in [Par::Seq, Par::rayon(8)] {
+					check_cpqr::<f64>(m, n, flipped, par);
+					check_cpqr::<crate::c64>(m, n, flipped, par);
+				}
 			}
 		}
-		for n in [1, 2, 16, 17, 64, 128] {
-			for par in [Par::Seq, Par::rayon(8)] {
-				check_plu::<f64>(n, par);
-				check_plu::<crate::c64>(n, par);
-				check_flu::<f64>(n, par);
-				check_flu::<crate::c64>(n, par);
+		for (m, n) in [
+			(1, 1),
+			(2, 2),
+			(16, 16),
+			(17, 15),
+			(64, 64),
+			(128, 128),
+			(300, 17),
+		] {
+			for flipped in [false, true] {
+				for par in [Par::Seq, Par::rayon(8)] {
+					check_plu::<f64>(m, n, flipped, par);
+					check_plu::<crate::c64>(m, n, flipped, par);
+					check_flu::<f64>(m, n, flipped, par);
+					check_flu::<crate::c64>(m, n, flipped, par);
+				}
 			}
 		}
 	}

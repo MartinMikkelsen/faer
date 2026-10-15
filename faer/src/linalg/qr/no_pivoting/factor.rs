@@ -628,6 +628,8 @@ mod tests {
 			exact: bool,
 			par: Par,
 		) {
+			// An empty matrix has no row to start a backwards view from.
+			let flipped = flipped && m > 0 && n > 0;
 			let size = Ord::min(m, n);
 			let block_size = recommended_block_size::<T>(m, n);
 			let qr_scratch =
@@ -722,6 +724,7 @@ mod tests {
 		// than one column. These must match the column-major factor exactly.
 		for (m, n) in [
 			(2, 2),
+			(3, 2),
 			(3, 3),
 			(4, 4),
 			(17, 15),
@@ -730,7 +733,6 @@ mod tests {
 			(300, 17),
 			(256, 64),
 			(512, 17),
-			(64, 64),
 		] {
 			for par in [Par::Seq, Par::rayon(8)] {
 				check::<f64>(m, n, false, false, true, par);
@@ -757,7 +759,6 @@ mod tests {
 			(1, 7),
 			(7, 1),
 			(2, 3),
-			(3, 2),
 			(8, 64),
 			(17, 300),
 			(64, 256),
