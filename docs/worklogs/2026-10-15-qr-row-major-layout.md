@@ -153,3 +153,22 @@ one thread and 7.1x at eight. Consumer: `tlinalg-rs#46`.
   orders and all three engine rows. That is a check of each provider's
   reconstruction residual and compact-`Q` orthonormality, run against the
   harness rather than the test above.
+
+## Upstream
+
+- **The defect is upstream's and the fork had not touched it.** The layout-blindness
+  is in `qr_in_place_unblocked`'s pivot-column walk, which at the parent revision
+  `bfe4041` differed from upstream `faer-v0.24.4` only by the fork's own
+  retained-nonzero-columns change -- not by anything about strides. No upstream issue
+  or PR was prepared, and nothing was written to an upstream tracker: the fork's
+  `AGENTS.md` defers upstream feedback and leaves that decision to the maintainer.
+- **Upstream's own revision was measured, on the campaign's page.** The `faer-upstream`
+  row is upstream at the pinned `faer-v0.24.4` (`0539947ffb75`) in the same binary, and
+  it carries the same penalty: C-order `qr_factor/4096x256` f64 is 47.62 ms at one
+  thread and 64.57 at eight against the fork's 47.33 and 58.25
+  (`result/zen5-cpu/faer-kernels/bfe4041cd991-0539947ffb75-mkl.md`), so this is not
+  something the fork introduced.
+- **Upstream knows and warns rather than adapts.** Its `perf-warn` says "QR prefers
+  column-major matrix. Found row-major matrix." So the row-major QR penalty is a
+  stated stance upstream, not an unnoticed bug -- which is also why the fork's change
+  removes the warning's premise rather than keeping it.

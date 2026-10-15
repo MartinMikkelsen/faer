@@ -134,3 +134,40 @@ documented there.
   column, empty), compared up to rounding rather than bit for bit. The fork's whole
   `--lib` suite (207 tests) passes, including the five
   `sparse::linalg::cholesky` tests that the first `to_owned` attempt broke.
+
+## Upstream
+
+All of this is upstream `faer-v0.24.4`'s code, and the fork's rules defer upstream
+feedback: nothing was filed or written to an upstream tracker, and the decision is
+the maintainer's. What the measurements above establish about upstream, in the three
+places it is worth stating:
+
+- **The column-pivoted factorisation is the one upstream neither adapts nor
+  warns about.** `faer/src/linalg/qr/col_pivoting/factor.rs` at the parent revision
+  `bfe4041` is byte-identical to the pinned upstream checkout, and that file has no
+  `perf-warn` at all -- while `qr/no_pivoting/factor.rs`, `lu/{partial,full}_pivoting/factor.rs`
+  and `cholesky/bunch_kaufman/factor.rs` all have one. So the 38x row-major penalty
+  this record measures is upstream's, and upstream has no message telling a caller to
+  transpose first. That is the closest thing here to an upstream oversight rather than
+  a stance.
+- **Partial-pivoting LU's warning claims something its own code does not deliver.**
+  The message reads "LU with partial pivoting prefers column-major or row-major
+  matrix. Found matrix with generic strides." The full-pivoting flavour earns the
+  "or row-major" half -- it factors a row-major input through `mat.transpose_mut()`,
+  which is why the copy measured a no-op there. The partial-pivoting flavour does not:
+  it pays 3.6x at `512x512` f64 one thread, all of it inherited, since the fork's only
+  change to that file at `bfe4041` is the `par_here` floor inside the recursion and a
+  test.
+- **The swap stage has a dead branch that looks like the lost half of exactly this
+  fix.** `let swap = |mat| { ... if col.row_stride() == 1 { <loop> } else { <loop> } }`:
+  both arms are the same loop, in upstream as well as here, so the row-major arm that
+  the condition was written for never landed and a row-major matrix swaps elements
+  *inside* a column -- one cache line per element, which is part of the 3.6x. Naming it
+  is all this record does; the fork's adaptation makes it harmless rather than fixing
+  it.
+- Two smaller upstream properties, neither a bug: `MatRef::to_owned` fills through
+  `Mat::from_fn`'s column-first walk, and `cloned`'s `T: Clone` bound is what rules out
+  `Mat::zeros` there; and `MatRef::canonical()` is documented as "an unconjugated view"
+  but is a reinterpretation of the source's memory, so it is only usable where the
+  conjugation is irrelevant -- upstream's own use is a norm. The first `to_owned`
+  attempt in this record used it for values and produced the wrong ones.
