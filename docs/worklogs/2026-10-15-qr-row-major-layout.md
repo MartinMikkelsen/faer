@@ -115,4 +115,12 @@ one thread and 7.1x at eight. Consumer: `tlinalg-rs#46`.
   change; upstream `faer-v0.24.4` is not implicated and no upstream revision was
   measured for this record.
 - Test: `qr::no_pivoting::factor::tests::test_row_major_factor_is_the_column_major_one`,
-  and the fork's `linalg::` suite (151 tests) passes at the revision above.
+  and the fork's `linalg::` suite (151 tests) passes at the revision above. The
+  campaign's own gate agrees: `fbench verify` at rev `e3d388b` reports
+  `all comparisons within tolerance` for `qr_factor` and `qr` over every regime
+  that carries them -- `linalg-small` (4..64) at 8T, `linalg-medium` (256) at 1T
+  and 8T, `linalg-large` (512) at 4T, `linalg-tall` (`1024x64`, `4096x256`) at 1T
+  and 8T, `linalg-wide` (`64x1024`, `256x4096`) at 1T -- in both dtypes, both
+  orders and all three engine rows. That is a check of each provider's
+  reconstruction residual and compact-`Q` orthonormality, run against the
+  harness rather than the test above.
