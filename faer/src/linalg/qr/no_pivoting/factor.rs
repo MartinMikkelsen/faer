@@ -248,9 +248,8 @@ fn qr_in_place_blocked<T: ComplexField>(
 	}
 	row
 }
-/// Copies `src` into `dst` elementwise, where `dst`'s columns are the contiguous
-/// direction and `src`'s rows are: one is column-major, the other row-major, and
-/// they have the same shape.
+/// Copies `src` into `dst` elementwise, where one of the two is column-major and
+/// the other row-major over the same shape.
 fn copy_transposed<T: ComplexField>(
 	mut dst: MatMut<'_, T>,
 	src: MatRef<'_, T>,
@@ -274,15 +273,20 @@ fn copy_transposed<T: ComplexField>(
 	}
 	copy_transposed_block(dst.rb_mut(), src);
 }
-/// Does the copy `copy_transposed` describes, one tile at a time, so that both
-/// sides are walked in their own contiguous direction instead of stepping over
-/// the other's stride.
+/// Does the copy `copy_transposed` describes, one tile at a time, reading the
+/// tile along whichever of the two is row-major and writing it along whichever
+/// is column-major. Staging it in a tile is what keeps each side's inner loop on
+/// its own contiguous direction: without it one side would step by the other's
+/// row stride, which is what this whole adaptation exists to avoid.
 fn copy_transposed_block<T: ComplexField>(
 	mut dst: MatMut<'_, T>,
 	src: MatRef<'_, T>,
 ) {
 	const B: usize = 16;
 	let (m, n) = dst.shape();
+	// `src` row-major means `dst` is the column-major one, and the other way
+	// round; exactly one of the two holds.
+	let src_row_major = src.row_stride().unsigned_abs() != 1;
 	let mut tile: [T; B * B] = core::array::from_fn(|_| zero());
 	let mut jb = 0;
 	while jb < n {
@@ -290,14 +294,29 @@ fn copy_transposed_block<T: ComplexField>(
 		let mut ib = 0;
 		while ib < m {
 			let i1 = Ord::min(ib + B, m);
-			for i in ib..i1 {
-				for j in jb..j1 {
-					tile[(i - ib) * B + (j - jb)] = src[(i, j)].clone();
-				}
-			}
-			for j in jb..j1 {
+			if src_row_major {
 				for i in ib..i1 {
-					dst[(i, j)] = tile[(i - ib) * B + (j - jb)].clone();
+					for j in jb..j1 {
+						tile[(i - ib) * B + (j - jb)] =
+							src[(i, j)].clone();
+					}
+				}
+				for j in jb..j1 {
+					for i in ib..i1 {
+						dst[(i, j)] = tile[(i - ib) * B + (j - jb)].clone();
+					}
+				}
+			} else {
+				for j in jb..j1 {
+					for i in ib..i1 {
+						tile[(i - ib) * B + (j - jb)] =
+							src[(i, j)].clone();
+					}
+				}
+				for i in ib..i1 {
+					for j in jb..j1 {
+						dst[(i, j)] = tile[(i - ib) * B + (j - jb)].clone();
+					}
 				}
 			}
 			ib += B;
@@ -311,11 +330,10 @@ fn copy_transposed_block<T: ComplexField>(
 /// Nothing in the panel is layout-aware: `make_householder_in_place` reads the
 /// pivot column and then scales it, and a row-major matrix walks that column
 /// with a stride of `ncols`, so every element it touches costs its own cache
-/// line. At `4096x256` f64 that one function was 25x its column-major cost and
-/// the whole of the row-major factorization's deficit; the trailing
-/// block-apply is a `matmul` and does not care. LAPACK's row-major interface
-/// pays the same copy internally. The arithmetic and its order are the copy's,
-/// so the result is the same factorization, bit for bit.
+/// line; the trailing block-apply is a `matmul` and does not care. LAPACK's
+/// row-major interface pays the same copy internally. The arithmetic and its
+/// order are the copy's, so the result is the same factorization, bit for bit;
+/// what the copy costs and what it buys is on the worklog for this row.
 ///
 /// The buffer is allocated here rather than taken from `stack` because
 /// `qr_in_place_scratch` is given only the shape and cannot know whether the
@@ -350,7 +368,10 @@ pub fn qr_in_place<T: ComplexField>(
 		block_size > 0,
 		Q_coeff.ncols() == Ord::min(A.nrows(), A.ncols()),
 	));
-	if A.row_stride().unsigned_abs() != 1 {
+	// A single row has no panel to make cheap -- `qr_in_place` eliminates at most
+	// one column of it -- so adapting one would allocate and copy the whole row
+	// for nothing.
+	if A.row_stride().unsigned_abs() != 1 && A.nrows() > 1 && A.ncols() > 1 {
 		return qr_in_place_adapted(A, Q_coeff, par, stack, params);
 	}
 	let mut Q_coeff = Q_coeff;
@@ -609,47 +630,89 @@ mod tests {
 		}
 	}
 	/// A matrix whose columns are not the contiguous direction is factored through
-	/// a column-major copy, so the factor it leaves behind has to be the
-	/// column-major factor of the same matrix, entry for entry. Anything less --
-	/// a copy that lands an element in the wrong place, a shape the copy's tiling
-	/// clips -- is a wrong factorization, and this is what says so.
+	/// a column-major copy, so the factor, the `tau` matrix and the rank it
+	/// leaves behind have to be the column-major ones for the same matrix.
+	/// Anything less -- a copy that lands an element in the wrong place, a shape
+	/// the copy's tiling clips, a partition that overlaps -- is a wrong
+	/// factorization, and this is what says so.
 	#[test]
 	fn test_row_major_factor_is_the_column_major_one() {
 		fn val(i: usize, j: usize) -> f64 {
 			let k = (i * 31 + j * 17) % 101;
 			(k as f64 - 50.0) * 0.25
 		}
-		fn check<T: ComplexField>(m: usize, n: usize, par: Par) {
+		trait Entry: ComplexField + core::fmt::Debug {
+			/// The matrix' `(i, j)` entry, as the flat buffer at storage row `i`
+			/// and column `j` holds it.
+			fn at(i: usize, j: usize, zero_col: bool) -> Self;
+			fn bits(&self) -> (u64, u64);
+		}
+		impl Entry for f64 {
+			fn at(i: usize, j: usize, zero_col: bool) -> Self {
+				if zero_col && j == 0 {
+					0.0
+				} else {
+					val(i, j)
+				}
+			}
+			fn bits(&self) -> (u64, u64) {
+				(self.to_bits(), 0)
+			}
+		}
+		impl Entry for c64 {
+			fn at(i: usize, j: usize, zero_col: bool) -> Self {
+				if zero_col && j == 0 {
+					c64::new(0.0, 0.0)
+				} else {
+					c64::new(val(i, j), val(i + 7, j + 3))
+				}
+			}
+			fn bits(&self) -> (u64, u64) {
+				(self.re.to_bits(), self.im.to_bits())
+			}
+		}
+		fn check<T: Entry>(
+			m: usize,
+			n: usize,
+			zero_col: bool,
+			// `true` factors the row-major side through a view whose rows are
+			// walked backwards, so its strides are both negative. The
+			// column-major side stays a plain view of the same matrix, because
+			// a negative row stride is *not* the layout the adaptation is for.
+			flipped: bool,
+			par: Par,
+		) {
 			let size = Ord::min(m, n);
 			let block_size = recommended_block_size::<T>(m, n);
-			let qr_scratch = qr_in_place_scratch::<T>(
-				m,
-				n,
-				block_size,
-				par,
-				default(),
-			);
-			let to = |x: f64| from_f64::<T>(x);
-			// The same matrix, flat in each order.
+			let qr_scratch =
+				qr_in_place_scratch::<T>(m, n, block_size, par, default());
+			// The same matrix, flat in each order. The row-major side is read
+			// back through the same view, so it is compared at the storage row
+			// the view puts there.
+			let row_of = |i: usize| if flipped { m - 1 - i } else { i };
 			let mut cm = Vec::with_capacity(m * n);
 			for j in 0..n {
 				for i in 0..m {
-					cm.push(to(val(i, j)));
+					cm.push(T::at(row_of(i), j, zero_col));
 				}
 			}
 			let mut rm = Vec::with_capacity(m * n);
 			for i in 0..m {
 				for j in 0..n {
-					rm.push(to(val(i, j)));
+					rm.push(T::at(i, j, zero_col));
 				}
 			}
 			let mut h_cm = vec![T::zero(); block_size * size];
 			let mut h_rm = vec![T::zero(); block_size * size];
-			let run = |a: &mut [T], h: &mut [T], (rs, cs): (isize, isize)| {
+			let run = |a: &mut [T],
+			           h: &mut [T],
+			           base: usize,
+			           (rs, cs): (isize, isize)|
+			 -> QrInfo {
 				unsafe {
 					qr_in_place(
 						MatMut::from_raw_parts_mut(
-							a.as_mut_ptr(),
+							a.as_mut_ptr().add(base),
 							m,
 							n,
 							rs,
@@ -665,23 +728,49 @@ mod tests {
 						par,
 						MemStack::new(&mut MemBuffer::new(qr_scratch)),
 						default(),
-					);
+					)
 				}
 			};
-			run(&mut cm, &mut h_cm, (1, m as isize));
-			run(&mut rm, &mut h_rm, (n as isize, 1));
+			let rm_base = if flipped { (m - 1) * n } else { 0 };
+			let rm_strides = if flipped {
+				(-(n as isize), 1)
+			} else {
+				(n as isize, 1)
+			};
+			let cm_info = run(&mut cm, &mut h_cm, 0, (1, m as isize));
+			let rm_info = run(&mut rm, &mut h_rm, rm_base, rm_strides);
+			if cm_info.rank != rm_info.rank {
+				panic!(
+					"{m}x{n} flipped={flipped}: rank {} against {}",
+					cm_info.rank, rm_info.rank,
+				);
+			}
 			for j in 0..n {
 				for i in 0..m {
-					if cm[i + j * m] != rm[i * n + j] {
+					let k = row_of(i) * n + j;
+					if cm[i + j * m].bits() != rm[k].bits() {
 						panic!(
-							"{m}x{n}: entry ({i}, {j}) differs between the two orders"
+							"{m}x{n} flipped={flipped}: entry ({i}, {j}) \
+							 differs between the two orders"
 						);
 					}
 				}
 			}
+			for k in 0..block_size * size {
+				if h_cm[k].bits() != h_rm[k].bits() {
+					panic!(
+						"{m}x{n} flipped={flipped}: tau entry {k} differs \
+						 between the two orders"
+					);
+				}
+			}
 		}
 		for (m, n) in [
-			(1, 1),
+			(0, 0),
+			(3, 0),
+			(0, 3),
+			(1, 7),
+			(7, 1),
 			(2, 3),
 			(3, 2),
 			(4, 4),
@@ -693,12 +782,19 @@ mod tests {
 			(256, 64),
 			(64, 256),
 		] {
-			check::<f64>(m, n, Par::Seq);
-			check::<c64>(m, n, Par::Seq);
+			for par in [Par::Seq, Par::rayon(8)] {
+				check::<f64>(m, n, false, false, par);
+				check::<c64>(m, n, false, false, par);
+			}
+			check::<f64>(m, n, false, true, Par::Seq);
+			check::<c64>(m, n, false, true, Par::rayon(4));
 		}
-		for par in [Par::rayon(8), Par::rayon(1)] {
-			check::<f64>(300, 17, par);
-			check::<c64>(17, 300, par);
+		// An exactly zero leading column is the one place the unblocked core
+		// stores a reflector's essential part in a different column than the one
+		// it is eliminating, so the copy has to carry that column too.
+		for (m, n) in [(16, 16), (64, 8), (8, 64), (300, 17)] {
+			check::<f64>(m, n, true, false, Par::Seq);
+			check::<c64>(m, n, true, false, Par::Seq);
 		}
 	}
 	/// Factor `A`, rebuild `Q` and `R`, and return `||A - QR|| / ||A||`.
