@@ -1592,30 +1592,6 @@ impl<
 		fn imp<'M, 'N, T: Clone, RStride: Stride, CStride: Stride>(
 			this: MatRef<'_, T, Dim<'M>, Dim<'N>, RStride, CStride>,
 		) -> Mat<T, Dim<'M>, Dim<'N>> {
-			// `Mat::from_fn` fills column by column, so a source whose columns
-			// are not the contiguous direction is read with a stride of
-			// `ncols`, one cache line per element. `Mat::zeros` is not
-			// available for a bare `T: Clone`, so the destination is seeded
-			// from one of the source's own elements -- every entry is
-			// overwritten by the copy -- and the copy stages a tile instead of
-			// stepping over the source's stride.
-			let src = this.as_dyn_stride().as_dyn();
-			if src.nrows() > 0
-				&& src.ncols() > 0
-				&& src.row_stride().unsigned_abs() != 1
-			{
-				let seed = src[(0, 0)].clone();
-				let mut out = Mat::<T, Dim<'M>, Dim<'N>>::from_fn(
-					this.nrows(),
-					this.ncols(),
-					|_, _| seed.clone(),
-				);
-				crate::linalg::copy_across_layouts_block(
-					out.as_mut().as_dyn_stride_mut().as_dyn_mut(),
-					src,
-				);
-				return out;
-			}
 			Mat::from_fn(this.nrows(), this.ncols(), |i, j| {
 				this.at(i, j).clone()
 			})
@@ -2106,10 +2082,44 @@ mod tests {
 		let empty: Mat<f64> = Mat::new();
 		assert_eq!(empty.as_ref().max(), None);
 	}
-	/// `cloned` stages a tile when the source's columns are not the contiguous
-	/// direction, so it has to land the same values as the elementwise fill it
-	/// replaces -- for a column-major view, a row-major one, a strided one, and
-	/// the shapes where the tiling clips.
+	#[test]
+	fn test_cloned_does_not_replicate_the_first_heap_value() {
+		use std::{cell::Cell, rc::Rc};
+		struct Value {
+			text: String,
+			clones: Rc<Cell<usize>>,
+		}
+		impl Clone for Value {
+			fn clone(&self) -> Self {
+				self.clones.set(self.clones.get() + 1);
+				Self {
+					text: self.text.clone(),
+					clones: self.clones.clone(),
+				}
+			}
+		}
+		let source: Vec<_> = (0..6)
+			.map(|i| Value {
+				text: if i == 0 {
+					"x".repeat(1024)
+				} else {
+					String::new()
+				},
+				clones: Rc::new(Cell::new(0)),
+			})
+			.collect();
+		let view = MatRef::from_row_major_slice(&source, 2, 3);
+		let copied = view.cloned();
+		for i in 0..2 {
+			for j in 0..3 {
+				let original = &source[3 * i + j];
+				assert_eq!(copied[(i, j)].text, original.text);
+				assert_eq!(original.clones.get(), 1);
+			}
+		}
+	}
+
+	/// Cloning preserves values for column/row-major and general strides.
 	#[test]
 	fn test_cloned_from_a_strided_source() {
 		fn check(m: usize, n: usize, (rs, cs): (isize, isize)) {

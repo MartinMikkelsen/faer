@@ -81,11 +81,10 @@ pub(crate) fn copy_across_layouts<T: ComplexField>(
 }
 /// One `16 x 16` tile of the copy, on one thread: read the tile along whichever
 /// side is row-major and write it along whichever is column-major, so neither
-/// side steps by the other's row stride. `T: Clone` rather than `ComplexField`,
-/// because `MatRef::cloned` -- where `T` is any cloneable scalar -- has the same
-/// defect and the same fix; an `Option` tile needs no value to start from, and
-/// every slot the second loop reads was written by the first.
-pub(crate) fn copy_across_layouts_block<T: Clone>(
+/// side steps by the other's row stride. Each source value is cloned into an
+/// `Option` tile and moved into the destination, without another clone or a
+/// seed value. Every slot the second loop reads was written by the first.
+fn copy_across_layouts_block<T: Clone>(
 	mut dst: MatMut<'_, T>,
 	src: MatRef<'_, T>,
 ) {
