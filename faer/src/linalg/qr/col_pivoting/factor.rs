@@ -351,7 +351,34 @@ pub fn qr_in_place<'out, I: Index, T: ComplexField>(
 	stack: &mut MemStack,
 	params: Spec<ColPivQrParams, T>,
 ) -> (ColPivQrInfo, PermRef<'out, I>) {
+	// Row-major input: the pivot search walks every one of the `n` columns of
+	// length `m` (`for j in 0..n { A.col(j).norm_l2() }`, and again per step when
+	// the incremental-norm path is closed), and that path is column-major only --
+	// it is gated on `A.row_stride() == 1` and unwraps a column-major view. So a
+	// row-major matrix touches `m * n` cache lines where the copy below moves
+	// `m * n` elements contiguously twice, on every shape rather than only on the
+	// tall ones. Factor a column-major copy and write the factor back, which is
+	// what LAPACK's row-major interface pays internally; the arithmetic is the
+	// copy's, so the factor, the `tau` matrix and the permutations are the
+	// column-major ones.
 	let mut A = A;
+	if A.row_stride().unsigned_abs() != 1 && A.nrows() > 1 && A.ncols() > 1 {
+		let (m, n) = A.shape();
+		let mut work = alloc::vec![zero::<T>(); m * n];
+		let mut work = MatMut::from_column_major_slice_mut(&mut work, m, n);
+		linalg::copy_across_layouts(work.rb_mut(), A.rb(), par);
+		let ret = qr_in_place(
+			work.rb_mut(),
+			Q_coeff,
+			col_perm,
+			col_perm_inv,
+			par,
+			stack,
+			params,
+		);
+		linalg::copy_across_layouts(A, work.rb(), par);
+		return ret;
+	}
 	let mut H = Q_coeff;
 	let size = H.ncols();
 	let block_size = H.nrows();

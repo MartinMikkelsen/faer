@@ -248,82 +248,6 @@ fn qr_in_place_blocked<T: ComplexField>(
 	}
 	row
 }
-/// Copies `src` into `dst` elementwise, where one of the two is column-major and
-/// the other row-major over the same shape.
-fn copy_transposed<T: ComplexField>(
-	mut dst: MatMut<'_, T>,
-	src: MatRef<'_, T>,
-	par: Par,
-) {
-	let n_tasks = Ord::min(
-		crate::utils::thread::parallelism_degree(par),
-		dst.ncols(),
-	)
-	.max(1);
-	if cfg!(feature = "rayon") && n_tasks > 1 {
-		#[cfg(feature = "rayon")]
-		{
-			use rayon::prelude::*;
-			dst.rb_mut()
-				.par_col_partition_mut(n_tasks)
-				.zip_eq(src.par_col_partition(n_tasks))
-				.for_each(|(mut d, s)| copy_transposed_block(d.rb_mut(), s));
-			return;
-		}
-	}
-	copy_transposed_block(dst.rb_mut(), src);
-}
-/// Does the copy `copy_transposed` describes, one tile at a time, reading the
-/// tile along whichever of the two is row-major and writing it along whichever
-/// is column-major. Staging it in a tile is what keeps each side's inner loop on
-/// its own contiguous direction: without it one side would step by the other's
-/// row stride, which is what this whole adaptation exists to avoid.
-fn copy_transposed_block<T: ComplexField>(
-	mut dst: MatMut<'_, T>,
-	src: MatRef<'_, T>,
-) {
-	const B: usize = 16;
-	let (m, n) = dst.shape();
-	// `src` row-major means `dst` is the column-major one, and the other way
-	// round; exactly one of the two holds.
-	let src_row_major = src.row_stride().unsigned_abs() != 1;
-	let mut tile: [T; B * B] = core::array::from_fn(|_| zero());
-	let mut jb = 0;
-	while jb < n {
-		let j1 = Ord::min(jb + B, n);
-		let mut ib = 0;
-		while ib < m {
-			let i1 = Ord::min(ib + B, m);
-			if src_row_major {
-				for i in ib..i1 {
-					for j in jb..j1 {
-						tile[(i - ib) * B + (j - jb)] =
-							src[(i, j)].clone();
-					}
-				}
-				for j in jb..j1 {
-					for i in ib..i1 {
-						dst[(i, j)] = tile[(i - ib) * B + (j - jb)].clone();
-					}
-				}
-			} else {
-				for j in jb..j1 {
-					for i in ib..i1 {
-						tile[(i - ib) * B + (j - jb)] =
-							src[(i, j)].clone();
-					}
-				}
-				for i in ib..i1 {
-					for j in jb..j1 {
-						dst[(i, j)] = tile[(i - ib) * B + (j - jb)].clone();
-					}
-				}
-			}
-			ib += B;
-		}
-		jb += B;
-	}
-}
 /// Factors a matrix whose columns are not the contiguous direction by copying
 /// it into a column-major buffer, factoring that, and copying the factor back.
 ///
@@ -350,9 +274,9 @@ fn qr_in_place_adapted<T: ComplexField>(
 	let (m, n) = A.shape();
 	let mut work = alloc::vec![zero::<T>(); m * n];
 	let mut work = MatMut::from_column_major_slice_mut(&mut work, m, n);
-	copy_transposed(work.rb_mut(), A.rb(), par);
+	linalg::copy_across_layouts(work.rb_mut(), A.rb(), par);
 	let info = qr_in_place(work.rb_mut(), Q_coeff, par, stack, params);
-	copy_transposed(A, work.rb(), par);
+	linalg::copy_across_layouts(A, work.rb(), par);
 	info
 }
 #[track_caller]

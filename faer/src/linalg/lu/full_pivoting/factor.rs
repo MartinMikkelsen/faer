@@ -483,7 +483,25 @@ pub fn lu_in_place<'out, I: Index, T: ComplexField>(
 			"LU with full pivoting prefers column-major or row-major matrix. Found matrix with generic strides."
 		);
 	}
+	// Same row-major adaptation as the partial-pivoting factorisation above.
 	let (M, N) = mat.shape();
+	if mat.row_stride().unsigned_abs() != 1 && M >= N && N > 1 {
+		let mut work = alloc::vec![zero::<T>(); M * N];
+		let mut work = MatMut::from_column_major_slice_mut(&mut work, M, N);
+		linalg::copy_across_layouts(work.rb_mut(), mat.rb(), par);
+		let ret = lu_in_place(
+			work.rb_mut(),
+			row_perm,
+			row_perm_inv,
+			col_perm,
+			col_perm_inv,
+			par,
+			stack,
+			params,
+		);
+		linalg::copy_across_layouts(mat, work.rb(), par);
+		return ret;
+	}
 	let size = Ord::min(M, N);
 	let (mut row_transpositions, stack) = stack.make_with(size, |_| 0);
 	let row_transpositions = row_transpositions.as_mut();
