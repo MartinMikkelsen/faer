@@ -126,10 +126,15 @@ documented there.
 - Limits: the same host-variance caveat as the QR record -- absolute times drift
   between invocations, so the C/F ratio and the within-run before/after are the
   readable statements.
-- Limits: the `to_owned` tile adds a `Mat::zeros` initialization pass (every entry
-  is overwritten before it is read), and it is serial: `to_owned` has no `par`
-  argument and is given `Par::Seq`, so at eight threads the copy is a larger share
-  of a composite call than it would be if it could use the caller's budget.
+- Limits, decided and not taken: the `to_owned`/`cloned` tile adds an
+  initialization pass (every entry is overwritten before it is read) and is
+  serial, because neither method has a `par` argument and the copy is given
+  `Par::Seq`. Consulting the ambient parallelism inside a copy would be the one
+  way to give them the caller's budget -- faer does that in `Qr::compute_Q`, so it
+  is a judgment call rather than an impossibility -- and it is not taken here
+  because the share it would recover is small: at `512x512` f64 eight threads the
+  copy is 0.275 ms of the composite `lu` cell's 3.03, so the ceiling is about 8%
+  of one cell, against a copy method that would start spawning work.
 - Revision measured: the parent of the commit carrying this change against it;
   upstream `faer-v0.24.4` was not measured.
 - Test: `mat::matref::tests::test_cloned_from_a_strided_source` covers the
