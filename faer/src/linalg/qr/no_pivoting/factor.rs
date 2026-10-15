@@ -248,6 +248,95 @@ fn qr_in_place_blocked<T: ComplexField>(
 	}
 	row
 }
+/// Copies `src` into `dst` elementwise, where `dst`'s columns are the contiguous
+/// direction and `src`'s rows are: one is column-major, the other row-major, and
+/// they have the same shape.
+fn copy_transposed<T: ComplexField>(
+	mut dst: MatMut<'_, T>,
+	src: MatRef<'_, T>,
+	par: Par,
+) {
+	let n_tasks = Ord::min(
+		crate::utils::thread::parallelism_degree(par),
+		dst.ncols(),
+	)
+	.max(1);
+	if cfg!(feature = "rayon") && n_tasks > 1 {
+		#[cfg(feature = "rayon")]
+		{
+			use rayon::prelude::*;
+			dst.rb_mut()
+				.par_col_partition_mut(n_tasks)
+				.zip_eq(src.par_col_partition(n_tasks))
+				.for_each(|(mut d, s)| copy_transposed_block(d.rb_mut(), s));
+			return;
+		}
+	}
+	copy_transposed_block(dst.rb_mut(), src);
+}
+/// Does the copy `copy_transposed` describes, one tile at a time, so that both
+/// sides are walked in their own contiguous direction instead of stepping over
+/// the other's stride.
+fn copy_transposed_block<T: ComplexField>(
+	mut dst: MatMut<'_, T>,
+	src: MatRef<'_, T>,
+) {
+	const B: usize = 16;
+	let (m, n) = dst.shape();
+	let mut tile: [T; B * B] = core::array::from_fn(|_| zero());
+	let mut jb = 0;
+	while jb < n {
+		let j1 = Ord::min(jb + B, n);
+		let mut ib = 0;
+		while ib < m {
+			let i1 = Ord::min(ib + B, m);
+			for i in ib..i1 {
+				for j in jb..j1 {
+					tile[(i - ib) * B + (j - jb)] = src[(i, j)].clone();
+				}
+			}
+			for j in jb..j1 {
+				for i in ib..i1 {
+					dst[(i, j)] = tile[(i - ib) * B + (j - jb)].clone();
+				}
+			}
+			ib += B;
+		}
+		jb += B;
+	}
+}
+/// Factors a matrix whose columns are not the contiguous direction by copying
+/// it into a column-major buffer, factoring that, and copying the factor back.
+///
+/// Nothing in the panel is layout-aware: `make_householder_in_place` reads the
+/// pivot column and then scales it, and a row-major matrix walks that column
+/// with a stride of `ncols`, so every element it touches costs its own cache
+/// line. At `4096x256` f64 that one function was 25x its column-major cost and
+/// the whole of the row-major factorization's deficit; the trailing
+/// block-apply is a `matmul` and does not care. LAPACK's row-major interface
+/// pays the same copy internally. The arithmetic and its order are the copy's,
+/// so the result is the same factorization, bit for bit.
+///
+/// The buffer is allocated here rather than taken from `stack` because
+/// `qr_in_place_scratch` is given only the shape and cannot know whether the
+/// caller will pass a row-major matrix; reserving `m * n` for every call would
+/// tax the column-major majority. This is the same trade the fork's two row
+/// splits make for their partial buffers.
+fn qr_in_place_adapted<T: ComplexField>(
+	A: MatMut<'_, T>,
+	Q_coeff: MatMut<'_, T>,
+	par: Par,
+	stack: &mut MemStack,
+	params: Spec<QrParams, T>,
+) -> QrInfo {
+	let (m, n) = A.shape();
+	let mut work = alloc::vec![zero::<T>(); m * n];
+	let mut work = MatMut::from_column_major_slice_mut(&mut work, m, n);
+	copy_transposed(work.rb_mut(), A.rb(), par);
+	let info = qr_in_place(work.rb_mut(), Q_coeff, par, stack, params);
+	copy_transposed(A, work.rb(), par);
+	info
+}
 #[track_caller]
 pub fn qr_in_place<T: ComplexField>(
 	A: MatMut<'_, T>,
@@ -261,19 +350,8 @@ pub fn qr_in_place<T: ComplexField>(
 		block_size > 0,
 		Q_coeff.ncols() == Ord::min(A.nrows(), A.ncols()),
 	));
-	#[cfg(feature = "perf-warn")]
-	if A.row_stride().unsigned_abs() != 1 && crate::__perf_warn!(QR_WARN) {
-		if A.col_stride().unsigned_abs() == 1 {
-			log::warn!(
-				target : "faer_perf",
-				"QR prefers column-major matrix. Found row-major matrix."
-			);
-		} else {
-			log::warn!(
-				target : "faer_perf",
-				"QR prefers column-major matrix. Found matrix with generic strides."
-			);
-		}
+	if A.row_stride().unsigned_abs() != 1 {
+		return qr_in_place_adapted(A, Q_coeff, par, stack, params);
 	}
 	let mut Q_coeff = Q_coeff;
 	let rank =
@@ -528,6 +606,99 @@ mod tests {
 					assert!(Q * R ~ A);
 				}
 			}
+		}
+	}
+	/// A matrix whose columns are not the contiguous direction is factored through
+	/// a column-major copy, so the factor it leaves behind has to be the
+	/// column-major factor of the same matrix, entry for entry. Anything less --
+	/// a copy that lands an element in the wrong place, a shape the copy's tiling
+	/// clips -- is a wrong factorization, and this is what says so.
+	#[test]
+	fn test_row_major_factor_is_the_column_major_one() {
+		fn val(i: usize, j: usize) -> f64 {
+			let k = (i * 31 + j * 17) % 101;
+			(k as f64 - 50.0) * 0.25
+		}
+		fn check<T: ComplexField>(m: usize, n: usize, par: Par) {
+			let size = Ord::min(m, n);
+			let block_size = recommended_block_size::<T>(m, n);
+			let qr_scratch = qr_in_place_scratch::<T>(
+				m,
+				n,
+				block_size,
+				par,
+				default(),
+			);
+			let to = |x: f64| from_f64::<T>(x);
+			// The same matrix, flat in each order.
+			let mut cm = Vec::with_capacity(m * n);
+			for j in 0..n {
+				for i in 0..m {
+					cm.push(to(val(i, j)));
+				}
+			}
+			let mut rm = Vec::with_capacity(m * n);
+			for i in 0..m {
+				for j in 0..n {
+					rm.push(to(val(i, j)));
+				}
+			}
+			let mut h_cm = vec![T::zero(); block_size * size];
+			let mut h_rm = vec![T::zero(); block_size * size];
+			let run = |a: &mut [T], h: &mut [T], (rs, cs): (isize, isize)| {
+				unsafe {
+					qr_in_place(
+						MatMut::from_raw_parts_mut(
+							a.as_mut_ptr(),
+							m,
+							n,
+							rs,
+							cs,
+						),
+						MatMut::from_raw_parts_mut(
+							h.as_mut_ptr(),
+							block_size,
+							size,
+							1,
+							block_size as isize,
+						),
+						par,
+						MemStack::new(&mut MemBuffer::new(qr_scratch)),
+						default(),
+					);
+				}
+			};
+			run(&mut cm, &mut h_cm, (1, m as isize));
+			run(&mut rm, &mut h_rm, (n as isize, 1));
+			for j in 0..n {
+				for i in 0..m {
+					if cm[i + j * m] != rm[i * n + j] {
+						panic!(
+							"{m}x{n}: entry ({i}, {j}) differs between the two orders"
+						);
+					}
+				}
+			}
+		}
+		for (m, n) in [
+			(1, 1),
+			(2, 3),
+			(3, 2),
+			(4, 4),
+			(17, 15),
+			(16, 16),
+			(64, 64),
+			(300, 17),
+			(17, 300),
+			(256, 64),
+			(64, 256),
+		] {
+			check::<f64>(m, n, Par::Seq);
+			check::<c64>(m, n, Par::Seq);
+		}
+		for par in [Par::rayon(8), Par::rayon(1)] {
+			check::<f64>(300, 17, par);
+			check::<c64>(17, 300, par);
 		}
 	}
 	/// Factor `A`, rebuild `Q` and `R`, and return `||A - QR|| / ||A||`.
