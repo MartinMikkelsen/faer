@@ -53,9 +53,8 @@ pub fn temp_mat_scratch<T: ComplexField>(
 	StackReq::new_aligned::<T>(len, align)
 }
 /// Copies `src` into `dst` elementwise, where the two have transposed strides:
-/// one is column-major, the other row-major, over the same shape. The tile is
-/// read along whichever side is row-major and written along whichever is
-/// column-major, so neither side steps by the other's row stride.
+/// one is column-major, the other row-major, over the same shape, in tiles that
+/// are column-partitioned between threads when the caller asked for them.
 pub(crate) fn copy_across_layouts<T: ComplexField>(
 	mut dst: MatMut<'_, T>,
 	src: MatRef<'_, T>,
@@ -80,10 +79,13 @@ pub(crate) fn copy_across_layouts<T: ComplexField>(
 	let _ = par;
 	copy_across_layouts_block(dst.rb_mut(), src);
 }
-/// One `16 x 16` tile of `copy_across_layouts`, on one thread: read the tile
-/// along whichever side is row-major and write it along whichever is
-/// column-major, so neither side steps by the other's row stride.
-fn copy_across_layouts_block<T: ComplexField>(
+/// One `16 x 16` tile of the copy, on one thread: read the tile along whichever
+/// side is row-major and write it along whichever is column-major, so neither
+/// side steps by the other's row stride. `T: Clone` rather than `ComplexField`,
+/// because `MatRef::cloned` -- where `T` is any cloneable scalar -- has the same
+/// defect and the same fix; an `Option` tile needs no value to start from, and
+/// every slot the second loop reads was written by the first.
+pub(crate) fn copy_across_layouts_block<T: Clone>(
 	mut dst: MatMut<'_, T>,
 	src: MatRef<'_, T>,
 ) {
@@ -92,7 +94,7 @@ fn copy_across_layouts_block<T: ComplexField>(
 	// `src` row-major means `dst` is the column-major one, and the other way
 	// round; exactly one of the two holds.
 	let src_row_major = src.row_stride().unsigned_abs() != 1;
-	let mut tile: [T; B * B] = core::array::from_fn(|_| zero());
+	let mut tile: [Option<T>; B * B] = core::array::from_fn(|_| None);
 	let mut jb = 0;
 	while jb < n {
 		let j1 = Ord::min(jb + B, n);
@@ -103,24 +105,26 @@ fn copy_across_layouts_block<T: ComplexField>(
 				for i in ib..i1 {
 					for j in jb..j1 {
 						tile[(i - ib) * B + (j - jb)] =
-							src[(i, j)].clone();
+							Some(src[(i, j)].clone());
 					}
 				}
 				for j in jb..j1 {
 					for i in ib..i1 {
-						dst[(i, j)] = tile[(i - ib) * B + (j - jb)].clone();
+						dst[(i, j)] =
+							tile[(i - ib) * B + (j - jb)].take().unwrap();
 					}
 				}
 			} else {
 				for j in jb..j1 {
 					for i in ib..i1 {
 						tile[(i - ib) * B + (j - jb)] =
-							src[(i, j)].clone();
+							Some(src[(i, j)].clone());
 					}
 				}
 				for i in ib..i1 {
 					for j in jb..j1 {
-						dst[(i, j)] = tile[(i - ib) * B + (j - jb)].clone();
+						dst[(i, j)] =
+							tile[(i - ib) * B + (j - jb)].take().unwrap();
 					}
 				}
 			}

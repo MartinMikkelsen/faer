@@ -30,15 +30,26 @@ documented there.
   lines on *every* shape; its guard is `nrows() > 1 && ncols() > 1`, wide
   included. Its gain is not only locality: a strided column norm is a scalar
   `hypot` walk where a contiguous one is a SIMD accumulation.
-- **`MatRef::to_owned` is the same defect one level up, and it is fixed for a
-  canonical source.** Every composite factorisation begins by copying its argument
+- **`MatRef::to_owned` and `MatRef::cloned` are the same defect one level up, and
+  both are fixed.** Every composite factorisation begins by copying its argument
   into an owned column-major `Mat`; `Mat::from_fn` fills that column by column, so
   for a row-major source every read steps by the source's row stride. It was
   1.01 ms against 0.057 for `512x512` f64, 6.36 against 0.36 at `1024x1024`, 5.08
   against 0.37 at `4096x256`, and 4.30 against 0.36 at `256x4096` -- about 17.7x,
   17.7x, 14.1x and 11.9x. It now stages a tile when the source's columns are not
   contiguous. The destination is `Mat::zeros`, not an uninitialised allocation:
-  `Conjugate::Canonical: ComplexField` already makes that available.
+  `Conjugate::Canonical: ComplexField` already makes that available. `cloned` has
+  neither: its bound is a bare `T: Clone`, so its destination is seeded from one
+  of the source's own elements -- every entry is overwritten by the copy -- and
+  the tile worker had to become `T: Clone` with an `Option` tile instead of
+  needing `zero()`. That seeding pass is `m * n` clone calls where `Mat::zeros` is
+  a memset, which is why `cloned` gains less than `to_owned` for the same defect:
+  `512x512` f64 0.981 -> 0.421 (2.33x) against 1.006 -> 0.275 (3.66x), `1024x1024`
+  6.554 -> 2.423 against 6.357 -> 2.007, `4096x256` 5.094 -> 2.049 against
+  5.078 -> 2.045, and c64 `4096x256` 11.047 -> 4.465. Nothing inside faer calls
+  `cloned` outside its own tests -- `RowRef::cloned` is the one production caller
+  and it clones through a transpose, whose row stride is the row's element stride
+  -- so this one is for consumers that materialise a row-major block.
 - **Only an already-canonical source takes the tile.** `MatRef::canonical()` is a
   *reinterpretation* of the source's memory, documented as "an unconjugated view",
   while `to_owned` has to apply `Conj::apply`, which is not a reinterpretation for
@@ -121,7 +132,11 @@ documented there.
   of a composite call than it would be if it could use the caller's budget.
 - Revision measured: the parent of the commit carrying this change against it;
   upstream `faer-v0.24.4` was not measured.
-- Test: `linalg::tests::test_row_major_adaptation_matches_the_column_major_one`
+- Test: `mat::matref::tests::test_cloned_from_a_strided_source` covers the
+  elementwise copy for a row-major source, a column-major one, a stride pair that
+  is neither and a negative row stride, over `0x0, 1x1, 1x5, 5x1, 16x16, 17x15,
+  15x17, 64x3, 3x64, 65x33`, and drops a column of each tile to show it fails.
+  `linalg::tests::test_row_major_adaptation_matches_the_column_major_one`
   covers the three new entry points -- the factor at every `(i, j)`, the `tau`
   matrix, every permutation and its inverse, and the transposition count, all bit
   for bit, `f64` and `c64`, sequential and threaded, with a plain row-major view
@@ -132,7 +147,7 @@ documented there.
   no-pivoting factorisation has its own test beside its `qr_in_place`, and it is
   the one that carries the shapes its guard leaves alone (wide, one row, one
   column, empty), compared up to rounding rather than bit for bit. The fork's whole
-  `--lib` suite (207 tests) passes, including the five
+  `--lib` suite (208 tests) passes, including the five
   `sparse::linalg::cholesky` tests that the first `to_owned` attempt broke.
 
 ## Upstream

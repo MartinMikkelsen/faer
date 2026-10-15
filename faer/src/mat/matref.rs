@@ -1592,6 +1592,30 @@ impl<
 		fn imp<'M, 'N, T: Clone, RStride: Stride, CStride: Stride>(
 			this: MatRef<'_, T, Dim<'M>, Dim<'N>, RStride, CStride>,
 		) -> Mat<T, Dim<'M>, Dim<'N>> {
+			// `Mat::from_fn` fills column by column, so a source whose columns
+			// are not the contiguous direction is read with a stride of
+			// `ncols`, one cache line per element. `Mat::zeros` is not
+			// available for a bare `T: Clone`, so the destination is seeded
+			// from one of the source's own elements -- every entry is
+			// overwritten by the copy -- and the copy stages a tile instead of
+			// stepping over the source's stride.
+			let src = this.as_dyn_stride().as_dyn();
+			if src.nrows() > 0
+				&& src.ncols() > 0
+				&& src.row_stride().unsigned_abs() != 1
+			{
+				let seed = src[(0, 0)].clone();
+				let mut out = Mat::<T, Dim<'M>, Dim<'N>>::from_fn(
+					this.nrows(),
+					this.ncols(),
+					|_, _| seed.clone(),
+				);
+				crate::linalg::copy_across_layouts_block(
+					out.as_mut().as_dyn_stride_mut().as_dyn_mut(),
+					src,
+				);
+				return out;
+			}
 			Mat::from_fn(this.nrows(), this.ncols(), |i, j| {
 				this.at(i, j).clone()
 			})
@@ -2081,5 +2105,71 @@ mod tests {
 		assert_eq!(m.as_ref().max(), Some(9.0));
 		let empty: Mat<f64> = Mat::new();
 		assert_eq!(empty.as_ref().max(), None);
+	}
+	/// `cloned` stages a tile when the source's columns are not the contiguous
+	/// direction, so it has to land the same values as the elementwise fill it
+	/// replaces -- for a column-major view, a row-major one, a strided one, and
+	/// the shapes where the tiling clips.
+	#[test]
+	fn test_cloned_from_a_strided_source() {
+		fn check(m: usize, n: usize, (rs, cs): (isize, isize)) {
+			// The buffer has to be long enough for the strides the view is
+			// built with, and the view starts far enough in that a negative
+			// stride stays inside it.
+			let span = if m == 0 || n == 0 {
+				0
+			} else {
+				(m - 1) * rs.unsigned_abs() + (n - 1) * cs.unsigned_abs() + 1
+			};
+			let raw: Vec<f64> = (0..span).map(|k| (k % 37) as f64 * 0.5 - 3.0).collect();
+			let base = if m == 0 || n == 0 {
+				0
+			} else {
+				(if rs < 0 { (m - 1) * rs.unsigned_abs() } else { 0 })
+					+ (if cs < 0 { (n - 1) * cs.unsigned_abs() } else { 0 })
+			};
+			let src = unsafe {
+				MatRef::from_raw_parts(
+					raw.as_ptr().add(base),
+					m,
+					n,
+					rs,
+					cs,
+				)
+			};
+			let expected = Mat::from_fn(m, n, |i, j| src.at(i, j).clone());
+			let got = src.cloned();
+			if got.nrows() != m || got.ncols() != n {
+				panic!("cloned {m}x{n}: shape is {}x{}", got.nrows(), got.ncols());
+			}
+			for j in 0..n {
+				for i in 0..m {
+					if got[(i, j)] != expected[(i, j)] {
+						panic!(
+							"cloned {m}x{n} strides {rs}x{cs}: ({i}, {j}) is {} against {}",
+							got[(i, j)],
+							expected[(i, j)]
+						);
+					}
+				}
+			}
+		}
+		for (m, n) in [
+			(0, 0),
+			(1, 1),
+			(1, 5),
+			(5, 1),
+			(16, 16),
+			(17, 15),
+			(15, 17),
+			(64, 3),
+			(3, 64),
+			(65, 33),
+		] {
+			check(m, n, (n as isize, 1));
+			check(m, n, (1, m as isize));
+			check(m, n, (2 * n as isize, 3));
+			check(m, n, (-(n as isize), 1));
+		}
 	}
 }
