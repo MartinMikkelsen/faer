@@ -368,10 +368,17 @@ pub fn qr_in_place<T: ComplexField>(
 		block_size > 0,
 		Q_coeff.ncols() == Ord::min(A.nrows(), A.ncols()),
 	));
-	// A single row has no panel to make cheap -- `qr_in_place` eliminates at most
-	// one column of it -- so adapting one would allocate and copy the whole row
-	// for nothing.
-	if A.row_stride().unsigned_abs() != 1 && A.nrows() > 1 && A.ncols() > 1 {
+	// Cheap only when the panel actually walks this matrix column by column for
+	// its whole length: the panel touches about `size * (m - size / 2)` elements
+	// that way, one cache line each, against `m * n` elements the copy walks
+	// contiguous twice. A tall or square matrix makes those within a factor of
+	// four of each other, and the stride is worth more than that; a wide one has
+	// `size == m` over `n` columns, so `m x 4096` would copy eight megabytes to
+	// save a few per cent of the panel and measurably loses (256x4096 f64 at one
+	// thread: 16.9 -> 20.7 ms). A single row is the limit case of the same thing:
+	// `qr_in_place` eliminates at most one column of it.
+	if A.row_stride().unsigned_abs() != 1 && A.ncols() > 1 && A.nrows() >= A.ncols()
+	{
 		return qr_in_place_adapted(A, Q_coeff, par, stack, params);
 	}
 	let mut Q_coeff = Q_coeff;
@@ -637,9 +644,19 @@ mod tests {
 	/// factorization, and this is what says so.
 	#[test]
 	fn test_row_major_factor_is_the_column_major_one() {
+		/// A well-conditioned fixture with no structure for the two orders to
+		/// exploit: a `(i, j)`-hashed value in `[-5, 5)`. The structured
+		/// alternative (`(i * 31 + j * 17) % 101`) makes the leading block
+		/// nearly singular, which amplifies a rounding difference between the
+		/// two orders into the `1e-8` range and would drown the comparison this
+		/// test is not making.
 		fn val(i: usize, j: usize) -> f64 {
-			let k = (i * 31 + j * 17) % 101;
-			(k as f64 - 50.0) * 0.25
+			let mut h = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+				^ (j as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+			h ^= h >> 31;
+			h = h.wrapping_mul(0x94D0_49BB_1331_11EB);
+			h ^= h >> 29;
+			((h >> 11) as f64 / (1u64 << 53) as f64 - 0.5) * 10.0
 		}
 		trait Entry: ComplexField + core::fmt::Debug {
 			/// The matrix' `(i, j)` entry, as the flat buffer at storage row `i`
@@ -680,6 +697,11 @@ mod tests {
 			// column-major side stays a plain view of the same matrix, because
 			// a negative row stride is *not* the layout the adaptation is for.
 			flipped: bool,
+			// Whether the adaptation applies to this shape. Where it does, the
+			// two orders run the same arithmetic on the same values, so they
+			// must agree bit for bit; where it does not, they are two different
+			// kernels over the same values and only the rounding may differ.
+			exact: bool,
 			par: Par,
 		) {
 			let size = Ord::min(m, n);
@@ -745,10 +767,17 @@ mod tests {
 					cm_info.rank, rm_info.rank,
 				);
 			}
+			let differs = |a: &T, b: &T| {
+				if exact {
+					a.bits() != b.bits()
+				} else {
+					abs1(&(a - b).clone()) > from_f64::<T::Real>(1e-10)
+				}
+			};
 			for j in 0..n {
 				for i in 0..m {
 					let k = row_of(i) * n + j;
-					if cm[i + j * m].bits() != rm[k].bits() {
+					if differs(&cm[i + j * m], &rm[k]) {
 						panic!(
 							"{m}x{n} flipped={flipped}: entry ({i}, {j}) \
 							 differs between the two orders"
@@ -757,7 +786,7 @@ mod tests {
 				}
 			}
 			for k in 0..block_size * size {
-				if h_cm[k].bits() != h_rm[k].bits() {
+				if differs(&h_cm[k], &h_rm[k]) {
 					panic!(
 						"{m}x{n} flipped={flipped}: tau entry {k} differs \
 						 between the two orders"
@@ -765,6 +794,38 @@ mod tests {
 				}
 			}
 		}
+		// Shapes the adaptation applies to: a tall or square matrix with more
+		// than one column. These must match the column-major factor exactly.
+		for (m, n) in [
+			(2, 2),
+			(3, 3),
+			(4, 4),
+			(17, 15),
+			(16, 16),
+			(64, 64),
+			(300, 17),
+			(256, 64),
+			(512, 17),
+			(64, 64),
+		] {
+			for par in [Par::Seq, Par::rayon(8)] {
+				check::<f64>(m, n, false, false, true, par);
+				check::<c64>(m, n, false, false, true, par);
+			}
+			check::<f64>(m, n, false, true, true, Par::Seq);
+			check::<c64>(m, n, false, true, true, Par::rayon(4));
+		}
+		// An exactly zero leading column is the one place the unblocked core
+		// stores a reflector's essential part in a different column than the one
+		// it is eliminating, so the copy has to carry that column too.
+		for (m, n) in [(16, 16), (64, 8), (300, 17)] {
+			check::<f64>(m, n, true, false, true, Par::Seq);
+			check::<c64>(m, n, true, false, true, Par::Seq);
+		}
+		// Shapes it deliberately leaves alone -- empty, one row or column, and
+		// wide, where the panel is `m` reflectors over `n` columns and the copy
+		// would cost more than it saved. Still the same matrix, so still the
+		// same factor up to rounding.
 		for (m, n) in [
 			(0, 0),
 			(3, 0),
@@ -773,28 +834,13 @@ mod tests {
 			(7, 1),
 			(2, 3),
 			(3, 2),
-			(4, 4),
-			(17, 15),
-			(16, 16),
-			(64, 64),
-			(300, 17),
+			(8, 64),
 			(17, 300),
-			(256, 64),
 			(64, 256),
 		] {
-			for par in [Par::Seq, Par::rayon(8)] {
-				check::<f64>(m, n, false, false, par);
-				check::<c64>(m, n, false, false, par);
-			}
-			check::<f64>(m, n, false, true, Par::Seq);
-			check::<c64>(m, n, false, true, Par::rayon(4));
-		}
-		// An exactly zero leading column is the one place the unblocked core
-		// stores a reflector's essential part in a different column than the one
-		// it is eliminating, so the copy has to carry that column too.
-		for (m, n) in [(16, 16), (64, 8), (8, 64), (300, 17)] {
-			check::<f64>(m, n, true, false, Par::Seq);
-			check::<c64>(m, n, true, false, Par::Seq);
+			check::<f64>(m, n, false, false, false, Par::Seq);
+			check::<c64>(m, n, false, false, false, Par::rayon(4));
+			check::<f64>(m, n, false, true, false, Par::Seq);
 		}
 	}
 	/// Factor `A`, rebuild `Q` and `R`, and return `||A - QR|| / ||A||`.

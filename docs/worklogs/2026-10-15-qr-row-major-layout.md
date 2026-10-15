@@ -30,11 +30,18 @@ one thread and 7.1x at eight. Consumer: `tlinalg-rs#46`.
   The fork's two row splits already allocate their partials inside a public call
   and the campaign's own blind-spot list records that boundary as it is, so this
   is the same trade and not a new one.
-- **A single row is not adapted.** `qr_in_place` eliminates at most one column of
-  a one-row matrix, so a `1 x n` row-major input is `O(1)` work on the direct path
-  and copying it would allocate and walk the whole row for nothing. The guard is
-  `nrows() > 1 && ncols() > 1`; a `m x 1` column vector has a unit row stride and
-  never reaches the guard.
+- **Only a tall or square matrix is adapted, and the guard is about the panel's
+  own work.** The panel touches about `size * (m - size / 2)` elements one cache
+  line at a time -- one pivot column per reflector -- against `m * n` elements
+  the copy walks contiguous twice. For a tall or square matrix those are within a
+  factor of two of each other and the stride is worth far more than that. A wide
+  one is `size == m` over `n` columns, so `256 x 4096` would copy eight megabytes
+  to save a couple of per cent of the panel: measured at one thread it is 16.9 ms
+  before the adaptation and 20.7 with it, worse by 22%, and with the guard it is
+  back at 17.2. A single row and a single column are the limit cases of the same
+  thing (`qr_in_place` eliminates at most one column of a one-row matrix), and a
+  `m x 1` column vector has a unit row stride and never reaches the guard at all.
+  The wide matrix's own C-order penalty is *not* this one and is not closed here.
 - **The copy is tiled, and each side is read and written along its own contiguous
   direction.** Reading column-wise out of a row-major buffer is the same stride
   problem in miniature, so the copy stages `16 x 16` tiles: it reads the tile
@@ -74,22 +81,34 @@ one thread and 7.1x at eight. Consumer: `tlinalg-rs#46`.
   | shape | dtype | t | before | after | F order (after) |
   |---|---|---|---|---|---|
   | `4096x256` | f64 | 1 | 47.83 | 19.44 | 15.77 |
-  | `4096x256` | f64 | 4 | 42.85 | 10.22 | 8.37 |
+  | `4096x256` | f64 | 4 | 42.85 | 10.03 | 8.35 |
   | `4096x256` | f64 | 8 | 42.96 | 8.39 | 7.23 |
   | `4096x256` | c64 | 1 | 106.87 | 64.34 | 55.78 |
-  | `4096x256` | c64 | 8 | 90.47 | 20.94 | 18.05 |
+  | `4096x256` | c64 | 8 | 90.47 | 21.00 | 18.13 |
   | `1024x64` | f64 | 1 | 1.090 | 0.587 | 0.462 |
   | `1024x64` | f64 | 8 | 2.919 | 0.678 | 0.628 |
   | `512x512` | f64 | 1 | 9.44 | 5.24 | 4.68 |
-  | `512x512` | f64 | 8 | 12.73 | 3.24 | 3.04 |
-  | `256x256` | f64 | 1 | 1.455 | 0.921 | 0.806 |
-  | `256x256` | f64 | 8 | 2.315 | 0.904 | 0.854 |
+  | `512x512` | f64 | 8 | 12.73 | 3.23 | 3.03 |
+  | `256x256` | f64 | 1 | 1.455 | 0.925 | 0.807 |
+  | `256x256` | f64 | 8 | 2.315 | 0.905 | 0.860 |
+
+  and, for the wide class the guard deliberately leaves alone, the same run
+  before -> after (`m` under `n`, so no adaptation either way):
+
+  | shape | dtype | t | before | after | F order (after) |
+  |---|---|---|---|---|---|
+  | `256x4096` | f64 | 1 | 16.90 | 17.20 | 16.90 |
+  | `256x4096` | f64 | 8 | 5.21 | 5.06 | 3.22 |
+  | `256x4096` | c64 | 1 | 60.23 | 60.54 | 64.04 |
+  | `64x1024` | f64 | 1 | 0.587 | 0.591 | 0.334 |
 
   The row-major path also scales now, which it did not before: `4096x256` f64 is
-  19.4 / 10.2 / 8.4 ms at one, four and eight threads against 47.8 / 42.9 / 43.0
+  19.4 / 10.0 / 8.4 ms at one, four and eight threads against 47.8 / 42.9 / 43.0
   before, so the deficit was not the copy and not the threads but one serial
   panel. The C/F ratio — the statement that survives the host's variance — is
-  3.03 -> 1.23 at `4096x256` f64 one thread and 5.94 -> 1.16 at eight.
+  3.03 -> 1.23 at `4096x256` f64 one thread and 5.94 -> 1.16 at eight, and the
+  wide class, which it does not touch, stays where it was (1.02 and 1.57 at
+  `256x4096` f64, one and eight threads) and stays within 5% of the vendor.
 - Limits: absolute times on this host move by up to 40% between invocations for
   an *unchanged* path (`512x512` f64 F order four threads: 4.05 and 2.87 ms in the
   two paired runs), so what the before/after column claims is a large, consistent
@@ -99,11 +118,18 @@ one thread and 7.1x at eight. Consumer: `tlinalg-rs#46`.
   cross-run comparison: it moves `4096x256` f64 from 1.72x / 4.95x / 5.24x behind
   to 0.70x / 1.18x / 1.02x on paper, and the paired ratio above is the evidence
   for the direction and the size of that move, not for its third digit.
-- Limits: only the no-pivoting factorization is adapted, and only when the caller
-  passes a row-major matrix to `qr_in_place` itself. `MatRef::qr()`'s own
-  `A.to_owned()` already hands the factorization a column-major copy, so the
-  high-level path is unaffected. `qr::col_pivoting` is not adapted and nothing in
-  the campaign measures it.
+- Limits: only the no-pivoting factorization is adapted, only for a tall or
+  square matrix, and only when the caller passes a row-major matrix to
+  `qr_in_place` itself. `MatRef::qr()`'s own `A.to_owned()` already hands the
+  factorization a column-major copy, so the high-level path is unaffected.
+  `qr::col_pivoting` is not adapted and nothing in the campaign measures it.
+- Limits, recorded and not taken: the wide class keeps a C-order penalty at four
+  and eight threads that this is not (`256x4096` f64: 6.28 against 4.51 at four,
+  5.06 against 3.22 at eight; one thread is parity). It is not a column walk the
+  copy would remove — the panel there is `m` reflectors over a `256`-element
+  column — and it is not a vendor lag: the campaign's MKL C-order column for that
+  cell is 12.10 / 4.82, so the fork is at 0.53 / 1.05 of it. Not measured
+  further.
 - Limits: the residual overhead on the C-order cells is the copy and nothing
   isolates it. At eight threads it is the whole end-to-end difference between the
   two orders, 1.16 ms at `4096x256` f64 and 0.05 ms at `1024x64`; at one thread it
