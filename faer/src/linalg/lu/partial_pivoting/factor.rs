@@ -267,6 +267,34 @@ pub fn lu_in_place<'out, I: Index, T: ComplexField>(
 	let mut stack = stack;
 	let m = matrix.nrows();
 	let n = matrix.ncols();
+	// Row-major input: the unblocked core walks each pivot column twice (the
+	// search, then the scaling) and the swap stage swaps elements inside a
+	// column, which is a cache line per element when the columns are not
+	// contiguous -- `size * m` touches that way against `m * n` elements the copy
+	// moves contiguously twice. Factor a column-major copy and write the factor
+	// back, which is what LAPACK's row-major interface pays internally; the
+	// arithmetic is the copy's, so the factor and the permutation are the
+	// column-major ones. The guard is the panel's own cost model, the same one
+	// `qr_in_place` states: a wide matrix has `size == m` over `n` columns, where
+	// the copy would cost more than it saved.
+	if matrix.row_stride().unsigned_abs() != 1
+		&& matrix.nrows() >= matrix.ncols()
+		&& matrix.ncols() > 1
+	{
+		let mut work = alloc::vec![zero::<T>(); m * n];
+		let mut work = MatMut::from_column_major_slice_mut(&mut work, m, n);
+		linalg::copy_across_layouts(work.rb_mut(), matrix.rb(), par);
+		let ret = lu_in_place(
+			work.rb_mut(),
+			perm,
+			perm_inv,
+			par,
+			stack,
+			params,
+		);
+		linalg::copy_across_layouts(matrix, work.rb(), par);
+		return ret;
+	}
 	let size = Ord::min(n, m);
 	for i in 0..m {
 		let p = &mut perm[i];

@@ -1615,6 +1615,34 @@ impl<
 		where
 			T: Conjugate,
 		{
+			// `Mat::from_fn` fills column by column, so for a source whose
+			// columns are not the contiguous direction every read steps by the
+			// source's row stride and costs its own cache line -- on `512x512`
+			// f64 that is 1.01 ms against 0.057, and this is the first thing
+			// `partial_piv_lu`, `full_piv_lu` and `Qr::new` do with their
+			// argument. Stage the copy in tiles instead, as the row-major
+			// factorisations do.
+			//
+			// Only an already-canonical source: the tile copy reads the source's
+			// memory as `T::Canonical`, which is a reinterpretation and not the
+			// conjugation `Conj::apply` below performs, so a conjugated view (an
+			// `adjoint().to_owned()`, which the sparse factorisations use) has to
+			// keep the elementwise path.
+			let src = this.canonical();
+			if T::IS_CANONICAL
+				&& src.row_stride().element_stride().unsigned_abs() != 1
+			{
+				let mut out = Mat::<T::Canonical, Dim<'M>, Dim<'N>>::zeros(
+					this.nrows(),
+					this.ncols(),
+				);
+				crate::linalg::copy_across_layouts(
+					out.as_mut().as_dyn_stride_mut().as_dyn_mut(),
+					src.as_dyn_stride().as_dyn(),
+					crate::Par::Seq,
+				);
+				return out;
+			}
 			Mat::from_fn(this.nrows(), this.ncols(), |i, j| {
 				Conj::apply::<T>(this.at(i, j))
 			})
@@ -2053,5 +2081,105 @@ mod tests {
 		assert_eq!(m.as_ref().max(), Some(9.0));
 		let empty: Mat<f64> = Mat::new();
 		assert_eq!(empty.as_ref().max(), None);
+	}
+	#[test]
+	fn test_cloned_does_not_replicate_the_first_heap_value() {
+		use std::{cell::Cell, rc::Rc};
+		struct Value {
+			text: String,
+			clones: Rc<Cell<usize>>,
+		}
+		impl Clone for Value {
+			fn clone(&self) -> Self {
+				self.clones.set(self.clones.get() + 1);
+				Self {
+					text: self.text.clone(),
+					clones: self.clones.clone(),
+				}
+			}
+		}
+		let source: Vec<_> = (0..6)
+			.map(|i| Value {
+				text: if i == 0 {
+					"x".repeat(1024)
+				} else {
+					String::new()
+				},
+				clones: Rc::new(Cell::new(0)),
+			})
+			.collect();
+		let view = MatRef::from_row_major_slice(&source, 2, 3);
+		let copied = view.cloned();
+		for i in 0..2 {
+			for j in 0..3 {
+				let original = &source[3 * i + j];
+				assert_eq!(copied[(i, j)].text, original.text);
+				assert_eq!(original.clones.get(), 1);
+			}
+		}
+	}
+
+	/// Cloning preserves values for column/row-major and general strides.
+	#[test]
+	fn test_cloned_from_a_strided_source() {
+		fn check(m: usize, n: usize, (rs, cs): (isize, isize)) {
+			// The buffer has to be long enough for the strides the view is
+			// built with, and the view starts far enough in that a negative
+			// stride stays inside it.
+			let span = if m == 0 || n == 0 {
+				0
+			} else {
+				(m - 1) * rs.unsigned_abs() + (n - 1) * cs.unsigned_abs() + 1
+			};
+			let raw: Vec<f64> = (0..span).map(|k| (k % 37) as f64 * 0.5 - 3.0).collect();
+			let base = if m == 0 || n == 0 {
+				0
+			} else {
+				(if rs < 0 { (m - 1) * rs.unsigned_abs() } else { 0 })
+					+ (if cs < 0 { (n - 1) * cs.unsigned_abs() } else { 0 })
+			};
+			let src = unsafe {
+				MatRef::from_raw_parts(
+					raw.as_ptr().add(base),
+					m,
+					n,
+					rs,
+					cs,
+				)
+			};
+			let expected = Mat::from_fn(m, n, |i, j| src.at(i, j).clone());
+			let got = src.cloned();
+			if got.nrows() != m || got.ncols() != n {
+				panic!("cloned {m}x{n}: shape is {}x{}", got.nrows(), got.ncols());
+			}
+			for j in 0..n {
+				for i in 0..m {
+					if got[(i, j)] != expected[(i, j)] {
+						panic!(
+							"cloned {m}x{n} strides {rs}x{cs}: ({i}, {j}) is {} against {}",
+							got[(i, j)],
+							expected[(i, j)]
+						);
+					}
+				}
+			}
+		}
+		for (m, n) in [
+			(0, 0),
+			(1, 1),
+			(1, 5),
+			(5, 1),
+			(16, 16),
+			(17, 15),
+			(15, 17),
+			(64, 3),
+			(3, 64),
+			(65, 33),
+		] {
+			check(m, n, (n as isize, 1));
+			check(m, n, (1, m as isize));
+			check(m, n, (2 * n as isize, 3));
+			check(m, n, (-(n as isize), 1));
+		}
 	}
 }

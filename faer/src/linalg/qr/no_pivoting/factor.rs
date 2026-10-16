@@ -248,6 +248,37 @@ fn qr_in_place_blocked<T: ComplexField>(
 	}
 	row
 }
+/// Factors a matrix whose columns are not the contiguous direction by copying
+/// it into a column-major buffer, factoring that, and copying the factor back.
+///
+/// Nothing in the panel is layout-aware: `make_householder_in_place` reads the
+/// pivot column and then scales it, and a row-major matrix walks that column
+/// with a stride of `ncols`, so every element it touches costs its own cache
+/// line; the trailing block-apply is a `matmul` and does not care. LAPACK's
+/// row-major interface pays the same copy internally. The arithmetic and its
+/// order are the copy's, so the result is the same factorization, bit for bit;
+/// what the copy costs and what it buys is on the worklog for this row.
+///
+/// The buffer is allocated here rather than taken from `stack` because
+/// `qr_in_place_scratch` is given only the shape and cannot know whether the
+/// caller will pass a row-major matrix; reserving `m * n` for every call would
+/// tax the column-major majority. This is the same trade the fork's two row
+/// splits make for their partial buffers.
+fn qr_in_place_adapted<T: ComplexField>(
+	A: MatMut<'_, T>,
+	Q_coeff: MatMut<'_, T>,
+	par: Par,
+	stack: &mut MemStack,
+	params: Spec<QrParams, T>,
+) -> QrInfo {
+	let (m, n) = A.shape();
+	let mut work = alloc::vec![zero::<T>(); m * n];
+	let mut work = MatMut::from_column_major_slice_mut(&mut work, m, n);
+	linalg::copy_across_layouts(work.rb_mut(), A.rb(), par);
+	let info = qr_in_place(work.rb_mut(), Q_coeff, par, stack, params);
+	linalg::copy_across_layouts(A, work.rb(), par);
+	info
+}
 #[track_caller]
 pub fn qr_in_place<T: ComplexField>(
 	A: MatMut<'_, T>,
@@ -261,19 +292,18 @@ pub fn qr_in_place<T: ComplexField>(
 		block_size > 0,
 		Q_coeff.ncols() == Ord::min(A.nrows(), A.ncols()),
 	));
-	#[cfg(feature = "perf-warn")]
-	if A.row_stride().unsigned_abs() != 1 && crate::__perf_warn!(QR_WARN) {
-		if A.col_stride().unsigned_abs() == 1 {
-			log::warn!(
-				target : "faer_perf",
-				"QR prefers column-major matrix. Found row-major matrix."
-			);
-		} else {
-			log::warn!(
-				target : "faer_perf",
-				"QR prefers column-major matrix. Found matrix with generic strides."
-			);
-		}
+	// Cheap only when the panel actually walks this matrix column by column for
+	// its whole length: the panel touches about `size * (m - size / 2)` elements
+	// that way, one cache line each, against `m * n` elements the copy walks
+	// contiguous twice. A tall or square matrix makes those within a factor of
+	// four of each other, and the stride is worth more than that; a wide one has
+	// `size == m` over `n` columns, so `m x 4096` would copy eight megabytes to
+	// save a few per cent of the panel and measurably loses (256x4096 f64 at one
+	// thread: 16.9 -> 20.7 ms). A single row is the limit case of the same thing:
+	// `qr_in_place` eliminates at most one column of it.
+	if A.row_stride().unsigned_abs() != 1 && A.ncols() > 1 && A.nrows() >= A.ncols()
+	{
+		return qr_in_place_adapted(A, Q_coeff, par, stack, params);
 	}
 	let mut Q_coeff = Q_coeff;
 	let rank =
@@ -528,6 +558,214 @@ mod tests {
 					assert!(Q * R ~ A);
 				}
 			}
+		}
+	}
+	/// A matrix whose columns are not the contiguous direction is factored through
+	/// a column-major copy, so the factor, the `tau` matrix and the rank it
+	/// leaves behind have to be the column-major ones for the same matrix.
+	/// Anything less -- a copy that lands an element in the wrong place, a shape
+	/// the copy's tiling clips, a partition that overlaps -- is a wrong
+	/// factorization, and this is what says so.
+	#[test]
+	fn test_row_major_factor_is_the_column_major_one() {
+		/// A well-conditioned fixture with no structure for the two orders to
+		/// exploit: a `(i, j)`-hashed value in `[-5, 5)`. The structured
+		/// alternative (`(i * 31 + j * 17) % 101`) makes the leading block
+		/// nearly singular, which amplifies a rounding difference between the
+		/// two orders into the `1e-8` range and would drown the comparison this
+		/// test is not making.
+		fn val(i: usize, j: usize) -> f64 {
+			let mut h = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+				^ (j as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+			h ^= h >> 31;
+			h = h.wrapping_mul(0x94D0_49BB_1331_11EB);
+			h ^= h >> 29;
+			((h >> 11) as f64 / (1u64 << 53) as f64 - 0.5) * 10.0
+		}
+		trait Entry: ComplexField + core::fmt::Debug {
+			/// The matrix' `(i, j)` entry, as the flat buffer at storage row `i`
+			/// and column `j` holds it.
+			fn at(i: usize, j: usize, zero_col: bool) -> Self;
+			fn bits(&self) -> (u64, u64);
+		}
+		impl Entry for f64 {
+			fn at(i: usize, j: usize, zero_col: bool) -> Self {
+				if zero_col && j == 0 {
+					0.0
+				} else {
+					val(i, j)
+				}
+			}
+			fn bits(&self) -> (u64, u64) {
+				(self.to_bits(), 0)
+			}
+		}
+		impl Entry for c64 {
+			fn at(i: usize, j: usize, zero_col: bool) -> Self {
+				if zero_col && j == 0 {
+					c64::new(0.0, 0.0)
+				} else {
+					c64::new(val(i, j), val(i + 7, j + 3))
+				}
+			}
+			fn bits(&self) -> (u64, u64) {
+				(self.re.to_bits(), self.im.to_bits())
+			}
+		}
+		fn check<T: Entry>(
+			m: usize,
+			n: usize,
+			zero_col: bool,
+			// `true` factors the row-major side through a view whose rows are
+			// walked backwards, so its strides are both negative. The
+			// column-major side stays a plain view of the same matrix, because
+			// a negative row stride is *not* the layout the adaptation is for.
+			flipped: bool,
+			// Whether the adaptation applies to this shape. Where it does, the
+			// two orders run the same arithmetic on the same values, so they
+			// must agree bit for bit; where it does not, they are two different
+			// kernels over the same values and only the rounding may differ.
+			exact: bool,
+			par: Par,
+		) {
+			// An empty matrix has no row to start a backwards view from.
+			let flipped = flipped && m > 0 && n > 0;
+			let size = Ord::min(m, n);
+			let block_size = recommended_block_size::<T>(m, n);
+			let qr_scratch =
+				qr_in_place_scratch::<T>(m, n, block_size, par, default());
+			// The same matrix, flat in each order. The row-major side is read
+			// back through the same view, so it is compared at the storage row
+			// the view puts there.
+			let row_of = |i: usize| if flipped { m - 1 - i } else { i };
+			let mut cm = Vec::with_capacity(m * n);
+			for j in 0..n {
+				for i in 0..m {
+					cm.push(T::at(row_of(i), j, zero_col));
+				}
+			}
+			let mut rm = Vec::with_capacity(m * n);
+			for i in 0..m {
+				for j in 0..n {
+					rm.push(T::at(i, j, zero_col));
+				}
+			}
+			let mut h_cm = vec![T::zero(); block_size * size];
+			let mut h_rm = vec![T::zero(); block_size * size];
+			let run = |a: &mut [T],
+			           h: &mut [T],
+			           base: usize,
+			           (rs, cs): (isize, isize)|
+			 -> QrInfo {
+				unsafe {
+					qr_in_place(
+						MatMut::from_raw_parts_mut(
+							a.as_mut_ptr().add(base),
+							m,
+							n,
+							rs,
+							cs,
+						),
+						MatMut::from_raw_parts_mut(
+							h.as_mut_ptr(),
+							block_size,
+							size,
+							1,
+							block_size as isize,
+						),
+						par,
+						MemStack::new(&mut MemBuffer::new(qr_scratch)),
+						default(),
+					)
+				}
+			};
+			let rm_base = if flipped { (m - 1) * n } else { 0 };
+			let rm_strides = if flipped {
+				(-(n as isize), 1)
+			} else {
+				(n as isize, 1)
+			};
+			let cm_info = run(&mut cm, &mut h_cm, 0, (1, m as isize));
+			let rm_info = run(&mut rm, &mut h_rm, rm_base, rm_strides);
+			if cm_info.rank != rm_info.rank {
+				panic!(
+					"{m}x{n} flipped={flipped}: rank {} against {}",
+					cm_info.rank, rm_info.rank,
+				);
+			}
+			let differs = |a: &T, b: &T| {
+				if exact {
+					a.bits() != b.bits()
+				} else {
+					abs1(&(a - b).clone()) > from_f64::<T::Real>(1e-10)
+				}
+			};
+			for j in 0..n {
+				for i in 0..m {
+					let k = row_of(i) * n + j;
+					if differs(&cm[i + j * m], &rm[k]) {
+						panic!(
+							"{m}x{n} flipped={flipped}: entry ({i}, {j}) \
+							 differs between the two orders"
+						);
+					}
+				}
+			}
+			for k in 0..block_size * size {
+				if differs(&h_cm[k], &h_rm[k]) {
+					panic!(
+						"{m}x{n} flipped={flipped}: tau entry {k} differs \
+						 between the two orders"
+					);
+				}
+			}
+		}
+		// Shapes the adaptation applies to: a tall or square matrix with more
+		// than one column. These must match the column-major factor exactly.
+		for (m, n) in [
+			(2, 2),
+			(3, 2),
+			(3, 3),
+			(4, 4),
+			(17, 15),
+			(16, 16),
+			(64, 64),
+			(300, 17),
+			(256, 64),
+			(512, 17),
+		] {
+			for par in [Par::Seq, Par::rayon(8)] {
+				check::<f64>(m, n, false, false, true, par);
+				check::<c64>(m, n, false, false, true, par);
+			}
+			check::<f64>(m, n, false, true, true, Par::Seq);
+			check::<c64>(m, n, false, true, true, Par::rayon(4));
+		}
+		// An exactly zero leading column is the one place the unblocked core
+		// stores a reflector's essential part in a different column than the one
+		// it is eliminating, so the copy has to carry that column too.
+		for (m, n) in [(16, 16), (64, 8), (300, 17)] {
+			check::<f64>(m, n, true, false, true, Par::Seq);
+			check::<c64>(m, n, true, false, true, Par::Seq);
+		}
+		// Shapes it deliberately leaves alone -- empty, one row or column, and
+		// wide, where the panel is `m` reflectors over `n` columns and the copy
+		// would cost more than it saved. Still the same matrix, so still the
+		// same factor up to rounding.
+		for (m, n) in [
+			(0, 0),
+			(3, 0),
+			(0, 3),
+			(1, 7),
+			(7, 1),
+			(2, 3),
+			(8, 64),
+			(17, 300),
+			(64, 256),
+		] {
+			check::<f64>(m, n, false, false, false, Par::Seq);
+			check::<c64>(m, n, false, false, false, Par::rayon(4));
+			check::<f64>(m, n, false, true, false, Par::Seq);
 		}
 	}
 	/// Factor `A`, rebuild `Q` and `R`, and return `||A - QR|| / ||A||`.
