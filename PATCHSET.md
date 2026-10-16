@@ -59,3 +59,31 @@ upstream `faer`.
   gate (build) is not a substitute for recording the result.
 - Anything intended for upstream is cleaned up and reviewed separately before it
   is proposed.
+
+## Adopted: row-major adaptation for QR and LU (2026-10-16)
+
+The row-major work in this branch is **adopted** at `fe41bbdfb88c0528e0726dca3b1764f47222ad56`.
+The decision follows the campaign's adoption protocol (`faer-benchmark/docs/protocol-v2-baseline.md`,
+"Adoption protocol for an optimization change"): correctness, a measured target improvement, and no
+regression on a declared guard set - all recorded in the campaign.
+
+- **Correctness**: `cargo test -p t4a-faer --lib` -> 209 passed, 2 ignored; the harness's numerical
+  verification ran over the measured populations before timing and passed.
+- **Target** (C-order `4096x256`, the cases this branch was written for; rotation-averaged ratio of
+  candidate to the pinned baseline, below 1 is faster):
+
+  | family | dtype | 4T | 8T |
+  | --- | --- | --- | --- |
+  | `qr_factor` | f64 | **0.223** | **0.187** |
+  | `qr_factor` | c64 | **0.356** | **0.283** |
+  | `lu` | f64 | 0.740 | 0.724 |
+  | `lu` | c64 | 0.767 | 0.864 |
+  | `qr` | f64 | 0.906 | 0.897 |
+  | `qr` | c64 | 0.942 | 0.914 |
+
+- **Guards**: the F-order cells of the same families and shapes stayed at 1.00 +/- 0.01, the unchanged
+  `faer-upstream` control row reproduced the baseline (12 cells, median ratio 1.0011, none outside the
+  recorded range), and no cell of the 24 measured was slower than 1.01.
+- **Evidence**: `faer-benchmark/data/results/zen5-cpu/faer-kernels/20261016T110534Z-baseline-ref-tall-mkl`
+  (pinned baseline) and `.../20261016T111756Z-candidate-fe41bbd-tall-mkl` (this revision), both built
+  with the patch-resolution guard that refuses a build whose checkouts are not the ones requested.
