@@ -84,6 +84,10 @@ regression on a declared guard set - all recorded in the campaign.
 - **Guards**: the F-order cells of the same families and shapes stayed at 1.00 +/- 0.01, the unchanged
   `faer-upstream` control row reproduced the baseline (12 cells, median ratio 1.0011, none outside the
   recorded range), and no cell of the 24 measured was slower than 1.01.
+- **Not fixed**: the wide `64x1024` case that also lost on the historical page (1.38x) is unchanged by
+  this branch (measured 0.96-1.02 in C-order): the row-major adaptation applies to tall/square shapes
+  only, and the wide path was left alone on purpose. The remaining losing cells (`lu 256^2` c64,
+  `lu 512^2`, `solve`, `cholesky`, `gemm`) are for later work.
 - **Evidence**: `faer-benchmark/data/results/zen5-cpu/faer-kernels/20261016T110534Z-baseline-ref-tall-mkl`
   (pinned baseline) and `.../20261016T111756Z-candidate-fe41bbd-tall-mkl` (this revision), both built
   with the patch-resolution guard that refuses a build whose checkouts are not the ones requested.
