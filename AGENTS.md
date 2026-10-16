@@ -9,6 +9,10 @@ agent rules before acting:
 (offline fallback: `../tensor4all-agent-rules/rules/index.md`). Load only the
 rule files the task needs.
 
+Verification and adoption of a change: [docs/adoption-protocol.md](docs/adoption-protocol.md) — the
+blast-radius acceptance grid, the measure-once rule and the exact commands.
+
+
 ## Repository-specific rules
 
 * This fork is an AI-driven experiment bench. Experiments are allowed to be

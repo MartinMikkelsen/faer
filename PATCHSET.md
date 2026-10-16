@@ -91,3 +91,10 @@ regression on a declared guard set - all recorded in the campaign.
 - **Evidence**: `faer-benchmark/data/results/zen5-cpu/faer-kernels/20261016T110534Z-baseline-ref-tall-mkl`
   (pinned baseline) and `.../20261016T111756Z-candidate-fe41bbd-tall-mkl` (this revision), both built
   with the patch-resolution guard that refuses a build whose checkouts are not the ones requested.
+
+## Merged (2026-10-16)
+
+The adopted work is merged into `main` as `1d754763e7198692d5af0bbf282ac70d9d7e61b5`. The measured
+revision (`fe41bbd`) and the merge commit carry **identical measured paths** (tree hashes of
+`faer/src`, `faer/Cargo.toml`, `faer-traits/**`, `Cargo.lock`), which is what keeps the acceptance
+measurement valid without measuring the same code twice - see `docs/adoption-protocol.md`.
