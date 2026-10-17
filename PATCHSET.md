@@ -50,3 +50,6 @@ upstream `faer`.
   gate (build) is not a substitute for recording the result.
 - Anything intended for upstream is cleaned up and reviewed separately before it
   is proposed.
+
+
+`t4a-faer 0.24.6` is `04542fae` plus its version bump (evd eigenvector normalization fix, tenferro-rs#2131; householder row-split and region-floor patches).

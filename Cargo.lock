@@ -2692,7 +2692,7 @@ dependencies = [
 
 [[package]]
 name = "t4a-faer"
-version = "0.24.4"
+version = "0.24.6"
 dependencies = [
  "aligned-vec",
  "amd",
