@@ -41,7 +41,13 @@ present/absent checks the above-floor route. Existing exhaustive small internal
 map/mask/depth0/2 oracle is repeated with owned8 budget. All outputs checked finite.
 No f32/c32 numerical structured or forced non-native execution claim.
 
-Before timing: completed POST required, comparison-completeness repair verified,
+POST COMPLETE on gpt-6.1-sol for7f713a1; no findings or deletion request. All
+requested bounded areas traced; no reviewer builds/tests/timing and no native
+worker-utilization claim. Report in campaign
+`docs/reviews/20261018-native-gemm-budget-post-review.{md,json}`. Source hashes
+still match reviewed snapshot; no production/test corrective edit.
+
+Before timing: comparison-completeness repair verified,
 exact targets/guard grids/counts frozen, fresh immutable A=b7715c5/B candidate
 builds/linkage/worker census and topology-based pins. This cannot restore LU's
 already-lowered caller budget or explain1T binary shifts. No timing yet; square
