@@ -77,3 +77,21 @@ on the declared blast radius. No large final-only squares during development.
 The separate native-floor7cd/f013 HOLD and generated-code gate remain unchanged;
 this is not permission to relax them. Main/pin/release/upstream submission stay
 unchanged; the expanded regression goal and final full campaigns remain unfinished.
+
+## Completed standalone public diagnostic: HOLD, not adopted
+
+A7364/B60de unchangedpublicprobe compiled499da6e, recordedf79812e/tool9daa,
+upstreamreference0539947 (notanengineinthisstandaloneprobe), novendorengine.
+Eightacceptedstarts/512rows/all2560samples, no rejectedattempts; realpool1/Seq,
+CPU4/fullL3watch4-11,16-23/observer0-3,12-15, source/ELF/power/boostguards pass.
+Results/starts/samples remaininharnesspublic-outcome.json ratherthanduplicated
+timingtablehere. One unchangedc64/C64x1024/clonedcontrolmovesfasteroutsidebaseline
+band; retained, not dismissedbecausefaster. HOLD performanceacceptance/noformal
+compositecampaign/noidenticalpublicretry. Alloriginalformalconditionsremain.
+
+ExistingELFonly(allnm aliasespreserved) bothclonedmeasurebodiesandfourcloned
+wrappershaveequal sizes/normalizedinstructions, butthisdoesnotproveRIPdata,
+caller/allocator/addresses/history/wholeprogramequivalenceorcause, norwaiveflag.
+Preliminarycollapsedaliasreportretainedandsupersededexplicitly. No code/flags/
+positions/alignmentchangedtofitassembly. Code60unchanged, main/pin/releasenot
+changed, f013HOLDunchanged, expandedgoalstillrequiresotherrealfixes+finalcampaign.
