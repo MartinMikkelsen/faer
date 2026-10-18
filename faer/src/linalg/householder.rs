@@ -156,8 +156,20 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 	// split either.
 	let threads = crate::utils::thread::parallelism_degree(par);
 	let deep_rows = essentials.nrows().unbound().saturating_sub(n);
-	let above_floor =
-		deep_rows >= 2 * n && deep_rows >= 4 * threads && deep_rows * n * n >= 8 * 1024;
+	// The floor is per *thread*, not per call: the work below is split into `threads`
+	// reductions of an `n x n` output, each of which pays for itself only while it is
+	// more than a region's worth. The previous per-call floor (`8 * 1024`, unscaled)
+	// let a blocked QR thread reductions that are a few microseconds of work: at
+	// `1024 x 1024` the recursion calls this function 667 times, mostly at `n = 6..24`,
+	// and opening a region for each of those cost 2.3 ms of the 20.1 ms call, while the
+	// reductions it threaded saved nothing. Scaling the floor by the thread count keeps
+	// the reductions whose per-thread work is real (the tall panel's `4096 x 16`
+	// reduction is 64 ki elements below the diagonal) and leaves the small ones serial:
+	// `256 x 256` 1.41 -> 1.28 ms, `512 x 512` 4.69 -> 4.41, `1024 x 1024` 17.0 -> 16.1
+	// (f64, eight threads, whole `qr_in_place`).
+	let above_floor = deep_rows >= 2 * n
+		&& deep_rows >= 4 * threads
+		&& deep_rows * n * n >= 8 * 1024 * threads;
 	let par = if above_floor { par } else { Par::Seq };
 	let mut householder_factor = householder_factor;
 	let essentials = essentials;
@@ -221,7 +233,7 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 			&& threads > 1
 			&& rows >= 2 * n
 			&& rows >= 4 * threads
-			&& rows * n * n >= 8 * 1024;
+			&& rows * n * n >= 8 * 1024 * threads;
 		if deep {
 			#[cfg(feature = "rayon")]
 			{
@@ -586,12 +598,32 @@ fn apply_block_householder_on_the_left_in_place_generic<
 		let K = matrix.ncols();
 		let (mut tmp, _) = unsafe { temp_mat_uninit::<T, _, _>(N, K, stack) };
 		let mut tmp = tmp.as_mat_mut();
+		let threads = crate::utils::thread::parallelism_degree(par);
+		// The split below slices the reduction's rows, but the top `n` rows carry the unit
+		// diagonal and are applied through their own `n x n` factor -- a chunk whose rows
+		// are a *subrange* of those `n` would need that factor column-sliced, and the
+		// triangular kernel cannot express the trapezoid that leaves. So the split is taken
+		// only while one chunk swallows the whole top block. Below that the products further
+		// down stay exactly as they were.
+		let row_split = cfg!(feature = "rayon")
+			&& threads > 1
+			&& M.unbound() >= 2 * K.unbound()
+			&& M.unbound() >= 4 * threads
+			&& M.unbound() * K.unbound() >= 8 * 1024
+			&& M.unbound().div_ceil(threads) >= N.unbound();
+		// The column split is the only parallelism when the rows are not split, so it takes
+		// the whole budget and leaves `inner_parallelism` at one thread: the block apply a
+		// blocked QR performs is short and wide (`N` columns of basis against the whole
+		// trailing block), and capping the split at four tasks made the rest nest a second
+		// region inside each -- `512 x 512` `qr_in_place` f64 at eight threads: 5.27 ms with
+		// the cap, 4.74 ms with eight tasks, and `1024 x 1024`: 20.5 -> 16.9 ms. When the
+		// rows *are* split, that split already owns the thread budget and the four-task cap
+		// stays, because the nested column split is then only a second level over a much
+		// smaller target (`4096 x 16` basis, 240-column target: 0.397 ms capped, 0.405 ms
+		// uncapped at eight threads).
 		let mut n_tasks = Ord::min(
-			Ord::min(
-				crate::utils::thread::parallelism_degree(par),
-				K.unbound(),
-			),
-			4,
+			Ord::min(threads, K.unbound()),
+			if row_split { 4 } else { threads },
 		);
 		if (M.unbound() * K.unbound()).saturating_mul(4 * M.unbound())
 			< gemm::get_threading_threshold()
@@ -623,19 +655,6 @@ fn apply_block_householder_on_the_left_in_place_generic<
 		// four times deeper than it is wide gains 3-4x, and one as wide as it is deep (the 512x512
 		// trailing update, `M = 512`, `K = 496`) loses for the partials it pays for. The thread and
 		// work floors keep small problems on the products below.
-		let threads = crate::utils::thread::parallelism_degree(par);
-		// The split below slices the reduction's rows, but the top `n` rows carry the unit
-		// diagonal and are applied through their own `n x n` factor -- a chunk whose rows
-		// are a *subrange* of those `n` would need that factor column-sliced, and the
-		// triangular kernel cannot express the trapezoid that leaves. So the split is taken
-		// only while one chunk swallows the whole top block. Below that the products further
-		// down stay exactly as they were.
-		let row_split = cfg!(feature = "rayon")
-			&& threads > 1
-			&& M.unbound() >= 2 * K.unbound()
-			&& M.unbound() >= 4 * threads
-			&& M.unbound() * K.unbound() >= 8 * 1024
-			&& M.unbound().div_ceil(threads) >= N.unbound();
 		if row_split {
 			#[cfg(feature = "rayon")]
 			{
@@ -1157,8 +1176,12 @@ mod tests {
 	/// The same for a panel of reflectors: `b > 1` gives the row split both kinds of basis -- the
 	/// unit-triangular top and the rectangular bottom -- and is the shape a trailing update takes.
 	fn check_panel(m: usize, b: usize, k: usize) {
+		check_panel_with(m, b, k, 4);
+	}
+
+	fn check_panel_with(m: usize, b: usize, k: usize, threads: usize) {
 		let pool = rayon::ThreadPoolBuilder::new()
-			.num_threads(4)
+			.num_threads(threads)
 			.build()
 			.unwrap();
 		let mut a: Mat<f64> = Mat::from_fn(m, b, |i, j| {
@@ -1205,7 +1228,7 @@ mod tests {
 				factor.as_ref(),
 				Conj::Yes,
 				threaded.as_mut(),
-				Par::rayon(4),
+				Par::rayon(threads),
 				MemStack::new(&mut mem),
 			)
 		});
@@ -1266,6 +1289,9 @@ mod tests {
 		check_upgrade(4096, 16);
 		check_upgrade(2048, 8);
 		check_upgrade(4096, 1);
+		// The floor is per thread now: this one is above the old per-call floor and
+		// below the per-thread one at four threads, so it takes the sequential kernel.
+		check_upgrade(256, 8);
 		// Below the split's floors: the products must still be right.
 		check_upgrade(64, 8);
 	}
@@ -1276,6 +1302,10 @@ mod tests {
 		check_panel(4096, 16, 240);
 		// Not tall enough for the row split: the column path must still be right.
 		check_panel(128, 8, 16);
+		// Short and wide, so the column split takes the whole eight-thread budget
+		// (`n_tasks == 8`), which is the shape a blocked QR's trailing update takes.
+		check_panel_with(256, 32, 224, 8);
+		check_panel_with(512, 48, 464, 8);
 	}
 
 	/// The row split slices the reduction's rows, but the top `n` rows are applied through one
