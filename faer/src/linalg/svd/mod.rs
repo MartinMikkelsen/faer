@@ -150,7 +150,7 @@ fn bidiag_real_svd_scratch<T: RealField>(
 	par: Par,
 	params: SvdParams,
 ) -> StackReq {
-	if n < params.recursion_threshold {
+	if n < params.recursion_threshold || !(compute_u || compute_v) {
 		StackReq::EMPTY
 	} else {
 		StackReq::all_of(&[
@@ -299,6 +299,17 @@ fn compute_bidiag_real_svd<T: RealField>(
 			u.rb_mut().map(|u| u.submatrix_mut(0, 0, n, n)),
 			v.rb_mut(),
 		)?;
+		return Ok(());
+	} else if u.is_none() && v.is_none() {
+		// Values only: `divide_and_conquer` still builds every singular vector of
+		// each merged subproblem into scratch and then discards it, because the
+		// 2-row `TwoRowsStorage` arm has nowhere to put it. The implicit QR
+		// iteration below accumulates no vectors at all, so for values it is
+		// `O(n^2)` work instead of the divide-and-conquer merge's `O(n^2)` per
+		// level; that is the same reason LAPACK's values-only `DBDSDC` calls
+		// `DLASDQ` with no vectors, which takes the `dqds` branch rather than
+		// divide and conquer.
+		bidiag_svd::qr_algorithm(diag.rb_mut(), subdiag.rb_mut(), None, None)?;
 		return Ok(());
 	} else {
 		let (mut u2, stack) = unsafe {
@@ -978,6 +989,121 @@ mod tests {
 			test_svd(Mat::<c64>::full(m, n, c64::ONE).as_ref());
 			test_svd(Mat::<f64>::identity(m, n).as_ref());
 			test_svd(Mat::<c64>::identity(m, n).as_ref());
+		}
+	}
+	/// The values-only path takes the implicit QR iteration at every size, while
+	/// `thin_svd` keeps divide and conquer above `recursion_threshold`; both run
+	/// on the same bidiagonal, so comparing their singular values is a
+	/// cross-algorithm reference check rather than a norm identity. The cases are
+	/// the ones where the two algorithms can disagree: zero, rank deficiency,
+	/// repeated values, a wide scale range, both shapes and both dtypes.
+	#[test]
+	fn test_values_only_matches_thin_on_hard_inputs() {
+		#[track_caller]
+		fn check<T: ComplexField>(what: &str, mat: MatRef<'_, T>) {
+			let values = mat.singular_values().unwrap();
+			let thin = mat.thin_svd().unwrap();
+			let size = Ord::min(mat.nrows(), mat.ncols());
+			assert_eq!(values.len(), size, "{what}");
+			let s = thin.S();
+			let mut max = zero::<T::Real>();
+			for x in values.iter() {
+				max = max.fmax(x.abs());
+			}
+			let tol = from_f64::<T::Real>(1e-9) * max;
+			for i in 0..size {
+				let a = values[i].clone();
+				let b = s[i].abs();
+				let close = (a.clone() - b.clone()).abs() <= tol;
+				assert!(
+					close,
+					"{what}: singular value {i} disagrees with the thin reference"
+				);
+				if i + 1 < size {
+					assert!(
+						a >= values[i + 1].clone(),
+						"{what}: values are not sorted"
+					);
+				}
+			}
+		}
+		let rng = &mut StdRng::seed_from_u64(43);
+		for (m, n) in [(160, 160), (256, 160), (160, 256)] {
+			let mat = CwiseMatDistribution {
+				nrows: m,
+				ncols: n,
+				dist: StandardNormal,
+			}
+			.rand::<Mat<f64>>(rng);
+			check("random real", mat.as_ref());
+			let mat = CwiseMatDistribution {
+				nrows: m,
+				ncols: n,
+				dist: ComplexDistribution::new(StandardNormal, StandardNormal),
+			}
+			.rand::<Mat<c64>>(rng);
+			check("random complex", mat.as_ref());
+		}
+		check("zero real", Mat::<f64>::zeros(160, 160).as_ref());
+		check("zero complex", Mat::<c64>::zeros(160, 160).as_ref());
+		{
+			let k = 40;
+			let b = CwiseMatDistribution {
+				nrows: 160,
+				ncols: k,
+				dist: StandardNormal,
+			}
+			.rand::<Mat<f64>>(rng);
+			let c = CwiseMatDistribution {
+				nrows: k,
+				ncols: 160,
+				dist: StandardNormal,
+			}
+			.rand::<Mat<f64>>(rng);
+			check("rank deficient real", (&b * &c).as_ref());
+			let b = CwiseMatDistribution {
+				nrows: 160,
+				ncols: k,
+				dist: ComplexDistribution::new(StandardNormal, StandardNormal),
+			}
+			.rand::<Mat<c64>>(rng);
+			let c = CwiseMatDistribution {
+				nrows: k,
+				ncols: 160,
+				dist: ComplexDistribution::new(StandardNormal, StandardNormal),
+			}
+			.rand::<Mat<c64>>(rng);
+			check("rank deficient complex", (&b * &c).as_ref());
+		}
+		let q = CwiseMatDistribution {
+			nrows: 160,
+			ncols: 160,
+			dist: StandardNormal,
+		}
+		.rand::<Mat<f64>>(rng)
+		.qr()
+		.compute_thin_Q();
+		let repeated: Vec<f64> = (0..160)
+			.map(|i| [1.0, 3.0, 7.0, 11.0, 19.0][i % 5])
+			.collect();
+		let spread: Vec<f64> = (0..160)
+			.map(|i| 10f64.powi(-4 + (i as i32) * 8 / 159))
+			.collect();
+		for (what, diag) in [("repeated", &repeated), ("scale spread", &spread)]
+		{
+			let d = Mat::<f64>::from_fn(160, 160, |i, j| {
+				if i == j { diag[i] } else { 0.0 }
+			});
+			let a = &q * &d * q.adjoint();
+			check(what, a.as_ref());
+			let a = Mat::<c64>::from_fn(160, 160, |i, j| c64::new(a[(i, j)], 0.0));
+			check(what, a.as_ref());
+		}
+		for scale in [1e-150, 1e150] {
+			let mat = Mat::<f64>::from_fn(160, 160, |i, j| {
+				scale * (((i * 131 + j * 71) % 97) as f64 / 97.0 - 0.5)
+			});
+			check("extreme scale", mat.as_ref());
 		}
 	}
 	#[test]
