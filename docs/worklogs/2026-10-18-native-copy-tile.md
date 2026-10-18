@@ -43,14 +43,20 @@ after destroying matrices are checked. This is not a dummy customComplexField.
 
 Library212passed/2existingignored; no-Rayonnarrowcheck passes with13existing
 warnings. Original Option body, wrapper and other production paths are preserved;
-only targeted formatting remains. Finished-diff independent POST is pending.
+only targeted formatting remains. Bounded finished-diff independent POST is
+complete with no must-fix source findings. It did not execute checks, rehash the
+checkout, or prove the existing identity helper sound; supplied diff/equality
+records and the completed PRE support unchanged-callers preservation.
 No new performance binary, verify or timing exists for this candidate, and no
 upstream measurement of0539947 has been performed for it. Source correctness
 cannot establish copy speedup, composite benefit or adoption.
 
 Performance evidence will stay in faer-benchmark/data/probes/20261018-native-copy-tile/.
-Any timing requires reviewed/frozen code, actual full-checkout linkage and binary
-proof, explicit effective1T public-copy boundary, all retained samples/rejections,
+Any performance verify or timing, including the public-copy probe, requires
+reviewed/frozen code, actual full-checkout linkage and binary proof, and the
+existing four dense size/normalized-body equalities. A mismatch is HOLD without
+flag/position tweaks or retries. With static qualification, explicit effective1T
+public-copy boundary, all retained samples/rejections,
 and the original formal control/guard/coverage/statistical acceptance conditions
 on the declared blast radius. No large final-only squares during development.
 The separate native-floor7cd/f013 HOLD and generated-code gate remain unchanged;
