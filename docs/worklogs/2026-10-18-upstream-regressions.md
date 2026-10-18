@@ -78,11 +78,25 @@ out of 396, with median control ratio 0.999747. There is also an untrimmed slow
 start for full-pivot LU affecting both engines; it must not be silently removed.
 The apparent target gains in this pair are therefore diagnostic, not acceptance.
 
-The frozen protocol permits one complete-pair repeat for this condition. The
-repeat retains the entire grid and reverses revision order (candidate then
-baseline); its predeclaration is
-`faer-benchmark/data/probes/20261018-upstream-lu-pair-repeat/README.md`.
-A second control failure blocks adoption rather than triggering further retries.
+The one permitted complete-pair repeat retained the entire grid and reversed
+revision order (candidate then baseline). Its runs are
+`20261018T081053Z-upstream-lu-restored-budget-repeat` and
+`20261018T084143Z-upstream-lu-baseline-repeat`; the predeclaration and complete
+per-cell comparison JSON are under
+`faer-benchmark/data/probes/20261018-upstream-lu-pair-repeat/`.
 
-No regression is marked resolved and no new candidate is adopted yet.
-Householder and shared-copy investigations remain separate work.
+**Outcome: INCONCLUSIVE / NOT ADOPTED.** The official comparator refused the
+repeat too: 12 of 396 upstream controls leave the baseline band, with median
+control ratio 0.998988. Most failures are Cholesky cells; their cause is not
+established as host variation versus a difference between linked binaries.
+No third pair is attempted and neither cells nor thresholds are relaxed.
+The target ratios are consistent across the two pairs, but that does not waive
+the failed control gate or constitute acceptance evidence. All four manifests
+and reports are retained, including the slow starts; no result page replaces
+the published baseline.
+
+The smallest candidate remains on `perf/upstream-lu-scheduling`, not on main.
+Adoption requires a comparison whose unchanged controls reproduce the baseline;
+the current two pairs cannot supply that evidence. Householder and shared-copy
+investigations remain separate, unresolved work. No regression is marked
+resolved.
