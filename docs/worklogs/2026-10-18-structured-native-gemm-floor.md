@@ -49,3 +49,14 @@ familystage2; no intersections/waivers/third LU pair. No final freeze/main merge
 
 Provenance: own reviewed helper/tests reused in MIT fork, existing gemm getter;
 no vendor implementation or foreign tests imported. Preserve inherited notices.
+
+Fresh-build development result, harness2920cfb: bothA/B successful, all4matching
+dense functions DIFFER in sizes/normalizedinstructions, not just addresses.
+HOLD/NOTADOPTED, no7cdperformance/verifykernel run, no stage1/stage2, no flag/
+alignment tweak/retry. Source restoration is insufficient to establish compiled
+body preservation. Actualpaths/binaries/build logs/static diff/provenance audit
+retained in campaign native-structured-floor/. Fingerprintcompiler/profile/config/
+features/flags/dependency fields match, incremental dirs empty; unavailable
+targetrootrustc_info not inferred, no causal/provider attribution. Code remains
+7cd372f, source correctness only. Next distinctbuild-only same-source diagnostic
+will not override this hold or become a benchmark/adoption gate.
