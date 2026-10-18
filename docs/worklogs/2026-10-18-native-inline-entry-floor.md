@@ -34,7 +34,11 @@ structured_native_budgets -- --nocapture`1pass; full `cargo test -p t4a-faer --l
 /home/shinaoka/projects/tensor4all/faer/target. Kache33980/33980valid/no corruption/
 orphan/missing/checksum/indexdrift. Targetedrustfmt/diffpass, no broadchurn.
 
-POST pending; no newperformancebuild/verify/timing yet. After completedPOST,
+POST COMPLETE gpt6.1sol/medium, no substantiatedmustfix in fullcoherent3-filediff.
+Twoexpressions/effectiveargs/cfg/fallbackoriginalshadows/testplacement/numerical
+claims traced; actualchosenbudgets/utilization/f32generic coverage not asserted.
+Review did not executechecks/rehashsource/verifyprovenance orapproveperformance.
+Fullreport+verbatimJSON in campaignreviews. No newperformancebuild/verify/timing yet. After completedPOST,
 freeze source/tool/argv then freshfullcheckout existingbuilderA/B, no worktreegit
 bypass. ALL4matchingdense sizes+normalizedbodies mustequal BEFOREtiming; elseHOLD
 without tweakingflags/declarations/positions or selective retries. Equality not
