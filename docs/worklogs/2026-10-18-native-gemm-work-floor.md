@@ -47,12 +47,39 @@ worker-utilization claim. Report in campaign
 `docs/reviews/20261018-native-gemm-budget-post-review.{md,json}`. Source hashes
 still match reviewed snapshot; no production/test corrective edit.
 
-Before timing: comparison-completeness repair verified,
-exact targets/guard grids/counts frozen, fresh immutable A=b7715c5/B candidate
-builds/linkage/worker census and topology-based pins. This cannot restore LU's
-already-lowered caller budget or explain1T binary shifts. No timing yet; square
-2048/3072/4096 remain final-only. Raw checks/diff/identity are retained in campaign
-`data/probes/20261018-native-gemm-budget/`.
+## Completed stage1 — INCONCLUSIVE / NOT ADOPTED
+
+Fresh A=b7715c53ba75946d68a97d5655f481b198332447 versus
+B=7f713a1401f18546d1ef0c134df982be80626b2e, upstream
+0539947ffb757a739d7e703a7d2fa0c792a909c1, harness
+651807301c4fd0d485a66038346388dffe289073, toolkit9daa5bc69a13b36c2a31680e20dbb53e2e42c9d5,
+MKL2026.1. Four existing-recorder groups/side, each three starts/rotations,
+median5/250ms, exactly648 full identity/status records per start per side (3888
+timed-table rows including declared skips). All verification/manifest/source/
+binary checks passed; explicit1/4/8 budgets read back. Binaries SHA256 A=
+2decf425848a5b0706f9c20de65084822a23d659071b38b6bf7c9dea9d347e4a,
+B=f8e8e3337463fe7219395de47c8161bba8c95fb604e743ca89266f587bcfce2a.
+
+Official controls failed6/60 Cholesky,1/48 GEMM,4/48 triangular-solve; HH72/72
+reproduced. Thus NO adoption, no stage2. All228 fork cells retained descriptively:
+Cholesky target24 ratios .529–.999 are NOT acceptance; one accepted A c64C256/8T
+start is5.143332ms versus .822805/.849886ms later, retained without filtering.
+Four dense GEMM rotation ratios exceed1.05; three medians exceed baseline process
+max+5%. No source/worker/alignment explanation waives these or proves causality.
+
+Measured CPUs4 /4-7 /4-11, watched full L3/SMT4-11,16-23; observer0-3,12-15,
+agent1492359 all11 threads outside. Boost0, performance/EPP-performance/max2GHz.
+Three post-rejected attempts retained completely: verification peer18 at10.3%,
+verification peer21 at11.9%, HH timing peer16 at10.3%; normal declared retries,
+not dropped outliers. Initial offline-preflight missing crate was recovered by
+locked dependency fetch, no lockfile/source change, before any build/timing.
+
+Raw8 runs remain in campaign data/results with no published page; exact inventory,
+full descriptive output and CLI logs in `data/probes/20261018-native-gemm-budget/`.
+Source hashes still match reviewed7f713a1. No code correction, main integration,
+large-square or final campaign. This cannot restore LU's ancestor-reduced budget.
+Next control-isolation work is DIAGNOSTIC ONLY, not another adoption pair or a
+replacement control contract. Full goal and square2048/3072/4096 remain pending.
 
 Provenance: own code/tests in MIT fork; existing gemm threshold getter reused,
 not vendor implementation. Prior inherited unsafe code/notice left unchanged.
