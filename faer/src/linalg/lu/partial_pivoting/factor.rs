@@ -103,11 +103,20 @@ pub(crate) fn lu_in_place_recursion<I: Index, T: ComplexField>(
 		// The panel solve and the trailing product below are this level's whole
 		// parallel work, and the block size halves every level of the recursion, so
 		// past a few levels they are a fork and a join around a handful of thousands
-		// of flops. Below the size floor the swap stage already uses, take
+		// of flops. Below the work floor the swap stage already uses, take
 		// `Par::Seq`; the recursion keeps the caller's `par`, so every level decides
 		// for its own trailing update. The crossover comes from a sweep over 256x256,
-		// 512x512 and 1024x1024 threaded, not from one shape.
-		let par_here = if A11.nrows() * A11.ncols() > params.par_threshold {
+		// 512x512 and 1024x1024 threaded `f64`, not from one shape, so it is a
+		// statement about *flops*: `par_threshold` counts `f64` elements, and a
+		// complex element carries four times the arithmetic. Comparing raw areas
+		// made the floor four times too high for `c64`, which left its `128x128`
+		// trailing update sequential at the size where the `f64` one is already
+		// threaded. The comparison saturates, so `usize::MAX` still disables it.
+		let work = A11
+			.nrows()
+			.saturating_mul(A11.ncols())
+			.saturating_mul(if T::IS_REAL { 2 } else { 8 });
+		let par_here = if work > params.par_threshold.saturating_mul(2) {
 			par
 		} else {
 			Par::Seq
@@ -204,7 +213,9 @@ pub struct PartialPivLuParams {
 	pub recursion_threshold: usize,
 	/// blocking variant step size
 	pub block_size: usize,
-	/// threshold at which size parallelism should be disabled
+	/// threshold at which size parallelism should be disabled, counted in `f64`
+	/// elements of the submatrix that would be threaded: a complex element is
+	/// four real MACs, so it reaches the same floor at a quarter of the area
 	pub par_threshold: usize,
 	#[doc(hidden)]
 	pub non_exhaustive: NonExhaustive,
@@ -338,7 +349,7 @@ mod tests {
 	use super::*;
 	use crate::stats::prelude::*;
 	use crate::utils::approx::*;
-	use crate::{Mat, assert};
+	use crate::{Mat, assert, c64};
 	use dyn_stack::MemBuffer;
 	#[test]
 	fn test_plu() {
@@ -454,11 +465,25 @@ mod tests {
 		let (info, _) = lu_in_place(LU.as_mut(), perm, perm_inv, par, stack, params);
 		(LU, perm.to_vec(), info.transposition_count)
 	}
-	/// The two products at a recursion level take `Par::Seq` while the trailing update is smaller
-	/// than `par_threshold`, instead of the caller's hint. That is a choice of how to schedule the
+	fn factor_lu_c64(A: &Mat<c64>, par: Par) -> (Mat<c64>, Vec<usize>, usize) {
+		let n = A.nrows();
+		let mut LU = A.cloned();
+		let perm = &mut *vec![0usize; n];
+		let perm_inv = &mut *vec![0usize; n];
+		let params: Spec<PartialPivLuParams, c64> = default();
+		let stack =
+			&mut MemBuffer::new(lu_in_place_scratch::<usize, c64>(n, n, par, params));
+		let stack = MemStack::new(stack);
+		let (info, _) = lu_in_place(LU.as_mut(), perm, perm_inv, par, stack, params);
+		(LU, perm.to_vec(), info.transposition_count)
+	}
+	/// The two products at a recursion level take `Par::Seq` while the trailing update's work is
+	/// below the floor, instead of the caller's hint. That is a choice of how to schedule the
 	/// same arithmetic, so both sides of the floor have to return the same factorization: `96`,
-	/// `128` and `192` are below `128 * 128` at the top level, `256` and `512` above it, and every
-	/// level in between halves down through it.
+	/// `128` and `192` are below `128 * 128` `f64` elements at the top level, `256` and `512`
+	/// above it, and every level in between halves down through it. A `c64` element is four real
+	/// MACs, so the same floor is reached at a quarter of the area -- `128` is below it and `256`
+	/// above it for `c64` too, which is the case the element-only comparison got wrong.
 	#[test]
 	fn threaded_lu_matches_the_sequential_one() {
 		let rng = &mut StdRng::seed_from_u64(0);
@@ -481,6 +506,32 @@ mod tests {
 			let (par, perm_par, trans_par) =
 				pool.install(|| factor_lu(&A, Par::rayon(4)));
 			assert!(seq.as_ref() ~ par.as_ref());
+			assert!(perm_seq == perm_par);
+			assert!(trans_seq == trans_par);
+		}
+		for n in [96, 128, 192, 256, 512] {
+			let real = CwiseMatDistribution {
+				nrows: n,
+				ncols: n,
+				dist: StandardNormal,
+			}
+			.rand::<Mat<f64>>(rng);
+			let imag = CwiseMatDistribution {
+				nrows: n,
+				ncols: n,
+				dist: StandardNormal,
+			}
+			.rand::<Mat<f64>>(rng);
+			let A = Mat::<c64>::from_fn(n, n, |i, j| c64::new(real[(i, j)], imag[(i, j)]));
+			let (seq, perm_seq, trans_seq) = factor_lu_c64(&A, Par::Seq);
+			let (par, perm_par, trans_par) =
+				pool.install(|| factor_lu_c64(&A, Par::rayon(4)));
+			for j in 0..n {
+				for i in 0..n {
+					let diff = (seq[(i, j)] - par[(i, j)]).abs();
+					assert!(diff <= 1e-10, "({i}, {j}) differs by {diff:e}");
+				}
+			}
 			assert!(perm_seq == perm_par);
 			assert!(trans_seq == trans_par);
 		}
