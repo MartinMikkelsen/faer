@@ -79,15 +79,26 @@ pub(crate) fn copy_across_layouts<T: ComplexField>(
 	let _ = par;
 	copy_across_layouts_block(dst.rb_mut(), src);
 }
-/// One `16 x 16` tile of the copy, on one thread: read the tile along whichever
-/// side is row-major and write it along whichever is column-major, so neither
-/// side steps by the other's row stride. Each source value is cloned into an
-/// `Option` tile and moved into the destination, without another clone or a
-/// seed value. Every slot the second loop reads was written by the first.
+/// Copies on one thread in `16 x 16` tiles. Only the four builtin scalar types
+/// use a seeded value tile; all other types keep the one-clone/move `Option`
+/// tile, without a seed or second clone. Both paths read along the row-major
+/// side and write along the column-major side.
 fn copy_across_layouts_block<T: Clone>(
 	mut dst: MatMut<'_, T>,
 	src: MatRef<'_, T>,
 ) {
+	// Exact identities, not implementor-controlled native flags: custom Clone
+	// and Drop behavior must keep the original Option path, without a new
+	// 'static bound. The existing helper only erases lifetimes, not type identity.
+	let id = crate::hacks::nonstatic_typeid::<T>();
+	if id == core::any::TypeId::of::<f32>()
+		|| id == core::any::TypeId::of::<f64>()
+		|| id == core::any::TypeId::of::<crate::c32>()
+		|| id == core::any::TypeId::of::<crate::c64>()
+	{
+		copy_across_layouts_native_block(dst, src);
+		return;
+	}
 	const B: usize = 16;
 	let (m, n) = dst.shape();
 	// `src` row-major means `dst` is the column-major one, and the other way
@@ -124,6 +135,54 @@ fn copy_across_layouts_block<T: Clone>(
 					for j in jb..j1 {
 						dst[(i, j)] =
 							tile[(i - ib) * B + (j - jb)].take().unwrap();
+					}
+				}
+			}
+			ib += B;
+		}
+		jb += B;
+	}
+}
+/// Only called for the four exact builtin types above, whose Clone is a pure
+/// bit copy and which have no Drop. No zero/default value is requested. Every
+/// slot read on writeout is overwritten by staging, including partial tiles.
+fn copy_across_layouts_native_block<T: Clone>(
+	mut dst: MatMut<'_, T>,
+	src: MatRef<'_, T>,
+) {
+	const B: usize = 16;
+	let (m, n) = dst.shape();
+	if m == 0 || n == 0 {
+		return;
+	}
+	let src_row_major = src.row_stride().unsigned_abs() != 1;
+	let mut tile: [T; B * B] = core::array::from_fn(|_| src[(0, 0)].clone());
+	let mut jb = 0;
+	while jb < n {
+		let j1 = Ord::min(jb + B, n);
+		let mut ib = 0;
+		while ib < m {
+			let i1 = Ord::min(ib + B, m);
+			if src_row_major {
+				for i in ib..i1 {
+					for j in jb..j1 {
+						tile[(i - ib) * B + (j - jb)] = src[(i, j)].clone();
+					}
+				}
+				for j in jb..j1 {
+					for i in ib..i1 {
+						dst[(i, j)] = tile[(i - ib) * B + (j - jb)].clone();
+					}
+				}
+			} else {
+				for j in jb..j1 {
+					for i in ib..i1 {
+						tile[(i - ib) * B + (j - jb)] = src[(i, j)].clone();
+					}
+				}
+				for i in ib..i1 {
+					for j in jb..j1 {
+						dst[(i, j)] = tile[(i - ib) * B + (j - jb)].clone();
 					}
 				}
 			}
@@ -328,6 +387,8 @@ pub mod zip;
 mod tests {
 	use super::*;
 	use dyn_stack::MemBuffer;
+
+	mod copy_layouts;
 
 	/// A scalar the fixture can build and two results can be compared with
 	/// exactly -- exact because every entry point below runs the same arithmetic
