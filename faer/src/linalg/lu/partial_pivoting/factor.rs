@@ -100,23 +100,11 @@ pub(crate) fn lu_in_place_recursion<I: Index, T: ComplexField>(
 			A.rb_mut().split_at_mut(block_size, block_size);
 		let A00 = A00.rb();
 		let A10 = A10.rb();
-		// The panel solve and the trailing product below are this level's whole
-		// parallel work, and the block size halves every level of the recursion, so
-		// past a few levels they are a fork and a join around a handful of thousands
-		// of flops. Below the size floor the swap stage already uses, take
-		// `Par::Seq`; the recursion keeps the caller's `par`, so every level decides
-		// for its own trailing update. The crossover comes from a sweep over 256x256,
-		// 512x512 and 1024x1024 threaded, not from one shape.
-		let par_here = if A11.nrows() * A11.ncols() > params.par_threshold {
-			par
-		} else {
-			Par::Seq
-		};
 		{
 			linalg::triangular_solve::solve_unit_lower_triangular_in_place(
 				A00.rb(),
 				A01.rb_mut(),
-				par_here,
+				par,
 			);
 		}
 		linalg::matmul::matmul(
@@ -125,7 +113,7 @@ pub(crate) fn lu_in_place_recursion<I: Index, T: ComplexField>(
 			A10.rb(),
 			A01.rb(),
 			-one::<T>(),
-			par_here,
+			par,
 		);
 		n_trans += lu_in_place_recursion(
 			A.rb_mut().get_mut(block_size..m, ..),
@@ -333,6 +321,10 @@ pub fn lu_in_place<'out, I: Index, T: ComplexField>(
 		unsafe { PermRef::new_unchecked(perm, perm_inv, m) },
 	)
 }
+#[cfg(all(test, feature = "rayon"))]
+#[path = "tests/threading.rs"]
+mod threading_tests;
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -454,11 +446,7 @@ mod tests {
 		let (info, _) = lu_in_place(LU.as_mut(), perm, perm_inv, par, stack, params);
 		(LU, perm.to_vec(), info.transposition_count)
 	}
-	/// The two products at a recursion level take `Par::Seq` while the trailing update is smaller
-	/// than `par_threshold`, instead of the caller's hint. That is a choice of how to schedule the
-	/// same arithmetic, so both sides of the floor have to return the same factorization: `96`,
-	/// `128` and `192` are below `128 * 128` at the top level, `256` and `512` above it, and every
-	/// level in between halves down through it.
+	/// Scheduling the recursive products must preserve the factorization.
 	#[test]
 	fn threaded_lu_matches_the_sequential_one() {
 		let rng = &mut StdRng::seed_from_u64(0);
