@@ -102,3 +102,40 @@ The adopted work is merged into `main` as `1d754763e7198692d5af0bbf282ac70d9d7e6
 revision (`fe41bbd`) and the merge commit carry **identical measured paths** (tree hashes of
 `faer/src`, `faer/Cargo.toml`, `faer-traits/**`, `Cargo.lock`), which is what keeps the acceptance
 measurement valid without measuring the same code twice - see `docs/adoption-protocol.md`.
+
+## Adopted: thread-budget block-apply split and the gemm flop floor (2026-10-18)
+
+Both changes are **adopted** and merged at `2240b076a03011b2f128988fecf2967c4b1dda1c`
+(`0627828` and `2000dd9`, verified to carry the measured trees). Same protocol as above:
+correctness, a measured target, no guard regression.
+
+- **Correctness**: `cargo test -p t4a-faer --lib` -> 209 passed, 2 ignored after the split
+  change and 210 passed, 2 ignored after the gemm change (the new
+  `thread_budget_does_not_change_the_product`); the harness's numerical grid ran before
+  every timing pass. The rejected SVD branch's `test_values_only_matches_thin_on_hard_inputs`
+  passed too, but its change was dropped on measurement.
+- **Target, block-apply split** (`0627828` against `5578ccc`, f64, ratio below 1 is faster):
+
+  | family | n | C 4T | C 8T | F 4T | F 8T |
+  | --- | --- | --- | --- | --- | --- |
+  | `qr_factor` | 256 | 0.981 | **0.916** | 1.000 | **0.910** |
+  | `qr_factor` | 512 | 0.990 | **0.881** | 0.996 | **0.879** |
+  | `qr` | 256 | 1.002 | **0.862** | 0.990 | **0.849** |
+  | `qr` | 512 | 0.934 | **0.862** | 0.935 | **0.856** |
+
+  Guards: `svd_values` 0.992-1.002, `svd_thin` 0.965-1.008, the tall `4096x256`/`1024x64`
+  cells of `qr_factor`, `qr` and `householder_apply` inside their recorded spread, upstream
+  control median 1.00.
+- **Target, gemm flop floor** (`2000dd9` against `0627828`, MKL arm): f64 `32^3` **0.233**
+  (C 4T), **0.178** (C 8T), **0.222** / **0.163** (F); f64 `64^3` 0.702-0.869; f64 `128^3`
+  8T 0.879 / 0.901; every c64 cell unchanged (0.92-1.06), which is the point of counting
+  flops. The f64 `96^3` 4T and `192^3` cells are inside their own between-start spread.
+- **Rejected on the way**: the per-thread compact-WY upgrade floor (faster on the target,
+  but `householder_apply/1024x64` 8T left its spread, +18%), and the values-only SVD routed
+  through the implicit QR iteration (13% slower at 512^2/8T, the campaign's budget). Both
+  have DROPPED rows above and worklogs under `docs/worklogs/2026-10-18-*`.
+- **Evidence**: `faer-benchmark/data/results/zen5-cpu/faer-kernels/20261018T000948Z-baseline-v2-diagnostic-mkl`,
+  `.../20261018T011734Z-candidate-qr-apply-split-only-mkl`, `.../20261018T005438Z-baseline-tall-guard-mkl`,
+  `.../20261018T013320Z-candidate-split-only-tall-guard-mkl`, `.../20261018T014801Z-baseline-gemm-guard-mkl`,
+  `.../20261018T015622Z-candidate-gemm-thread-floor-mkl`, and the final merged-revision run
+  `.../20261018T02*Z-final-candidate-mid-mkl`.
