@@ -49,3 +49,15 @@ Square2048/3072/4096final-only; strict/unit correctnessDEV. No finalfreeze/main/
 pin/release/upstreamsubmission. Expandedregressiongoal remains unfinished.
 
 Provenance: own MITfork expression/tests reused, no foreigncode/tests imported.
+
+Freshbuild result, committedharness74a1a8b/tool9daa/MKL2026.1: A/b771 andB/f013
+completed; all4dense sizes ANDnormalizedbodies differ, same1248/1226/1317/1249
+difflinecounts asheld7cd. F013ELFsha fa3f9f4406d74e74af49834bc781bedbff3fd07e01c0d140c216d6da06836808,
+A2decf425... . HOLD/NOTADOPTED, no fbenchverify/timing/stage1/stage2 orflag/position
+fiddling/retry. Entireowningfile preservation and2-site simplification didnot
+retaincompiledbody.7cd/f013fourbodies/sizes matchafternormalization; ELFimages
+differ, RIP/reference equivalence NOTclaimed. Staticcallform/multiset differences
+tobaseline retained, not a provedinlining/provider/causalmechanism. No further
+codeforms triedjusttofitassembly. Rawbuild/graphs/static/derivedanalysis retained
+in campaign native-inline-floor/. Any amendmentofpre-timinggate requires explicit
+decision; canonicaltarget/controls/guards/statisticalrules remainunchanged.
