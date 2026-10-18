@@ -14,7 +14,6 @@ use faer_traits::{ByRef, ComplexField, Conjugate};
 use pulp::Simd;
 use reborrow::*;
 const NANO_GEMM_THRESHOLD: usize = 16 * 16 * 16;
-const PAR_THRESHOLD_MNK: usize = 4096;
 pub(crate) mod internal;
 /// triangular matrix multiplication module, where some of the operands are
 /// treated as triangular matrices
@@ -1400,10 +1399,27 @@ fn matmul_imp<'M, 'N, 'K, T: ComplexField>(
 									rhs.col_stride(),
 									conj_rhs == Conj::Yes,
 									&raw const alpha as *const (),
-									if *M * *N * *K
-										>= const {
-											PAR_THRESHOLD_MNK * size_of::<T>()
-										} {
+									// The kernel below (`private_gemm_x86`) threads whenever it is
+									// handed more than one thread and has no work floor of its own,
+									// so the decision is faer's. It is made in *flops*, not in the
+									// dtype's byte width: a complex MAC is four real MACs, and the
+									// work a region has to buy is the same either way. The floor
+									// is the one the `gemm` crate applies to its own kernels
+									// (`48 * 48 * 256` MACs, f64) expressed in flops, so a shape
+									// the generic kernel would run sequentially is not handed a
+									// budget here either. Below it a region costs more than the
+									// multiplication: f64 `32^3` (65 ki flops) is 2.3 us serial
+									// and 12.0 us at eight threads, `64^3` (524 ki flops) keeps
+									// its best time but pays 1.2-1.4x in the median; `96^3`
+									// (1.8 Mflops) is 2x faster at eight threads, and c64 `64^3`
+									// (2.1 Mflops) 2x, which is why the floor cannot be a MAC
+									// count alone.
+									if (*M)
+										.saturating_mul(*N)
+										.saturating_mul(*K)
+										.saturating_mul(if T::IS_REAL { 2 } else { 8 })
+										>= 2 * gemm::get_threading_threshold()
+									{
 										par.degree()
 									} else {
 										1
@@ -1755,6 +1771,51 @@ mod tests {
 	use crate::stats::prelude::*;
 	use crate::{assert, c32};
 	use std::num::NonZeroUsize;
+	/// Below the flop floor `matmul` runs the sequential kernel whatever budget
+	/// the caller passes, and above it the kernel threads: both must compute the
+	/// same product, at the sizes on each side of the floor.
+	#[test]
+	fn thread_budget_does_not_change_the_product() {
+		let pool = rayon::ThreadPoolBuilder::new()
+			.num_threads(8)
+			.build()
+			.unwrap();
+		for (m, k, n) in [(32, 32, 32), (64, 64, 64), (17, 23, 31), (128, 128, 128)]
+		{
+			let lhs = Mat::<f64>::from_fn(m, k, |i, j| {
+				((i * 7 + j * 13) % 11) as f64 * 0.5 - 2.5
+			});
+			let rhs = Mat::<f64>::from_fn(k, n, |i, j| {
+				((i * 5 + j * 3) % 7) as f64 * 0.25 - 1.0
+			});
+			let mut sequential = Mat::<f64>::zeros(m, n);
+			matmul(
+				sequential.as_mut(),
+				Accum::Replace,
+				lhs.as_ref(),
+				rhs.as_ref(),
+				1.0,
+				Par::Seq,
+			);
+			let mut threaded = Mat::<f64>::zeros(m, n);
+			pool.install(|| {
+				matmul(
+					threaded.as_mut(),
+					Accum::Replace,
+					lhs.as_ref(),
+					rhs.as_ref(),
+					1.0,
+					Par::rayon(8),
+				)
+			});
+			for i in 0..m {
+				for j in 0..n {
+					let d = (sequential[(i, j)] - threaded[(i, j)]).abs();
+					assert!(d < 1e-12, "({i}, {j}): {d}");
+				}
+			}
+		}
+	}
 	#[test]
 	#[ignore = "takes too long"]
 	fn test_matmul() {
