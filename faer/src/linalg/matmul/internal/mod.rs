@@ -86,6 +86,26 @@ pub fn spicy_matmul<I: Index, T: ComplexField>(
 			assert!(j.zx() < C.ncols());
 		}
 	}
+	if depth == 0 {
+		if beta == Accum::Replace {
+			let diagonal = matches!(C_block.diag_kind(), DiagonalKind::Generic);
+			for j in 0..ncols {
+				for i in 0..nrows {
+					if C_block.is_dense()
+						|| (C_block.is_lower() && i > j)
+						|| (C_block.is_upper() && i < j)
+						|| (diagonal && i == j)
+					{
+						C[(
+							row_idx.map_or(i, |rows| rows[i].zx()),
+							col_idx.map_or(j, |cols| cols[j].zx()),
+						)] = T::zero();
+					}
+				}
+			}
+		}
+		return;
+	}
 	#[cfg(all(target_arch = "x86_64", feature = "std"))]
 	if const {
 		T::IS_NATIVE_F64
@@ -138,6 +158,11 @@ pub fn spicy_matmul<I: Index, T: ComplexField>(
 				} else {
 					C = C.get_mut(.., 1..);
 				}
+			}
+			let nrows = A.nrows();
+			let ncols = B.ncols();
+			if nrows == 0 || ncols == 0 {
+				return;
 			}
 			unsafe {
 				private_gemm_x86::gemm(
@@ -375,5 +400,199 @@ pub fn spicy_matmul<I: Index, T: ComplexField>(
 			},
 		},
 		(None, None) => {},
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn empty_strict_triangle_preserves_parent_guards() {
+		let a = Mat::from_fn(2, 1, |i, _| 2.0_f64 + i as f64);
+		let b = Mat::from_fn(1, 2, |_, j| 4.0_f64 + j as f64);
+		for block in [
+			BlockStructure::StrictTriangularLower,
+			BlockStructure::UnitTriangularLower,
+			BlockStructure::StrictTriangularUpper,
+			BlockStructure::UnitTriangularUpper,
+		] {
+			let mut c = Mat::from_fn(2, 2, |_, _| 7.0_f64);
+			let expected = c.clone();
+			spicy_matmul::<usize, f64>(
+				c.as_mut().submatrix_mut(0, 0, 1, 1),
+				block,
+				None,
+				None,
+				Accum::Replace,
+				a.as_ref().submatrix(0, 0, 1, 1),
+				Conj::No,
+				b.as_ref().submatrix(0, 0, 1, 1),
+				Conj::No,
+				None,
+				1.0,
+				Par::Seq,
+				MemStack::new(&mut []),
+			);
+			std::assert_eq!(c, expected);
+		}
+	}
+
+	fn check_strict_triangles<T: ComplexField<Real = f64>>(
+		scalar: impl Fn(f64, f64) -> T,
+		depths: &[usize],
+	) {
+		for (m, n) in [
+			(0, 3),
+			(3, 0),
+			(1, 1),
+			(3, 3),
+			(1, 3),
+			(3, 1),
+			(2, 4),
+			(4, 2),
+		] {
+			for &depth in depths {
+				let a = Mat::from_fn(m + 1, depth.max(1), |i, k| {
+					scalar(0.5 + i as f64, 0.25 + k as f64)
+				});
+				let b = Mat::from_fn(depth.max(1), n + 1, |k, j| {
+					scalar(1.0 + j as f64, -0.5 - k as f64)
+				});
+				let d =
+					Mat::from_fn(depth, 1, |k, _| scalar(1.25 + k as f64, 0.0));
+				let rows: Vec<usize> = (0..m).map(|i| m - i).collect();
+				let cols: Vec<usize> = (0..n).map(|j| n - j).collect();
+				for block in [
+					BlockStructure::Rectangular,
+					BlockStructure::TriangularLower,
+					BlockStructure::TriangularUpper,
+					BlockStructure::StrictTriangularLower,
+					BlockStructure::UnitTriangularLower,
+					BlockStructure::StrictTriangularUpper,
+					BlockStructure::UnitTriangularUpper,
+				] {
+					for (ri, ci) in [
+						(false, false),
+						(true, false),
+						(false, true),
+						(true, true),
+					] {
+						for beta in [Accum::Replace, Accum::Add] {
+							let mut c = Mat::from_fn(m + 2, n + 2, |_, _| {
+								scalar(7.0, 2.0)
+							});
+							let mut expected = c.clone();
+							let alpha = scalar(0.75, -0.25);
+							for j in 0..n {
+								for i in 0..m {
+									let stored = match block {
+										BlockStructure::Rectangular => true,
+										BlockStructure::TriangularLower => i >= j,
+										BlockStructure::TriangularUpper => i <= j,
+										BlockStructure::StrictTriangularLower | BlockStructure::UnitTriangularLower => i > j,
+										BlockStructure::StrictTriangularUpper | BlockStructure::UnitTriangularUpper => i < j,
+									};
+									if stored {
+										let mut sum = T::zero();
+										for k in 0..depth {
+											sum += a[(i, k)]
+												.conj()
+												.mul_real(&d[(k, 0)].real())
+												* b[(k, j)].clone();
+										}
+										let dst = &mut expected[(
+											if ri { rows[i] } else { i },
+											if ci { cols[j] } else { j },
+										)];
+										let value = alpha.clone() * sum;
+										if beta == Accum::Replace {
+											*dst = value;
+										} else {
+											*dst += value;
+										}
+									}
+								}
+							}
+							let mut mem = dyn_stack::MemBuffer::new(
+								spicy_matmul_scratch::<T>(
+									m,
+									n,
+									depth,
+									ri || ci,
+									true,
+								),
+							);
+							spicy_matmul::<usize, T>(
+								c.as_mut().submatrix_mut(
+									0,
+									0,
+									if ri { m + 1 } else { m },
+									if ci { n + 1 } else { n },
+								),
+								block,
+								ri.then_some(rows.as_slice()),
+								ci.then_some(cols.as_slice()),
+								beta,
+								a.as_ref().submatrix(0, 0, m, depth),
+								Conj::Yes,
+								b.as_ref().submatrix(0, 0, depth, n),
+								Conj::No,
+								Some(d.as_ref().col(0).as_diagonal()),
+								alpha,
+								Par::Seq,
+								MemStack::new(&mut mem),
+							);
+							let error =
+								(c.as_ref() - expected.as_ref()).norm_max();
+							std::assert!(
+								error < 1e-10,
+								"m={m} n={n} depth={depth} lower={} ri={ri} ci={ci} replace={} real={} error={error}; c={c:?}; expected={expected:?}",
+								block.is_lower(),
+								beta == Accum::Replace,
+								T::IS_REAL
+							);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	#[test]
+	fn strict_triangle_maps_preserve_stored_entries_and_parent_guards() {
+		check_strict_triangles::<f64>(|re, _| re, &[2]);
+		check_strict_triangles::<c64>(c64::new, &[2]);
+	}
+
+	#[test]
+	fn strict_triangle_zero_depth_preserves_replace_semantics() {
+		check_strict_triangles::<f64>(|re, _| re, &[0]);
+		check_strict_triangles::<c64>(c64::new, &[0]);
+	}
+
+	#[test]
+	fn strict_triangle_preserves_nonempty_parent_guards() {
+		let a = Mat::from_fn(4, 1, |i, _| 2.0_f64 + i as f64);
+		let b = Mat::from_fn(1, 4, |_, j| 4.0_f64 + j as f64);
+		let mut c = Mat::from_fn(4, 4, |_, _| 7.0_f64);
+		spicy_matmul::<usize, f64>(
+			c.as_mut().submatrix_mut(0, 0, 3, 3),
+			BlockStructure::StrictTriangularLower,
+			None,
+			None,
+			Accum::Replace,
+			a.as_ref().submatrix(0, 0, 3, 1),
+			Conj::No,
+			b.as_ref().submatrix(0, 0, 1, 3),
+			Conj::No,
+			None,
+			1.0,
+			Par::Seq,
+			MemStack::new(&mut []),
+		);
+		for j in 0..4 {
+			std::assert_eq!(c[(3, j)], 7.0);
+		}
 	}
 }
