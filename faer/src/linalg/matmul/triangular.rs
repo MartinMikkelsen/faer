@@ -676,7 +676,19 @@ fn mat_x_mat_into_lower_impl_unchecked<'N, 'K, T: ComplexField>(
 						rhs.col_stride(),
 						conj_rhs == Conj::Yes,
 						alpha as *const T as *const (),
-						par.degree(),
+						// Same dtype work floor as dense GEMM, in MAC units.
+						// Keep this identical to the indexed native entry.
+						if dst
+							.nrows()
+							.saturating_mul(dst.ncols())
+							.saturating_mul(lhs.ncols())
+							>= gemm::get_threading_threshold()
+								.div_ceil(if T::IS_REAL { 1 } else { 4 })
+						{
+							par.degree()
+						} else {
+							1
+						},
 					);
 					return;
 				}
