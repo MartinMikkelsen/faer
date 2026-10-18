@@ -47,7 +47,10 @@ and an independent scalar-product oracle over f64/c64, all seven structures,
 N=0/1/3 and nonsquare1×3/3×1/2×4/4×2, Add/Replace, K=0/2, four index-presence
 combinations with descending nonidentity maps, conjugated left input, real D,
 complex alpha and unchanged parent guards. The oracle matches the enum variants
-separately rather than sharing the production storage predicate.
+separately rather than sharing the production storage predicate. Self-review added
+an explicit finite-output assertion before the max-norm comparison, so NaNs cannot
+be hidden by max-reduction semantics. Focused/full library checks were rerun after
+this test-only strengthening; production is unchanged from the POST snapshot.
 
 Validation, sequentially, with `CARGO_TARGET_DIR=/home/shinaoka/projects/tensor4all/faer/target`:
 

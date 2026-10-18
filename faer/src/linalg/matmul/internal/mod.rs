@@ -543,6 +543,7 @@ mod tests {
 								Par::Seq,
 								MemStack::new(&mut mem),
 							);
+							std::assert!(c.as_ref().is_all_finite());
 							let error =
 								(c.as_ref() - expected.as_ref()).norm_max();
 							std::assert!(
