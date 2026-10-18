@@ -14,6 +14,34 @@ use faer_traits::{ByRef, ComplexField, Conjugate};
 use pulp::Simd;
 use reborrow::*;
 const NANO_GEMM_THRESHOLD: usize = 16 * 16 * 16;
+// private_gemm_x86 threads any budget it receives, without its own work floor.
+// Reuse gemm's real-MAC floor; a complex MAC costs four times as much work.
+// Comparing in dtype MAC units avoids overflowing either the flop count or
+// twice the threshold. At the default floor f64 32^3/64^3 stay serial, while
+// c64 64^3 retains its useful parallel budget. Apply this policy at every native entry.
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+#[inline]
+fn native_gemm_threads<T: ComplexField>(
+	m: usize,
+	n: usize,
+	k: usize,
+	par: Par,
+) -> usize {
+	let threshold = gemm::get_threading_threshold();
+	let cutoff = if T::IS_REAL {
+		threshold
+	} else {
+		threshold.div_ceil(4)
+	};
+	if m.saturating_mul(n).saturating_mul(k) >= cutoff {
+		par.degree()
+	} else {
+		1
+	}
+}
+#[cfg(all(test, target_arch = "x86_64", feature = "std", feature = "rayon"))]
+#[path = "tests/native_threads.rs"]
+mod native_threads;
 pub(crate) mod internal;
 /// triangular matrix multiplication module, where some of the operands are
 /// treated as triangular matrices
@@ -1399,31 +1427,7 @@ fn matmul_imp<'M, 'N, 'K, T: ComplexField>(
 									rhs.col_stride(),
 									conj_rhs == Conj::Yes,
 									&raw const alpha as *const (),
-									// The kernel below (`private_gemm_x86`) threads whenever it is
-									// handed more than one thread and has no work floor of its own,
-									// so the decision is faer's. It is made in *flops*, not in the
-									// dtype's byte width: a complex MAC is four real MACs, and the
-									// work a region has to buy is the same either way. The floor
-									// is the one the `gemm` crate applies to its own kernels
-									// (`48 * 48 * 256` MACs, f64) expressed in flops, so a shape
-									// the generic kernel would run sequentially is not handed a
-									// budget here either. Below it a region costs more than the
-									// multiplication: f64 `32^3` (65 ki flops) is 2.3 us serial
-									// and 12.0 us at eight threads, `64^3` (524 ki flops) keeps
-									// its best time but pays 1.2-1.4x in the median; `96^3`
-									// (1.8 Mflops) is 2x faster at eight threads, and c64 `64^3`
-									// (2.1 Mflops) 2x, which is why the floor cannot be a MAC
-									// count alone.
-									if (*M)
-										.saturating_mul(*N)
-										.saturating_mul(*K)
-										.saturating_mul(if T::IS_REAL { 2 } else { 8 })
-										>= 2 * gemm::get_threading_threshold()
-									{
-										par.degree()
-									} else {
-										1
-									},
+									native_gemm_threads::<T>(*M, *N, *K, par),
 								);
 								return;
 							}

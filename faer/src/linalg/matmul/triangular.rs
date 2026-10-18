@@ -676,7 +676,7 @@ fn mat_x_mat_into_lower_impl_unchecked<'N, 'K, T: ComplexField>(
 						rhs.col_stride(),
 						conj_rhs == Conj::Yes,
 						alpha as *const T as *const (),
-						par.degree(),
+						super::native_gemm_threads::<T>(dst.nrows(), dst.ncols(), lhs.ncols(), par),
 					);
 					return;
 				}

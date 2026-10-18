@@ -69,13 +69,6 @@ pub fn spicy_matmul<I: Index, T: ComplexField>(
 	if nrows == 0 || ncols == 0 {
 		return;
 	}
-	let par = if (nrows * ncols).saturating_mul(depth)
-		> 32usize * 32usize * 32usize
-	{
-		par
-	} else {
-		Par::Seq
-	};
 	if let Some(row_idx) = row_idx {
 		for &i in row_idx {
 			assert!(i.zx() < C.nrows());
@@ -222,12 +215,19 @@ pub fn spicy_matmul<I: Index, T: ComplexField>(
 					B.col_stride(),
 					conj_B == Conj::Yes,
 					&raw const alpha as _,
-					par.degree(),
+					super::native_gemm_threads::<T>(nrows, ncols, depth, par),
 				);
 				return;
 			}
 		}
 	}
+	let par = if (nrows * ncols).saturating_mul(depth)
+		> 32usize * 32usize * 32usize
+	{
+		par
+	} else {
+		Par::Seq
+	};
 	let (mut out, stack) = unsafe {
 		temp_mat_uninit::<T, _, _>(
 			nrows,
@@ -441,6 +441,7 @@ mod tests {
 	fn check_strict_triangles<T: ComplexField<Real = f64>>(
 		scalar: impl Fn(f64, f64) -> T,
 		depths: &[usize],
+		par: Par,
 	) {
 		for (m, n) in [
 			(0, 3),
@@ -540,7 +541,7 @@ mod tests {
 								Conj::No,
 								Some(d.as_ref().col(0).as_diagonal()),
 								alpha,
-								Par::Seq,
+								par,
 								MemStack::new(&mut mem),
 							);
 							std::assert!(c.as_ref().is_all_finite());
@@ -562,14 +563,25 @@ mod tests {
 
 	#[test]
 	fn strict_triangle_maps_preserve_stored_entries_and_parent_guards() {
-		check_strict_triangles::<f64>(|re, _| re, &[2]);
-		check_strict_triangles::<c64>(c64::new, &[2]);
+		check_strict_triangles::<f64>(|re, _| re, &[2], Par::Seq);
+		check_strict_triangles::<c64>(c64::new, &[2], Par::Seq);
 	}
 
 	#[test]
 	fn strict_triangle_zero_depth_preserves_replace_semantics() {
-		check_strict_triangles::<f64>(|re, _| re, &[0]);
-		check_strict_triangles::<c64>(c64::new, &[0]);
+		check_strict_triangles::<f64>(|re, _| re, &[0], Par::Seq);
+		check_strict_triangles::<c64>(c64::new, &[0], Par::Seq);
+	}
+
+	#[cfg(feature = "rayon")]
+	#[test]
+	fn strict_triangles_with_parallel_budget_preserve_mappings_and_zero_depth() {
+		let pool = rayon::ThreadPoolBuilder::new().num_threads(8).build().unwrap();
+		pool.install(|| {
+			std::assert_eq!(rayon::current_num_threads(), 8);
+			check_strict_triangles::<f64>(|re, _| re, &[0, 2], Par::rayon(8));
+			check_strict_triangles::<c64>(c64::new, &[0, 2], Par::rayon(8));
+		});
 	}
 
 	#[test]
