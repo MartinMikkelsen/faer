@@ -65,5 +65,24 @@ without measured guard losses.
 
 ## Outcome
 
-Pending measurement. No regression is marked resolved and no new candidate is
-adopted yet. Householder and shared-copy investigations remain separate work.
+Candidate `a537746` passes the focused direct-buffer test and the crate library
+suite (211 passed, 2 ignored). The completed bounded independent code review found
+no correctness, numerical or safety blocker; this is not performance approval.
+
+The initial formal pair is recorded as
+`20261018T070736Z-upstream-lu-baseline` and
+`20261018T073559Z-upstream-lu-restored-budget` in the benchmark campaign. The
+official comparator **refused** it: upstream Cholesky c64 F128 4T moved from
+0.190123 to 0.178817 ms, outside the baseline band. It is the one failed control
+out of 396, with median control ratio 0.999747. There is also an untrimmed slow
+start for full-pivot LU affecting both engines; it must not be silently removed.
+The apparent target gains in this pair are therefore diagnostic, not acceptance.
+
+The frozen protocol permits one complete-pair repeat for this condition. The
+repeat retains the entire grid and reverses revision order (candidate then
+baseline); its predeclaration is
+`faer-benchmark/data/probes/20261018-upstream-lu-pair-repeat/README.md`.
+A second control failure blocks adoption rather than triggering further retries.
+
+No regression is marked resolved and no new candidate is adopted yet.
+Householder and shared-copy investigations remain separate work.
