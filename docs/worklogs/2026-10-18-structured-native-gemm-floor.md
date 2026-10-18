@@ -18,7 +18,7 @@ extremes; genuinef64/c64 structured scalar products, masks/Add/Replace/conjugati
 maps/finite guards/Seq/owned8; small strict/K0 repeats. No f32/c32 structured
 numeric or forced-generic execution claim.
 
-PRE: first broad attempt INCOMPLETE/timeoutexit124, not approval. Narrow immutable
+PRE: first broad attempt INCOMPLETE/16-tool-call limit, not approval. Narrow immutable
 delta-only PRE COMPLETE on gpt-6.1-sol, no findings; approve plan implementation,
 not code/performance. Full reports in campaign docs/reviews. Reviewer wording
 "strict cases final-only" is not the plan: strict/unit correctness tests remain
