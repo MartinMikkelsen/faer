@@ -31,8 +31,13 @@ t4a-faer --no-default-features --features std,linalg`passes/13existingwarnings,
 no new helper warning. Kache33975/33975 valid/no corruption/index drift before work.
 Three retained Rust files/tests byte-identical7f713a1; mod.rs suffix from
 pub(crate)modinternal through EOF byte-identicalb7715c5, including dense function.
-No broad formatting or dependency change. Implemented-diff POST pending;
-no fresh performance build, generated-code comparison or timing yet.
+No broad formatting or dependency change. Broad implemented-diff POST timedout
+INCOMPLETE, no approval. Bounded actual7f713a1→7cd372f delta POST subsequently
+COMPLETE gpt-6.1-sol/medium, no findings/deletions; explicitly inherits the prior
+completed review of unchanged3files, does not independently rehash them or execute
+tests. Restored dense budget/comment/cfg/pointer adjacency and two-caller scope
+approved for SOURCE correctness only. Full/verbatim reports in campaign reviews.
+No fresh performance build, generated-code comparison or timing yet.
 
 After checks/POST, fresh A/B builds through existing full-checkout builder and
 exact Cargo/source/binary evidence. Development static pre-filter requires all4
