@@ -78,6 +78,15 @@ The optional deletion of old redundant pre-shift guards was not needed for this
 small correction. No foreign implementation/tests were imported; existing MIT
 notices remain. Upstream tracker feedback is deferred by AGENTS.md.
 
-Independent POST must complete before handoff/integration. Performance claims,
-shared GEMM-budget changes, adoption comparison and final all-suite recordings
-remain separate and unresolved.
+Bounded gpt-6.1-sol POST is COMPLETE, no mandatory correctness changes; full
+report is in the campaign's `docs/reviews/20261018-native-gemm-empty-post-review.md`
+(with verbatim JSON). It reviewed snapshot2e221c7. Final production is byte-
+identical; the later finite-output assertion is test-only, with focused/full
+checks rerun. Optional removal of six unchanged redundant guards is deferred to
+avoid unrelated source churn. The dense K=0 reference excerpt was from
+`faer/src/linalg/matmul/mod.rs:1188–1199` (its path was missing in the bundle).
+Reviewer executed no tests and did not audit the backend; right conjugation,
+f32/c32, u32 indices, parallel execution and forced-generic numerical runs were
+not demonstrated. No imported source or tests/notices changed. No performance
+or merge acceptance follows. Shared GEMM-budget changes, adoption comparisons
+and final all-suite recordings remain separate and unresolved.
