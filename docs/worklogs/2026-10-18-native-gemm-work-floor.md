@@ -78,8 +78,23 @@ Raw8 runs remain in campaign data/results with no published page; exact inventor
 full descriptive output and CLI logs in `data/probes/20261018-native-gemm-budget/`.
 Source hashes still match reviewed7f713a1. No code correction, main integration,
 large-square or final campaign. This cannot restore LU's ancestor-reduced budget.
-Next control-isolation work is DIAGNOSTIC ONLY, not another adoption pair or a
-replacement control contract. Full goal and square2048/3072/4096 remain pending.
+Completed upstream-only control isolation is DIAGNOSTIC ONLY, not another
+adoption pair or a replacement gate: same binaries/compiled6518073, recording
+harness311c2fb,96cells×8ABBABAAB blocks/768records,4starts/binary;18verify/72timing/
+6info processes. All budgets/guards/identity/census pass, two post-reject archives
+retained, no source edit/build/checkout. Seven descriptive bands fail, including
+c64Ftriangular256/1T medianB/A=.89646 with all4 B below A-min-5%; fork/vendor
+operations not executed (setters/loading remain). Their execution history alone
+is insufficient; placement/allocation/caller/temporal mechanisms not identified.
+Canonical refusal unchanged, no adoption/stage2. Full raw/summary in campaign
+runtime-isolation; no trimmed data or new thresholds.
+
+Four dense matmul_imp symbols matched; two normalized bodies unchanged and two
+changed230/634lines (3444→3437 and3368→3342bytes), RIP normalized/no engine or
+whole-program attribution. Equivalent dense policy did not preserve all generated
+code. Next distinct proposal keeps dense body untouched and changes only the two
+structured routes, with a pre-timing static-preservation filter; PRE pending,
+not implemented. Full goal and square2048/3072/4096 remain pending.
 
 Provenance: own code/tests in MIT fork; existing gemm threshold getter reused,
 not vendor implementation. Prior inherited unsafe code/notice left unchanged.
