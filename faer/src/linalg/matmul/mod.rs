@@ -14,6 +14,35 @@ use faer_traits::{ByRef, ComplexField, Conjugate};
 use pulp::Simd;
 use reborrow::*;
 const NANO_GEMM_THRESHOLD: usize = 16 * 16 * 16;
+// private_gemm_x86 threads any budget it receives, without its own work floor.
+// Reuse gemm's real-MAC floor; a complex MAC costs four times as much work.
+// Comparing in dtype MAC units avoids overflowing either the flop count or
+// twice the threshold. At the default floor f64 32^3/64^3 stay serial, while
+// c64 64^3 retains its useful parallel budget. Used by the two structured native
+// entries; the already-adopted dense expression is intentionally left unchanged.
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+#[inline]
+fn native_gemm_threads<T: ComplexField>(
+	m: usize,
+	n: usize,
+	k: usize,
+	par: Par,
+) -> usize {
+	let threshold = gemm::get_threading_threshold();
+	let cutoff = if T::IS_REAL {
+		threshold
+	} else {
+		threshold.div_ceil(4)
+	};
+	if m.saturating_mul(n).saturating_mul(k) >= cutoff {
+		par.degree()
+	} else {
+		1
+	}
+}
+#[cfg(all(test, target_arch = "x86_64", feature = "std", feature = "rayon"))]
+#[path = "tests/native_threads.rs"]
+mod native_threads;
 pub(crate) mod internal;
 /// triangular matrix multiplication module, where some of the operands are
 /// treated as triangular matrices
