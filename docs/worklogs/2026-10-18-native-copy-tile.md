@@ -47,9 +47,24 @@ only targeted formatting remains. Bounded finished-diff independent POST is
 complete with no must-fix source findings. It did not execute checks, rehash the
 checkout, or prove the existing identity helper sound; supplied diff/equality
 records and the completed PRE support unchanged-callers preservation.
-No new performance binary, verify or timing exists for this candidate, and no
-upstream measurement of0539947 has been performed for it. Source correctness
-cannot establish copy speedup, composite benefit or adoption.
+At the source-POST freeze no performance binary, verify or timing existed.
+Fresh FBE A7364/B60de builds at harness499da6e subsequently passed all four
+matching dense size/normalized-body equalities (zero diff lines). Full-checkout
+Cargo linkage, actual ELF hashes and raw build receipts are archived. Unchanged
+public-copy probe Rust/Cargo/lock also built into separate A/B target dirs with
+actual faer+traits path metadata. No public probe process or timing has yet run.
+This is not RIP/caller/whole-program equivalence or performance approval.
+Source correctness cannot establish copy speedup, composite benefit or adoption.
+
+The thin public recorder received completed operational PRE and POST on
+gpt-6.1-sol. POST's three Important findings were verified and corrected by the
+main agent: primary terminal-write fallback, non-raising signal requests through
+launch/cleanup, and deadline checks through validation/completion. Safe old-code
+dummy reproducers demonstrate two failures; real-signal dummy checks cover launch
+and cleanup windows, owned TERM/KILL/reaping, and corrected receipts/deadlines.
+Relevant checks, Ruff, compile and diff pass. This is reviewed scope plus checked
+corrective edits, not a fresh reviewer endorsement of those edits. Source/config/
+argv must be committed before the diagnostic; all formal controls remain required.
 
 Performance evidence will stay in faer-benchmark/data/probes/20261018-native-copy-tile/.
 Any performance verify or timing, including the public-copy probe, requires
