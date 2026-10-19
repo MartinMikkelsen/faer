@@ -291,6 +291,7 @@ pub fn lu_in_place<'out, I: Index, T: ComplexField>(
 	if matrix.row_stride().unsigned_abs() != 1
 		&& matrix.nrows() >= matrix.ncols()
 		&& matrix.ncols() > 1
+		&& linalg::row_major_copy_pays(matrix.nrows(), matrix.ncols())
 	{
 		let mut work = alloc::vec![zero::<T>(); m * n];
 		let mut work = MatMut::from_column_major_slice_mut(&mut work, m, n);

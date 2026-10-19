@@ -55,6 +55,25 @@ pub fn temp_mat_scratch<T: ComplexField>(
 /// Copies `src` into `dst` elementwise, where the two have transposed strides:
 /// one is column-major, the other row-major, over the same shape, in tiles that
 /// are column-partitioned between threads when the caller asked for them.
+/// Whether adapting a row-major input to a column-major copy pays for this shape.
+///
+/// The adaptation moves `nrows * ncols` elements contiguously twice and buys a
+/// contiguous panel; on a small matrix the copy and the thread-region start-up
+/// cost more than the strided panel they replace.
+///
+/// The floor is `64 * 64`, and it comes from the pair measured on 2026-10-19: at
+/// `32 x 32` the copy cost 1.8x on `qr_factor` (row-major f64: 0.042 ms against
+/// 0.024 ms at 8T), while at `64 x 64` and `96 x 96` removing it cost 1.10-1.31x
+/// on the same family, and `lu`/`solve` were flat at both sizes. So the copy
+/// pays from `4096` elements up and loses below it.
+///
+/// It is a floor on elements, not on a side, because the cost of the copy is the
+/// area and the tall shapes the change was made for (`4096 x 256`, `1024 x 64`)
+/// are asymmetric.
+#[inline]
+pub(crate) fn row_major_copy_pays(nrows: usize, ncols: usize) -> bool {
+	nrows.saturating_mul(ncols) >= 64 * 64
+}
 pub(crate) fn copy_across_layouts<T: ComplexField>(
 	mut dst: MatMut<'_, T>,
 	src: MatRef<'_, T>,
@@ -335,6 +354,7 @@ mod tests {
 	trait Entry: ComplexField {
 		fn at(i: usize, j: usize) -> Self;
 		fn same(&self, other: &Self) -> bool;
+		fn close(&self, other: &Self) -> bool;
 	}
 	impl Entry for f64 {
 		fn at(i: usize, j: usize) -> Self {
@@ -342,6 +362,14 @@ mod tests {
 		}
 		fn same(&self, other: &Self) -> bool {
 			self.to_bits() == other.to_bits()
+		}
+		fn close(&self, other: &Self) -> bool {
+			// `inf` marks an unused diagonal entry and must compare equal to
+			// itself; subtraction would make it `NaN`.
+			if self.same(other) {
+				return true;
+			}
+			(self - other).abs() <= 1e-10 * self.abs().max(other.abs()).max(1.0)
 		}
 	}
 	impl Entry for crate::c64 {
@@ -351,6 +379,15 @@ mod tests {
 		fn same(&self, other: &Self) -> bool {
 			self.re.to_bits() == other.re.to_bits()
 				&& self.im.to_bits() == other.im.to_bits()
+		}
+		fn close(&self, other: &Self) -> bool {
+			if self.same(other) {
+				return true;
+			}
+			(self.re - other.re).abs()
+				<= 1e-10 * self.re.abs().max(other.re.abs()).max(1.0)
+				&& (self.im - other.im).abs()
+					<= 1e-10 * self.im.abs().max(other.im.abs()).max(1.0)
 		}
 	}
 	/// A well-conditioned fixture with no structure for the two layouts to
@@ -377,6 +414,22 @@ mod tests {
 	}
 	fn same_exact<T: Entry>(what: &str, cm: &[T], rm: &[T]) {
 		compare(what, cm, rm);
+	}
+	/// The `tau` array follows the factor: identical above the copy floor, equal
+	/// up to rounding below it, where the row-major side factors in place.
+	fn same_tau<T: Entry>(m: usize, n: usize, what: &str, cm: &[T], rm: &[T]) {
+		if crate::linalg::row_major_copy_pays(m, n) {
+			compare(what, cm, rm);
+			return;
+		}
+		if cm.len() != rm.len() {
+			panic!("{what}: {} entries against {}", cm.len(), rm.len());
+		}
+		for k in 0..cm.len() {
+			if !cm[k].close(&rm[k]) {
+				panic!("{what}: entry {k} differs between the two orders");
+			}
+		}
 	}
 	fn same_index<T: PartialEq + core::fmt::Debug + Copy>(
 		what: &str,
@@ -426,10 +479,16 @@ mod tests {
 		rm: &[T],
 	) {
 		let flipped = flipped && m > 0 && n > 0;
+		// Above the copy floor both orders take the same arithmetic and must
+		// agree bit for bit; below it the row-major side factors in place
+		// through a strided panel, which is the same matrix but a different
+		// summation order.
+		let exact = crate::linalg::row_major_copy_pays(m, n);
 		for j in 0..n {
 			for i in 0..m {
 				let k = if flipped { m - 1 - i } else { i };
-				if !cm[i + j * m].same(&rm[k * n + j]) {
+				let (a, b) = (cm[i + j * m].clone(), rm[k * n + j].clone());
+				if !(if exact { a.same(&b) } else { a.close(&b) }) {
 					panic!(
 						"{what} {m}x{n}: entry ({i}, {j}) differs between the two orders"
 					);
@@ -504,7 +563,7 @@ mod tests {
 				rm_strides(m, n, flipped),
 			);
 			compare_row_major(m, n, flipped, "col_pivoting qr", &cm, &rm);
-			same_exact("col_pivoting qr tau", &h_cm, &h_rm);
+			same_tau(m, n, "col_pivoting qr tau", &h_cm, &h_rm);
 			same_index("col_pivoting qr perm", &p_cm, &p_rm);
 			same_index("col_pivoting qr perm inv", &pi_cm, &pi_rm);
 			same_index(
