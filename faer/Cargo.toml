@@ -42,7 +42,7 @@ nano-gemm = { version = "0.2.2", default-features = false }
 # tensor4all fork of private-gemm-x86: 0.1.23 clamps the masked-store offset, without which
 # DstKind::Upper/Lower writes below the diagonal on the 256-bit path (the library keeps the
 # name `private_gemm_x86`, so no `use` changes)
-t4a-private-gemm-x86 = { version = "0.1.23", default-features = false, optional = true }
+t4a-private-gemm-x86 = { version = "0.1.24", default-features = false, optional = true }
 
 [features]
 default = [
