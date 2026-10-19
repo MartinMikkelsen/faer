@@ -2026,22 +2026,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "private-gemm-x86"
-version = "0.1.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0af8c3e5087969c323f667ccb4b789fa0954f5aa650550e38e81cf9108be21b5"
-dependencies = [
- "crossbeam",
- "defer",
- "interpol",
- "num_cpus",
- "raw-cpuid",
- "rayon",
- "spindle",
- "sysctl",
-]
-
-[[package]]
 name = "proc-macro-error-attr2"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2724,7 +2708,6 @@ dependencies = [
  "openblas-src",
  "openmp-sys",
  "openssl-sys",
- "private-gemm-x86",
  "pulp",
  "rand 0.9.2",
  "rand_distr",
@@ -2737,6 +2720,7 @@ dependencies = [
  "spindle",
  "suitesparse_sys",
  "t4a-faer-traits",
+ "t4a-private-gemm-x86",
  "tar",
  "toml 0.9.8",
 ]
@@ -2754,6 +2738,22 @@ dependencies = [
  "pulp",
  "qd",
  "reborrow",
+]
+
+[[package]]
+name = "t4a-private-gemm-x86"
+version = "0.1.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "881746e836f09a3858fc6a79d8f55a8f92a8cfda1e60eb9faf32e6e5afbeffdf"
+dependencies = [
+ "crossbeam",
+ "defer",
+ "interpol",
+ "num_cpus",
+ "raw-cpuid",
+ "rayon",
+ "spindle",
+ "sysctl",
 ]
 
 [[package]]
