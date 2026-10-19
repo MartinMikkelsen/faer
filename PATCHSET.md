@@ -10,6 +10,39 @@ upstream `faer`.
 - **KEEP** — tensor4all keeps using it. Whether it goes upstream is a separate
   decision.
 - **DROPPED** — tried and thrown away. The reason stays here.
+- **HOLD** — not adopted and not dropped: the reason it stopped is still open, so it is kept
+  where its branch and records are.
+
+## Evidence class of the adopted changes (2026-10-19)
+
+Every `KEEP` row states what kind of evidence stands behind it, because the campaign's acceptance
+gate has changed and two kinds of adoption are now in the ledger.
+
+* **Through the v2 comparator** (a baseline/candidate pair on a declared target set, with the
+  unchanged upstream row as the machine-state control). Two rows: `0627828`, the block Householder
+  apply's column split, whose control **passed** (0/96 cells outside their own range, median ratio
+  0.9995); and `2000dd9`, the native GEMM flop floor, whose control **failed** 1/60
+  (`gemm c64 f 64x64x64` 4T at 0.81 in the unchanged row) and was adopted anyway. That failure is
+  the binary-layout effect the campaign measured separately - the ratios of the unchanged row over
+  those 60 cells span 0.741-1.355 while their median is 1.000 - not evidence against the floor.
+* **Pre-protocol adoption** (isolated drivers, paired, best of 4-21): the remaining performance
+  `KEEP` rows. They predate the comparator and are kept, but no page or claim may cite them as a
+  gated result, and re-measuring them as campaign pairs is a separate decision (faer-benchmark#20).
+* **Correctness only** (tests, no timing): the EVD normalization, the unpivoted QR column skip, and
+  the native indexed/diagonal GEMM extents fix. A performance claim for the last one would need a
+  declared cell that executes it, and there is none.
+
+## Held and dropped candidates (2026-10-19)
+
+| Candidate | State | Why it stays there |
+| --- | --- | --- |
+| `60de2ee` builtin-copy tile | **HOLD** | an unchanged control cell moved 17% when the ELFs said the code was identical; the ELF argument is demoted to a static observation (`faer-benchmark/docs/reviews/20261018-elf-comparison-demotion.md`), so the copy probe's own control question has to be answered before this can be timed again |
+| `7cd372f` structured floor | **DROPPED** | generated code for all four dense functions differed from the candidate it replaced; the static gate refused it before timing and there is no path to a declared cell |
+| `f013756` direct two-entry | **DROPPED** | same static gate |
+| `7f713a1` native floor | **DROPPED** | canonical controls and guards did not hold; a candidate whose own control refuses it has no measurable claim |
+| `ad9f2ef` Householder partial merge | **DROPPED** | the f64 F64 block/8T guard deteriorated (rotation-geometric 1.122); tall gains do not waive a guard |
+| `d6358ca` old owned-copy | **DROPPED** | it wanted `Zero`/`Clone`/`Drop` contracts on generic types, which were not approved |
+
 
 ## Fork infrastructure (not candidates for upstream)
 
@@ -25,7 +58,7 @@ upstream `faer`.
 
 | Experiment | What | Status | Issues | Notes |
 | --- | --- | --- | --- | --- |
-| Native indexed/diagonal GEMM empty extents and empty products | Recompute effective dimensions after strict/unit view/index shifts and return on empty output; for zero-depth Replace, zero only logically stored entries through existing maps. Add and unstored entries remain unchanged. No new unsafe/API/threshold/scratch. | LOCAL FIX, NOT INTEGRATED | — | Branch `fix/native-gemm-empty-extents`; four focused tests,214 library tests pass (2 ignored), no-Rayon check passes. Independent PREs and bounded POST COMPLETE, no mandatory fix. POST snapshot production matches final source; test-only finite-output guard rechecked. No performance acceptance. Record: `docs/worklogs/2026-10-18-native-gemm-empty-extents.md`. |
+| Native indexed/diagonal GEMM empty extents and empty products | Recompute effective dimensions after strict/unit view/index shifts and return on empty output; for zero-depth Replace, zero only logically stored entries through existing maps. Add and unstored entries remain unchanged. No new unsafe/API/threshold/scratch. | KEEP | — | Merged at `b7715c5` (2026-10-19) on the tests alone: the changed code is reached by dense LDLT and the two sparse Cholesky update sites, and no declared benchmark cell executes it, so it has no performance claim either way. Branch `fix/native-gemm-empty-extents`; four focused tests,214 library tests pass (2 ignored), no-Rayon check passes. Independent PREs and bounded POST COMPLETE, no mandatory fix. POST snapshot production matches final source; test-only finite-output guard rechecked. No performance acceptance. Record: `docs/worklogs/2026-10-18-native-gemm-empty-extents.md`. |
 | EVD eigenvector normalization + overflow-safe back substitution | `evd_real`/`evd_cplx` return eigenvectors scaled to unit 2-norm (a conjugate pair is scaled as one complex vector, matching `xGEEV`), and the back substitution is rescaled when an entry would exceed `sqrt(max)` instead of overflowing to `NaN`. A finite input that still overflows, or a Schur iteration that does not converge, returns `NoConvergence`. | KEEP | tenferro-rs#2131 | Focused test `eig_2131_tests` (f32/f64 Jordan block, conjugate pair with left and right vectors, complex input, sequential + recursive solver). Normalization runs at the `evd_real`/`evd_cplx` boundary, so `operator/eigen` keeps its previous Ritz-vector scaling while still getting the overflow-safe finite Schur eigenvectors. |
 | Unpivoted QR column skip | The skip lived only in `qr_in_place_unblocked`; `qr_in_place_blocked` has no threshold of its own and recurses into that core, so removing it there covers the tall and wide paths at once. The reflector is applied and the row advances for every nonzero column, matching LAPACK; the tall/wide `svd` path goes through it too. | KEEP | tlinalg-rs#28, tensor4all-rs#836 | Adopted. Tests: `test_near_dependent_columns_are_not_skipped` (tall `m x 3`, m=100/1000/8192) and `test_near_dependent_rows_are_not_skipped` (its transpose, wide `3 x n`, n=100/1000/8192), both at `<=1e-13`; measured 1e-16 to 5e-15. The wide fixture was already accurate before the change: at m=3 the removed threshold `16 (m-k) eps ||column||` is ~1e-14 and never tripped it (a wide skip's relative reconstruction error is ~`16 eps sqrt(m) sqrt(m/n)`), so the wide path needed no separate treatment — the same core change covers it. tlinalg's reported wide `3.33e-7` is a reconstruction-indexing bug in that test (entry `(i,j)` written to flat `j+3i` while the factor is column-major `i+3j`); faer's factors for that matrix are accurate to ~4e-16. Existing columns are unchanged; formerly skipped nonzero columns now pay reflector/update flops (the threshold norm bookkeeping is removed). No existing benchmark suite was run. Release smoke, 3-run mean, before→after: 100000×8 2.984→2.986 ms; 1000×1000 19.793→19.921 ms. |
 | Row-split reduction in the compact-WY factor's deep half | `upgrade_householder_factor`'s flat branch (`prev_block_size < 8`) builds `T = diag(tau) + strict_upper(V^H V)`, and its second product reduces over every row below the basis' diagonal with an `n x n` output -- the same shape as the block apply's reduction, and serial for the same reason: 0.271 ms at eight threads at `m = 4096, n = 16`, against 0.040 with the rows split (6.7x; 2.96x at `m = 512`, 4.59x at `m = 1024`). The partials here are `n x n` each, tiny against the basis, and only the strict upper triangle is stored, so the split's overhead is negligible and no depth-against-width gate is needed -- the thread and work floors are enough. End to end, 8T pool: `householder_factor` 4096x256 b1 c64 15.72 -> 13.38 ms (f64 5.63 -> 4.84), `qr` c64 42.76 -> 37.00, and the 512x512 and 256x256 cells improve too (4.49 -> 4.14, 0.98 -> 0.92) with every 1T row unchanged. Test: `threaded_upgrade_matches_the_sequential_one` (4096x16, 2048x8, 4096x1, and 64x8 below the floors). | KEEP | tlinalg-rs#46 | Costs one `n * n * threads` buffer per call; the same scratch note as the row below. Own code: no OpenBLAS or MKL source. |
