@@ -362,7 +362,11 @@ pub fn qr_in_place<'out, I: Index, T: ComplexField>(
 	// copy's, so the factor, the `tau` matrix and the permutations are the
 	// column-major ones.
 	let mut A = A;
-	if A.row_stride().unsigned_abs() != 1 && A.nrows() > 1 && A.ncols() > 1 {
+	if A.row_stride().unsigned_abs() != 1
+		&& A.nrows() > 1
+		&& A.ncols() > 1
+		&& linalg::row_major_copy_pays(A.nrows(), A.ncols())
+	{
 		let (m, n) = A.shape();
 		let mut work = alloc::vec![zero::<T>(); m * n];
 		let mut work = MatMut::from_column_major_slice_mut(&mut work, m, n);

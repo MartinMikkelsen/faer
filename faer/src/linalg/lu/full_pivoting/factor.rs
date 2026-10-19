@@ -485,7 +485,11 @@ pub fn lu_in_place<'out, I: Index, T: ComplexField>(
 	}
 	// Same row-major adaptation as the partial-pivoting factorisation above.
 	let (M, N) = mat.shape();
-	if mat.row_stride().unsigned_abs() != 1 && M >= N && N > 1 {
+	if mat.row_stride().unsigned_abs() != 1
+		&& M >= N
+		&& N > 1
+		&& linalg::row_major_copy_pays(M, N)
+	{
 		let mut work = alloc::vec![zero::<T>(); M * N];
 		let mut work = MatMut::from_column_major_slice_mut(&mut work, M, N);
 		linalg::copy_across_layouts(work.rb_mut(), mat.rb(), par);

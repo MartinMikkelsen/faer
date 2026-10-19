@@ -301,7 +301,10 @@ pub fn qr_in_place<T: ComplexField>(
 	// save a few per cent of the panel and measurably loses (256x4096 f64 at one
 	// thread: 16.9 -> 20.7 ms). A single row is the limit case of the same thing:
 	// `qr_in_place` eliminates at most one column of it.
-	if A.row_stride().unsigned_abs() != 1 && A.ncols() > 1 && A.nrows() >= A.ncols()
+	if A.row_stride().unsigned_abs() != 1
+		&& A.ncols() > 1
+		&& A.nrows() >= A.ncols()
+		&& linalg::row_major_copy_pays(A.nrows(), A.ncols())
 	{
 		return qr_in_place_adapted(A, Q_coeff, par, stack, params);
 	}
@@ -721,19 +724,9 @@ mod tests {
 			}
 		}
 		// Shapes the adaptation applies to: a tall or square matrix with more
-		// than one column. These must match the column-major factor exactly.
-		for (m, n) in [
-			(2, 2),
-			(3, 2),
-			(3, 3),
-			(4, 4),
-			(17, 15),
-			(16, 16),
-			(64, 64),
-			(300, 17),
-			(256, 64),
-			(512, 17),
-		] {
+		// than one column, and at least `64 * 64` elements so the copy floor
+		// lets it through. These must match the column-major factor exactly.
+		for (m, n) in [(64, 64), (128, 128), (256, 64), (300, 64), (512, 64)] {
 			for par in [Par::Seq, Par::rayon(8)] {
 				check::<f64>(m, n, false, false, true, par);
 				check::<c64>(m, n, false, false, true, par);
@@ -744,14 +737,15 @@ mod tests {
 		// An exactly zero leading column is the one place the unblocked core
 		// stores a reflector's essential part in a different column than the one
 		// it is eliminating, so the copy has to carry that column too.
-		for (m, n) in [(16, 16), (64, 8), (300, 17)] {
+		for (m, n) in [(64, 64), (128, 128), (256, 64)] {
 			check::<f64>(m, n, true, false, true, Par::Seq);
 			check::<c64>(m, n, true, false, true, Par::Seq);
 		}
-		// Shapes it deliberately leaves alone -- empty, one row or column, and
-		// wide, where the panel is `m` reflectors over `n` columns and the copy
-		// would cost more than it saved. Still the same matrix, so still the
-		// same factor up to rounding.
+		// Shapes it deliberately leaves alone -- empty, one row or column, wide
+		// (the panel is `m` reflectors over `n` columns and the copy would cost
+		// more than it saved), and small, where the copy and the thread-region
+		// start-up cost more than the strided panel they replace. Still the same
+		// matrix, so still the same factor up to rounding.
 		for (m, n) in [
 			(0, 0),
 			(3, 0),
@@ -759,6 +753,15 @@ mod tests {
 			(1, 7),
 			(7, 1),
 			(2, 3),
+			(2, 2),
+			(3, 2),
+			(3, 3),
+			(4, 4),
+			(17, 15),
+			(16, 16),
+			(32, 32),
+			(300, 17),
+			(512, 17),
 			(8, 64),
 			(17, 300),
 			(64, 256),
