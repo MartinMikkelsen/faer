@@ -4,6 +4,9 @@ use crate::perm::swap_cols_idx;
 use core::mem::swap;
 use linalg::jacobi::JacobiRotation;
 /// secular eq must be increasing
+///
+/// Convergence safeguards compared with OpenBLAS v0.3.26
+/// `lapack-netlib/SRC/dlasd4.f`; no LAPACK code is ported here.
 pub(crate) fn secular_eq_root_finder<T: RealField>(
 	secular_eq: &dyn Fn(T, T) -> T,
 	batch_secular_eq: &dyn Fn(&[T; 4], &[T; 4]) -> [T; 4],
@@ -76,9 +79,13 @@ pub(crate) fn secular_eq_root_finder<T: RealField>(
 			while f_cur != zero()
 				&& (&mu_cur - &mu_prev).abs()
 					> eight * epsilon * mu_cur.abs().fmax(mu_prev.abs())
-				&& (&f_cur - &f_prev).abs() > *epsilon
 				&& !use_bisection
 			{
+				// Flat function values do not imply convergence of the root.
+				if (&f_cur - &f_prev).abs() <= *epsilon {
+					use_bisection = true;
+					break;
+				}
 				let ref a = (&f_cur - &f_prev) * (&mu_prev * &mu_cur)
 					/ (&mu_prev - &mu_cur);
 				let ref b = &f_cur - a / &mu_cur;
@@ -1555,6 +1562,38 @@ mod tests {
 			Col::from_fn(diag.len(), |i| diag[i]),
 			Col::from_fn(diag.len(), |i| subdiag[i]),
 		)
+	}
+	#[test]
+	fn test_secular_eq_flat_away_from_root() {
+		for tiny in [1e-6_f64, 1e-13 / 65.0_f64.sqrt(), 1e-30] {
+			for (near_right, last) in
+				[(false, false), (false, true), (true, false)]
+			{
+				let right = 0.0483274904722646;
+				let f = |shift: f64, mu: f64| {
+					if near_right {
+						-1.0 + (tiny / ((right - shift) - mu)).powi(2)
+					} else {
+						1.0 - (tiny / (shift + mu)).powi(2)
+					}
+				};
+				let (shift, mu) = secular_eq_root_finder(
+					&f,
+					&|shifts, mus| {
+						core::array::from_fn(|i| f(shifts[i], mus[i]))
+					},
+					0.0,
+					right,
+					last,
+				);
+				let distance = if near_right {
+					(right - shift) - mu
+				} else {
+					shift + mu
+				};
+				assert!((distance / tiny - 1.0).abs() < 1e-14);
+			}
+		}
 	}
 	#[test]
 	fn test_qr_algorithm() {

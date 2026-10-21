@@ -898,6 +898,90 @@ mod tests {
 			assert!(s2 ~ s);
 		}
 	}
+	fn check_tiny_split<T: ComplexField>(a: MatRef<'_, T>) {
+		let (m, n) = a.shape();
+		let size = Ord::min(m, n);
+		let compute = |threshold, want_u, want_v| {
+			let params = Spec::new(SvdParams {
+				recursion_threshold: threshold,
+				..auto!(T)
+			});
+			let mut s = Col::zeros(size);
+			let mut u = Mat::zeros(m, if want_u { size } else { 0 });
+			let mut v = Mat::zeros(n, if want_v { size } else { 0 });
+			let vectors = |want| {
+				if want {
+					ComputeSvdVectors::Thin
+				} else {
+					ComputeSvdVectors::No
+				}
+			};
+			svd(
+				a,
+				s.as_mut().as_diagonal_mut(),
+				if want_u { Some(u.as_mut()) } else { None },
+				if want_v { Some(v.as_mut()) } else { None },
+				Par::Seq,
+				MemStack::new(&mut MemBuffer::new(svd_scratch::<T>(
+					m,
+					n,
+					vectors(want_u),
+					vectors(want_v),
+					Par::Seq,
+					params,
+				))),
+				params,
+			)
+			.unwrap();
+			(s, u, v)
+		};
+		let (reference, _, _) = compute(usize::MAX, true, true);
+		for (want_u, want_v) in
+			[(true, true), (false, false), (true, false), (false, true)]
+		{
+			let (s, u, v) = compute(128, want_u, want_v);
+			assert!((&s - &reference).norm_max() < from_f64::<T::Real>(1e-13));
+			if want_u {
+				assert!(
+					(u.adjoint() * &u - Mat::<T>::identity(size, size))
+						.norm_l2() < from_f64::<T::Real>(1e-13)
+				);
+			}
+			if want_v {
+				assert!(
+					(v.adjoint() * &v - Mat::<T>::identity(size, size))
+						.norm_l2() < from_f64::<T::Real>(1e-13)
+				);
+			}
+			if want_u && want_v {
+				let back = &u * s.as_diagonal() * v.adjoint();
+				assert!(
+					(&back - a).norm_l2() / a.norm_l2()
+						< from_f64::<T::Real>(1e-13)
+				);
+			}
+		}
+	}
+	#[test]
+	fn test_tiny_diagonal_at_split() {
+		for n in [128, 256] {
+			for tiny in [0.0, 1e-15, 1e-13, 1e-10, 1e-6] {
+				let a = Mat::<f64>::from_fn(n, n, |i, j| {
+					if (i == j && i < 64) || (j == i + 1 && i < 64) {
+						1.0
+					} else if i == 64 && j == 64 {
+						tiny
+					} else {
+						0.0
+					}
+				});
+				check_tiny_split(a.as_ref());
+				let complex =
+					Mat::<c64>::from_fn(n, n, |i, j| c64::new(0.0, a[(i, j)]));
+				check_tiny_split(complex.as_ref());
+			}
+		}
+	}
 	#[test]
 	fn test_real() {
 		let rng = &mut StdRng::seed_from_u64(1);
