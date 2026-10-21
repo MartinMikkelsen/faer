@@ -678,6 +678,17 @@ pub(crate) fn schur_swap_22<T: RealField>(
 	0
 }
 pub(crate) fn schur_swap<T: RealField>(
+	a: MatMut<T>,
+	q: Option<MatMut<T>>,
+	j0: usize,
+	n1: usize,
+	n2: usize,
+) -> isize {
+	// Preserve the internal dispatcher's historical handling of rejected swaps.
+	let _ = schur_swap_checked(a, q, j0, n1, n2);
+	0
+}
+pub(crate) fn schur_swap_checked<T: RealField>(
 	mut a: MatMut<T>,
 	mut q: Option<MatMut<T>>,
 	j0: usize,
@@ -688,14 +699,14 @@ pub(crate) fn schur_swap<T: RealField>(
 	let j1 = j0 + 1;
 	let j2 = j0 + 2;
 	if n1 == 2 && (a[(j1, j0)] == zero()) {
-		schur_swap(a.rb_mut(), q.rb_mut(), j1, 1, n2);
-		schur_swap(a.rb_mut(), q.rb_mut(), j0, 1, n2);
-		return 0;
+		let first = schur_swap_checked(a.rb_mut(), q.rb_mut(), j1, 1, n2);
+		let second = schur_swap_checked(a.rb_mut(), q.rb_mut(), j0, 1, n2);
+		return if first != 0 { first } else { second };
 	}
 	if n2 == 2 && (a[(j0 + n1 + 1, j0 + n1)] == zero()) {
-		schur_swap(a.rb_mut(), q.rb_mut(), j0, n1, 1);
-		schur_swap(a.rb_mut(), q.rb_mut(), j1, n1, 1);
-		return 0;
+		let first = schur_swap_checked(a.rb_mut(), q.rb_mut(), j0, n1, 1);
+		let second = schur_swap_checked(a.rb_mut(), q.rb_mut(), j1, n1, 1);
+		return if first != 0 { first } else { second };
 	}
 	let schur_swap_impl = match (n1, n2) {
 		(1, 1) => schur_swap_11::<T>,
@@ -704,7 +715,7 @@ pub(crate) fn schur_swap<T: RealField>(
 		(2, 2) => schur_swap_22::<T>,
 		_ => panic!(),
 	};
-	schur_swap_impl(a.rb_mut(), q.rb_mut(), j0);
+	let status = schur_swap_impl(a.rb_mut(), q.rb_mut(), j0);
 	if n2 == 2 {
 		let ((a00, a01, a10, a11), _, _, (cs, sn)) = lahqr_schur22(
 			a[(j0, j0)].copy(),
@@ -766,7 +777,7 @@ pub(crate) fn schur_swap<T: RealField>(
 			rot.apply_on_the_right_in_place(q.two_cols_mut(j0, j1));
 		}
 	}
-	0
+	status
 }
 fn aggressive_early_deflation<T: RealField>(
 	want_t: bool,

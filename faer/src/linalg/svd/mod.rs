@@ -322,6 +322,142 @@ fn compute_bidiag_real_svd<T: RealField>(
 		)
 	}
 }
+/// Workspace for [`bidiagonal_svd`], including the padded lower-bidiagonal
+/// storage used by the existing divide-and-conquer implementation.
+///
+/// # Examples
+/// ```
+/// use faer::Par;
+/// use faer::linalg::svd::bidiagonal_svd_scratch;
+/// let _buffer = dyn_stack::MemBuffer::new(bidiagonal_svd_scratch::<f64>(
+/// 	3,
+/// 	Par::Seq,
+/// 	Default::default(),
+/// ));
+/// ```
+pub fn bidiagonal_svd_scratch<T: ComplexField>(
+	dim: usize,
+	par: Par,
+	params: Spec<SvdParams, T>,
+) -> StackReq {
+	let n = dim;
+	if n == 0 {
+		return StackReq::EMPTY;
+	}
+	StackReq::all_of(&[
+		temp_mat_scratch::<T>(n, 1).array(2),
+		temp_mat_scratch::<T>(n + 1, n + 1),
+		temp_mat_scratch::<T>(n, n),
+		bidiag_cplx_svd_scratch::<T>(n, true, true, par, *params),
+	])
+}
+/// Computes a square bidiagonal SVD `B = U * diag(s) * V.adjoint()`.
+/// `diag` is overwritten with nonnegative, descending singular values (with
+/// zero imaginary part). `offdiag` has length `n.saturating_sub(1)` and is
+/// unchanged. `upper` selects the superdiagonal rather than the subdiagonal.
+/// Both `u` and `v` are `n` by `n`; the output is **V**, not its adjoint.
+/// Real and complex entries are supported via the existing phase reduction.
+///
+/// # Panics
+/// Panics on incompatible dimensions or insufficient scratch.
+///
+/// # Errors
+/// Returns [`SvdError::NoConvergence`] for nonfinite input or iteration
+/// failure. Outputs are unspecified on error; `offdiag` is always unchanged.
+///
+/// # Examples
+/// ```
+/// use dyn_stack::{MemBuffer, MemStack};
+/// use faer::linalg::svd::*;
+/// use faer::{Mat, Par};
+/// let mut d = [3.0f64, -2.0];
+/// let (mut u, mut v) = (Mat::zeros(2, 2), Mat::zeros(2, 2));
+/// let mut mem = MemBuffer::new(bidiagonal_svd_scratch::<f64>(
+/// 	2,
+/// 	Par::Seq,
+/// 	Default::default(),
+/// ));
+/// bidiagonal_svd(
+/// 	&mut d,
+/// 	&[0.0],
+/// 	true,
+/// 	u.as_mut(),
+/// 	v.as_mut(),
+/// 	Par::Seq,
+/// 	MemStack::new(&mut mem),
+/// 	Default::default(),
+/// )
+/// .unwrap();
+/// assert_eq!(d, [3.0, 2.0]);
+/// ```
+pub fn bidiagonal_svd<T: ComplexField>(
+	diag: &mut [T],
+	offdiag: &[T],
+	upper: bool,
+	mut u: MatMut<'_, T>,
+	mut v: MatMut<'_, T>,
+	par: Par,
+	stack: &mut MemStack,
+	params: Spec<SvdParams, T>,
+) -> Result<(), SvdError> {
+	let n = diag.len();
+	assert!(offdiag.len() == n.saturating_sub(1));
+	assert!(
+		u.nrows() == n && u.ncols() == n && v.nrows() == n && v.ncols() == n
+	);
+	if !diag.iter().chain(offdiag).all(|x| x.is_finite()) {
+		return Err(SvdError::NoConvergence);
+	}
+	if n == 0 {
+		return Ok(());
+	}
+	// SAFETY: Every entry is written below before the kernel reads the
+	// diagonal.
+	let (mut d, stack) = unsafe { temp_mat_uninit::<T, _, _>(n, 1, stack) };
+	let (mut e, stack) = temp_mat_zeroed::<T, _, _>(n, 1, stack);
+	// SAFETY: The phase-reduction kernel fully writes each factor on success;
+	// its error path returns before either factor is read here.
+	let (mut left, stack) =
+		unsafe { temp_mat_uninit::<T, _, _>(n + 1, n + 1, stack) };
+	// SAFETY: Same full-overwrite contract as the left factor above.
+	let (mut right, stack) = unsafe { temp_mat_uninit::<T, _, _>(n, n, stack) };
+	let mut d = d.as_mat_mut().col_mut(0).try_as_col_major_mut().unwrap();
+	let mut e = e.as_mat_mut().col_mut(0).try_as_col_major_mut().unwrap();
+	for i in 0..n {
+		d[i] = if upper {
+			diag[i].conj()
+		} else {
+			diag[i].copy()
+		};
+		if i + 1 < n {
+			e[i] = if upper {
+				offdiag[i].conj()
+			} else {
+				offdiag[i].copy()
+			};
+		}
+	}
+	compute_bidiag_cplx_svd(
+		d.rb_mut(),
+		e.rb_mut(),
+		Some(left.as_mat_mut()),
+		Some(right.as_mat_mut()),
+		*params,
+		par,
+		stack,
+	)?;
+	for i in 0..n {
+		diag[i] = d[i].copy();
+	}
+	if upper {
+		u.copy_from(right.as_mat_ref());
+		v.copy_from(left.as_mat_ref().submatrix(0, 0, n, n));
+	} else {
+		u.copy_from(left.as_mat_ref().submatrix(0, 0, n, n));
+		v.copy_from(right.as_mat_ref());
+	}
+	Ok(())
+}
 /// bidiag -> divide conquer svd / qr algo
 fn svd_imp<T: ComplexField>(
 	matrix: MatRef<'_, T>,
