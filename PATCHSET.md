@@ -50,6 +50,7 @@ gate has changed and two kinds of adoption are now in the ledger.
 | --- | --- |
 | Crate names | `faer` → `t4a-faer`, `faer-traits` → `t4a-faer-traits`. `[lib] name` stays `faer` / `faer_traits`, so downstream `use faer::...` is unchanged. |
 | Workspace | `faer-ffi` is excluded (the C API and its cbindgen build are unused by tensor4all). |
+| Upstream base | Synced with Codeberg `0ecd846` (2026-10-17) by a merge commit, so `upstream/main` is an ancestor of this branch. The nine upstream commits since the previous base `ddbd2ae` (third-party: the sparse CSC example doc, `MatMut::from_row_major_slice_with_stride_mut`'s strides, the CG/BiCGSTAB uninitialized read) are already present here in byte-identical form, so the sync changes no file: the merged tree hash equals the pre-merge tree hash. Later syncs record the new base here. |
 | Publication | crates.io, in the order `t4a-faer-traits` then `t4a-faer`. The tag is `v<faer version>`. A version that is already on crates.io is skipped, so a release that bumps only one crate still succeeds. |
 | Released | `t4a-faer-traits 0.24.0` and `t4a-faer 0.24.4`, published from commit `3a6a9d6`. The published `src/**` is byte-identical to that commit, so `3a6a9d6` is the revision a consumer pins. A later commit needs a new version. |
 | LICENSE | A `LICENSE` copy lives in each crate directory so the published archive ships the MIT text (`license-file` next to `license` makes Cargo warn). |
