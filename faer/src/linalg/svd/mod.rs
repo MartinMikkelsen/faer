@@ -216,7 +216,14 @@ fn compute_bidiag_cplx_svd<T: ComplexField>(
 			one()
 		} else {
 			let norm1 = x.real().abs().fmax(x.imag().abs());
-			let y = x.mul_real(norm1.recip());
+			// a subnormal component scale has an infinite reciprocal; rescale it the
+			// way reference `dlarfg` does instead of dividing by a zero product
+			let ref shift = if norm1 >= min_positive::<T::Real>() {
+				from_f64::<T::Real>(1.0)
+			} else {
+				from_f64::<T::Real>(4503599627370496.0)
+			};
+			let y = x.mul_real(shift).mul_real((&norm1 * shift).recip());
 			y.mul_real(y.abs().recip())
 		}
 	};
@@ -980,6 +987,164 @@ mod tests {
 					Mat::<c64>::from_fn(n, n, |i, j| c64::new(0.0, a[(i, j)]));
 				check_tiny_split(complex.as_ref());
 			}
+		}
+	}
+	/// A zero block at a divide-and-conquer split must still hand its parent merge the
+	/// identity boundary entry that carries the nonzero part of the spectrum, whatever
+	/// singular vectors the caller asked for (#33).
+	#[test]
+	fn test_zero_block_at_split() {
+		fn check<T: ComplexField>(
+			n: usize,
+			threshold: usize,
+			want: (bool, bool),
+			tol: f64,
+		) {
+			let (want_u, want_v) = want;
+			let a = Mat::<T>::from_fn(n, n, |i, j| {
+				if i == n / 2 && j == n / 2 {
+					one()
+				} else {
+					zero()
+				}
+			});
+			let params = Spec::new(SvdParams {
+				recursion_threshold: threshold,
+				..auto!(T)
+			});
+			let vectors = |want| {
+				if want {
+					ComputeSvdVectors::Full
+				} else {
+					ComputeSvdVectors::No
+				}
+			};
+			let mut s = Col::<T>::zeros(n);
+			let mut u = Mat::<T>::zeros(n, if want_u { n } else { 0 });
+			let mut v = Mat::<T>::zeros(n, if want_v { n } else { 0 });
+			svd(
+				a.as_ref(),
+				s.as_mut().as_diagonal_mut(),
+				if want_u { Some(u.as_mut()) } else { None },
+				if want_v { Some(v.as_mut()) } else { None },
+				Par::Seq,
+				MemStack::new(&mut MemBuffer::new(svd_scratch::<T>(
+					n,
+					n,
+					vectors(want_u),
+					vectors(want_v),
+					Par::Seq,
+					params,
+				))),
+				params,
+			)
+			.unwrap();
+			// `norm_max` skips NaN entries, so finiteness is stated separately
+			assert!(s.is_all_finite());
+			if want_u {
+				assert!(u.is_all_finite());
+			}
+			if want_v {
+				assert!(v.is_all_finite());
+			}
+			let expected =
+				Col::<T>::from_fn(n, |i| if i == 0 { one() } else { zero() });
+			let tol = from_f64::<T::Real>(tol);
+			assert!((&s - &expected).norm_max() <= tol.copy());
+			let identity = Mat::<T>::identity(n, n);
+			if want_u && want_v {
+				let back = &u * s.as_diagonal() * v.adjoint();
+				assert!((&back - &a).norm_max() <= tol.copy());
+			}
+			if want_u {
+				assert!(
+					(u.adjoint() * &u - &identity).norm_max() <= tol.copy()
+				);
+			}
+			if want_v {
+				assert!(
+					(v.adjoint() * &v - &identity).norm_max() <= tol.copy()
+				);
+			}
+		}
+		for n in [8usize, 16, 32] {
+			for threshold in [4, 8] {
+				for want in
+					[(true, true), (false, false), (true, false), (false, true)]
+				{
+					check::<f32>(n, threshold, want, 1e-5);
+					check::<c32>(n, threshold, want, 1e-5);
+					check::<f64>(n, threshold, want, 1e-13);
+					check::<c64>(n, threshold, want, 1e-13);
+				}
+			}
+		}
+		// the reported `singular_values()` call runs at the default threshold
+		let threshold = <SvdParams as Auto<f64>>::auto().recursion_threshold;
+		check::<f64>(256, threshold, (false, false), 1e-13);
+	}
+	/// An extreme but finite scale must not overflow or underflow the reduction that
+	/// bidiagonalisation and the SVD share (#36): the spectrum and the reconstruction
+	/// stay finite and accurate.
+	#[test]
+	fn test_extreme_scale() {
+		fn check<T: ComplexField>(s: f64, tol: f64) {
+			let scale = from_f64::<T>(s);
+			let a = Mat::<T>::from_fn(2, 2, |i, j| match (i, j) {
+				(0, 0) => scale.copy(),
+				(0, 1) => scale.mul_real(from_f64::<T::Real>(0.5)),
+				(1, 1) => scale.copy(),
+				_ => zero(),
+			});
+			let params = Spec::new(SvdParams {
+				recursion_threshold: 4,
+				..auto!(T)
+			});
+			let mut sigma = Mat::<T>::zeros(2, 2);
+			let mut u = Mat::<T>::zeros(2, 2);
+			let mut v = Mat::<T>::zeros(2, 2);
+			svd(
+				a.as_ref(),
+				sigma.as_mut().diagonal_mut(),
+				Some(u.as_mut()),
+				Some(v.as_mut()),
+				Par::Seq,
+				MemStack::new(&mut MemBuffer::new(svd_scratch::<T>(
+					2,
+					2,
+					ComputeSvdVectors::Thin,
+					ComputeSvdVectors::Thin,
+					Par::Seq,
+					params,
+				))),
+				params,
+			)
+			.unwrap();
+			let rec = &u * &sigma * v.adjoint();
+			let err = (&rec - &a).norm_max();
+			assert!(rec.is_all_finite());
+			assert!(err <= a.norm_max() * from_f64::<T::Real>(tol));
+		}
+		for s in [1.0f64, 1e160, 1e-300] {
+			check::<f64>(s, 1e-14);
+			check::<c64>(s, 1e-14);
+		}
+		for s in [1.0f64, 1e30, 1e-35] {
+			check::<f32>(s, 1e-6);
+			check::<c32>(s, 1e-6);
+		}
+	}
+	/// A rank-one matrix's bidiagonalisation cascades down to subnormal entries, where the
+	/// row norm's reciprocal (and, for complex input, the phase normalisation's) overflows.
+	#[test]
+	fn test_rank_one_subnormal_cascade() {
+		for n in [16usize, 32, 150] {
+			test_svd(Mat::<f32>::full(n, n, 1.0).as_ref());
+			test_svd(Mat::<c32>::full(n, n, c32::ONE).as_ref());
+		}
+		for n in [32usize, 150] {
+			test_svd(Mat::<f64>::full(n, n, 1.0).as_ref());
+			test_svd(Mat::<c64>::full(n, n, c64::ONE).as_ref());
 		}
 	}
 	#[test]

@@ -161,8 +161,16 @@ pub fn bidiag_in_place<T: ComplexField>(
 				*a -= &*y;
 			});
 			let norm = A12.rb().norm_l2();
-			let ref norm_inv = norm.recip();
 			if norm != zero() {
+				// a subnormal row norm has an infinite reciprocal, so rescale the row
+				// first: reference `dlarfg` does the same when its normaliser underflows
+				let ref norm_inv = if norm >= min_positive() {
+					(&norm).recip()
+				} else {
+					let ref shift = from_f64::<T::Real>(4503599627370496.0);
+					z!(A12.rb_mut()).for_each(|uz!(a)| *a = a.mul_real(shift));
+					(&norm * shift).recip()
+				};
 				z!(A12.rb_mut()).for_each(|uz!(a)| *a = a.mul_real(norm_inv));
 			}
 			matmul(

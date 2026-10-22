@@ -141,16 +141,18 @@ pub fn norm_l2_x3<T: ComplexField>(mut mat: MatRef<'_, T>) -> [T::Real; 3] {
 				}
 			}
 		}
-		let ref sml = min_positive::<T::Real>();
-		let ref big = max_positive::<T::Real>();
+		let ref sml = sqrt_min_positive::<T::Real>();
+		let ref big = sqrt_max_positive::<T::Real>();
 		let mut acc = zero::<T::Real>();
 		for j in 0..n {
 			for i in 0..m {
 				acc = acc.hypot(mat[(i, j)].abs());
 			}
 		}
-		acc = acc.abs2();
-		[sml * &acc, acc.copy(), big * &acc]
+		// `acc` is the norm itself, as reference `dnrm2` returns it, so scale before
+		// squaring: squaring the unscaled accumulator overflows or underflows a
+		// norm that is finite and representable.
+		[(sml * &acc).abs2(), acc.abs2(), (big * &acc).abs2()]
 	}
 }
 pub fn norm_l2<T: ComplexField>(mat: MatRef<'_, T>) -> T::Real {
@@ -168,7 +170,7 @@ pub fn norm_l2<T: ComplexField>(mat: MatRef<'_, T>) -> T::Real {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::{Col, Mat, assert, c64};
+	use crate::{Col, Mat, assert, c32, c64};
 
 	#[test]
 	fn test_norm_l2() {
@@ -193,6 +195,33 @@ mod tests {
 		let mat = Col::from_fn(10000000, |_| 0.3);
 		let target = (0.3 * 0.3 * 10000000.0f64).sqrt();
 		assert!(relative_err(norm_l2(mat.as_ref().as_mat()), target) < 1e-14);
+	}
+	#[test]
+	fn test_norm_l2_strided_range() {
+		// the generic-stride fallback must square a scaled accumulator, at both ends of
+		// each dtype's exponent range (the range sums it forms are dtype-sized)
+		fn check<T: ComplexField>(scales: [f64; 3], tol: f64) {
+			for s in scales {
+				let mat = Mat::<T>::from_fn(2, 2, |i, j| match (i, j) {
+					(0, 1) => from_f64::<T>(s * 0.5),
+					(1, 0) => zero(),
+					_ => from_f64::<T>(s),
+				});
+				let expected = from_f64::<T::Real>(s * 1.25f64.sqrt());
+				let norm = mat.row(0).norm_l2();
+				assert!(norm.is_finite());
+				assert!(
+					(norm - &expected).abs()
+						<= (&expected).abs() * from_f64::<T::Real>(tol)
+				);
+			}
+		}
+		let wide = [1.0, 1e160, 1e-300];
+		let narrow = [1.0, 1e30, 1e-35];
+		check::<f32>(narrow, 1e-5);
+		check::<c32>(narrow, 1e-5);
+		check::<f64>(wide, 1e-14);
+		check::<c64>(wide, 1e-14);
 	}
 	#[test]
 	fn test_norm_l2_cplx() {
