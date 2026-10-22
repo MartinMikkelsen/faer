@@ -16,6 +16,7 @@ use linalg::qr::no_pivoting::factor::QrParams;
 /// bidiagonalization
 pub mod bidiag;
 pub(crate) mod bidiag_svd;
+pub(crate) mod dqds;
 /// whether the singular vectors should be computed
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ComputeSvdVectors {
@@ -282,6 +283,16 @@ fn compute_bidiag_real_svd<T: RealField>(
 	for i in 0..n {
 		if !(diag[i].is_finite() && subdiag[i].is_finite()) {
 			return Err(SvdError::NoConvergence);
+		}
+	}
+	if u.is_none() && v.is_none() {
+		// Values only: dqds applies no rotations, so a sweep costs one division and one
+		// multiplication per entry instead of a rotation's hypot and its two-sided update, and it
+		// is what LAPACK's values-only route uses at every size (`DBDSDC(compq='N')` ->
+		// `DLASDQ` -> `DBDSQR`'s `ROTATE`-false branch -> `DLASQ1`). A rank-deficient bidiagonal
+		// keeps the rotation path below, because the qd transform divides by the factors.
+		if !diag.rb().iter().any(|x| *x == zero()) {
+			return dqds::singular_values(diag.as_slice_mut(), subdiag.as_slice_mut());
 		}
 	}
 	if n < params.recursion_threshold {
