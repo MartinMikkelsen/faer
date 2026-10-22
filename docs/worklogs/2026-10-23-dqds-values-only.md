@@ -129,3 +129,25 @@ last factor: it still does not converge on the mixed-scale block, which says the
 `dlasq3`'s **analytic two-eigenvalue deflation** (the trailing 2x2 solved directly, two values released
 at once), not a looser threshold. That is the next unit of work; the tree keeps `801c197` until it
 exists, verified at 1e-10.
+
+## Campaign loop measurement (64 target, 32 guard)
+
+Paired in one stack (`--regimes linalg-small --families svd_values,svd_thin,qr_factor,eigh --shapes
+32,64 --dtypes f64,c64,f32,c32 --threads 4,8 --reps 5 --aa 3`, MKL arm, three engines). Baseline
+`20261022T223956Z-dqds-loop-baseline` at the pin, candidate `20261022T230352Z-dqds-loop-candidate` at
+`118e427`; the comparator reports identical measured paths and the `faer-upstream` control reproduces
+(median 1.0026 over 128 cells). Below 1 is faster:
+
+| `svd_values` | f64 | c64 | f32 | c32 |
+| --- | --- | --- | --- | --- |
+| 64 (target), C order | 0.930 | 0.910 | **0.827** | **0.866** |
+| 64, F order | 0.890 | 0.949 | **0.819** | 0.870 |
+| 32 (guard), C order | 0.926 | 0.933 | 0.872 | 0.908 |
+| 32, F order | 0.949 | 0.963 | 0.877 | 0.908 |
+
+Both sizes improve in every dtype, so the guard is not paying for the target: the kernel is simply
+cheaper at 32 as well. 32 cells faster and 3 slower beyond 5%: `qr_factor` f64 F 4T 1.13 (0.084 ->
+0.102 ms), `qr_factor` c32 C 4T 1.06 and f32 F 4T 1.05. `qr_factor` does not reach this code, so those
+are the binary-layout effect this campaign has measured before (a pair of one source moves a cell by
+25% at that size), but they are **unresolved** and the blast-radius arm has to settle them before
+adoption.
