@@ -215,22 +215,47 @@ fn compute_bidiag_cplx_svd<T: ComplexField>(
 		if x == zero() {
 			one()
 		} else {
-			let norm1 = x.real().abs().fmax(x.imag().abs());
+			let mut x = x;
+			let mut norm1 = x.real().abs().fmax(x.imag().abs());
+			if !norm1.recip().is_finite() {
+				// A subnormal entry has no finite reciprocal; rescale it by
+				// the exact power of two `1 / min_positive` first. The phase
+				// is unchanged, and normal entries take the historical path.
+				x = x.mul_real(min_positive::<T::Real>().recip());
+				norm1 = x.real().abs().fmax(x.imag().abs());
+			}
 			let y = x.mul_real(norm1.recip());
 			y.mul_real(y.abs().recip())
 		}
 	};
+	let magnitude = |x: &T| {
+		// `abs` squares components scaled by `sqrt(min_positive)` or
+		// `sqrt(max_positive)`, which flushes a magnitude below `min_positive`
+		// to zero and overflows above about `max_positive / 2`. Outside
+		// `[min_positive, 1 / min_positive]`, rescale by that exact power of
+		// two first; other entries keep the historical `abs` bit for bit.
+		let sml = min_positive::<T::Real>();
+		let big = sml.recip();
+		let m = x.real().abs().fmax(x.imag().abs());
+		if m < sml && m != zero() {
+			x.mul_real(&big).abs() * sml
+		} else if m > big && m.is_finite() {
+			x.mul_real(&sml).abs() * big
+		} else {
+			x.abs()
+		}
+	};
 	let mut col_normalized = normalized(diag[0].conj());
 	col_mul[0] = col_normalized.copy();
-	diag_real[0] = diag[0].abs();
+	diag_real[0] = magnitude(&diag[0]);
 	subdiag_real[n - 1] = zero();
 	for i in 1..n {
 		let row_normalized =
 			normalized((&subdiag[i - 1] * col_normalized).conj());
-		subdiag_real[i - 1] = subdiag[i - 1].abs();
+		subdiag_real[i - 1] = magnitude(&subdiag[i - 1]);
 		row_mul[i - 1] = row_normalized.conj();
 		col_normalized = normalized((&diag[i] * row_normalized).conj());
-		diag_real[i] = diag[i].abs();
+		diag_real[i] = magnitude(&diag[i]);
 		col_mul[i] = col_normalized.copy();
 	}
 	compute_bidiag_real_svd(
@@ -322,8 +347,9 @@ fn compute_bidiag_real_svd<T: RealField>(
 		)
 	}
 }
-/// Workspace for [`bidiagonal_svd`], including the padded lower-bidiagonal
-/// storage used by the existing divide-and-conquer implementation.
+/// Workspace for [`bidiagonal_svd`], including the padded
+/// lower-bidiagonal storage used by the existing divide-and-conquer
+/// implementation.
 ///
 /// # Examples
 /// ```
@@ -362,8 +388,10 @@ pub fn bidiagonal_svd_scratch<T: ComplexField>(
 /// Panics on incompatible dimensions or insufficient scratch.
 ///
 /// # Errors
-/// Returns [`SvdError::NoConvergence`] for nonfinite input or iteration
-/// failure. Outputs are unspecified on error; `offdiag` is always unchanged.
+/// Returns [`SvdError::NoConvergence`] for nonfinite input, iteration
+/// failure, or a result that would not be finite (for example when a complex
+/// entry's modulus overflows). Finite input never yields `Ok` with nonfinite
+/// output. Outputs are unspecified on error; `offdiag` is always unchanged.
 ///
 /// # Examples
 /// ```
@@ -446,6 +474,13 @@ pub fn bidiagonal_svd<T: ComplexField>(
 		par,
 		stack,
 	)?;
+	// Backstop: finite input never reports success with nonfinite output.
+	if !(d.rb().is_all_finite()
+		&& left.as_mat_ref().submatrix(0, 0, n, n).is_all_finite()
+		&& right.as_mat_ref().is_all_finite())
+	{
+		return Err(SvdError::NoConvergence);
+	}
 	for i in 0..n {
 		diag[i] = d[i].copy();
 	}
@@ -1301,5 +1336,71 @@ mod tests {
 		let pinv = mat.svd().unwrap().pseudoinverse();
 		let err = &pinv * &mat - Mat::<f64>::identity(n, n);
 		assert!(err.norm_max() < 1e-10);
+	}
+	/// The phase reduction's magnitude and phase helpers outside the normal
+	/// range: for an exact power of two `s`, the singular values of `s B` are
+	/// `s` times those of `B`. Entries below `min_positive` were flushed to
+	/// zero or made `inf`/NaN, entries above `1 / min_positive` overflowed.
+	fn cplx_phase_reduction_is_scale_exact<T: ComplexField>(
+		make: fn(f64, f64) -> T,
+	) {
+		let n = 3;
+		let base_d = [make(1.8, -0.4), make(-0.3, 0.7), make(0.5, 0.5)];
+		let base_e = [make(0.2, 0.6), make(-0.8, 0.1)];
+		let params: SvdParams = auto!(T);
+		let run = |s: &T::Real| {
+			let mut d = Col::<T>::from_fn(n, |i| base_d[i].mul_real(s));
+			let mut e = Col::<T>::from_fn(n, |i| {
+				if i + 1 < n {
+					base_e[i].mul_real(s)
+				} else {
+					zero()
+				}
+			});
+			let mut u = Mat::<T>::zeros(n + 1, n + 1);
+			let mut v = Mat::<T>::zeros(n, n);
+			compute_bidiag_cplx_svd(
+				d.as_mut().try_as_col_major_mut().unwrap(),
+				e.as_mut().try_as_col_major_mut().unwrap(),
+				Some(u.as_mut()),
+				Some(v.as_mut()),
+				params,
+				Par::Seq,
+				MemStack::new(&mut MemBuffer::new(
+					bidiag_cplx_svd_scratch::<T>(
+						n,
+						true,
+						true,
+						Par::Seq,
+						params,
+					),
+				)),
+			)
+			.unwrap();
+			assert!(u.is_all_finite() && v.is_all_finite());
+			d
+		};
+		let reference = run(&one());
+		let sml = min_positive::<T::Real>();
+		for s in [sml.recip(), &sml * from_f64::<T::Real>(0.0625)] {
+			let d = run(&s);
+			for i in 0..n {
+				let scaled_back = d[i].real() / &s;
+				assert!(
+					(scaled_back - reference[i].real()).abs()
+						<= from_f64::<T::Real>(1e3)
+							* eps::<T::Real>() * reference[0].real()
+				);
+			}
+		}
+	}
+	#[test]
+	fn cplx_phase_reduction_outside_normal_range() {
+		cplx_phase_reduction_is_scale_exact::<c64>(c64::new);
+		cplx_phase_reduction_is_scale_exact::<c32>(|r, i| {
+			c32::new(r as f32, i as f32)
+		});
+		cplx_phase_reduction_is_scale_exact::<f64>(|r, _| r);
+		cplx_phase_reduction_is_scale_exact::<f32>(|r, _| r as f32);
 	}
 }

@@ -1193,7 +1193,8 @@ pub fn evd_scratch<T: ComplexField>(
 		]),
 	])
 }
-/// Workspace for [`hessenberg_schur_real`] and [`hessenberg_schur_cplx`].
+/// Workspace for [`hessenberg_schur_real`] and
+/// [`hessenberg_schur_cplx`].
 ///
 /// # Examples
 /// ```
@@ -1394,14 +1395,21 @@ pub struct SchurReorderError {
 	/// Current first row of the moving block, after the last successful swap.
 	pub position: usize,
 }
-/// Workspace for Schur reordering: swaps use only fixed-size local storage.
+/// Workspace for [`reorder_schur_real`] and [`reorder_schur_cplx`]: a copy of
+/// the rows and columns of `t` and the columns of `q` that one adjacent swap
+/// updates, so that a rejected swap can be undone.
 ///
 /// # Examples
 /// ```
-/// assert_eq!(faer::linalg::evd::reorder_schur_scratch().size_bytes(), 0);
+/// let req = faer::linalg::evd::reorder_schur_scratch::<f64>(3);
+/// let _buffer = dyn_stack::MemBuffer::new(req);
 /// ```
-pub fn reorder_schur_scratch() -> StackReq {
-	StackReq::EMPTY
+pub fn reorder_schur_scratch<T: ComplexField>(dim: usize) -> StackReq {
+	StackReq::all_of(&[
+		temp_mat_scratch::<T>(4, dim),
+		temp_mat_scratch::<T>(dim, 4),
+		temp_mat_scratch::<T>(dim, 4),
+	])
 }
 /// Moves a real Schur block from `ifst` to `ilst`, updating optional `q`.
 /// Indices are zero-based rows; the second row of a pair denotes its first row.
@@ -1414,9 +1422,15 @@ pub fn reorder_schur_scratch() -> StackReq {
 /// form.
 ///
 /// # Errors
-/// Returns [`SchurReorderError`] when an adjacent swap is rejected. `t` and `q`
-/// remain in valid Schur form as of the last successful swap (with the kernel's
-/// block standardization); the error gives the moving block's current position.
+/// Returns [`SchurReorderError`] when an adjacent swap is rejected. As in
+/// LAPACK `xTREXC`/`xLAEXC`, a swap involving a 2 by 2 block is performed
+/// provisionally on a copy of its diagonal window and rejected when the
+/// provisional entries that must vanish (and, for a moved 1 by 1 block, its
+/// diagonal value) are off by more than `max(10 eps |window|_max,
+/// safmin / eps)`. A swap whose update of `t` or `q` overflows is rejected
+/// too. `t` and `q` are left exactly as after the last successful swap (in
+/// valid Schur form, with the block standardization); the error gives the
+/// moving block's current position. On success, `t` and `q` are finite.
 ///
 /// # Examples
 /// ```
@@ -1424,7 +1438,7 @@ pub fn reorder_schur_scratch() -> StackReq {
 /// use faer::Par;
 /// use faer::linalg::evd::*;
 /// let mut t = faer::mat![[1.0f64, 0.0], [0.0, 2.0]];
-/// let mut mem = MemBuffer::new(reorder_schur_scratch());
+/// let mut mem = MemBuffer::new(reorder_schur_scratch::<f64>(2));
 /// assert_eq!(
 /// 	reorder_schur_real(
 /// 		t.as_mut(),
@@ -1445,13 +1459,19 @@ pub fn reorder_schur_real<T: RealField>(
 	mut ifst: usize,
 	mut ilst: usize,
 	_par: Par,
-	_stack: &mut MemStack,
+	stack: &mut MemStack,
 ) -> Result<usize, SchurReorderError> {
 	let n = t.nrows();
 	assert!(t.ncols() == n && ifst < n && ilst < n);
 	if let Some(q) = q.rb() {
 		assert!(q.nrows() == n && q.ncols() == n);
 	}
+	let (mut saved_rows, stack) = temp_mat_zeroed::<T, _, _>(4, n, stack);
+	let (mut saved_cols, stack) = temp_mat_zeroed::<T, _, _>(n, 4, stack);
+	let (mut saved_q, _) = temp_mat_zeroed::<T, _, _>(n, 4, stack);
+	let mut saved_rows = saved_rows.as_mat_mut();
+	let mut saved_cols = saved_cols.as_mat_mut();
+	let mut saved_q = saved_q.as_mat_mut();
 	if ifst > 0 && t[(ifst, ifst - 1)] != zero() {
 		ifst -= 1;
 	}
@@ -1482,14 +1502,50 @@ pub fn reorder_schur_real<T: RealField>(
 		};
 		let start = if down { here } else { here - next };
 		let (n1, n2) = if down { (moving, next) } else { (next, moving) };
-		if schur::real_schur::schur_swap_checked(
+		// A swap updates rows `start..start + k` (from column `start`) and
+		// columns `start..start + k` (up to row `start + k`) of `t`, and
+		// columns `start..start + k` of `q`. Keep a copy so that a rejected
+		// or overflowing swap leaves the state of the last successful one.
+		let k = n1 + n2;
+		let w = n - start;
+		let h = start + k;
+		saved_rows
+			.rb_mut()
+			.submatrix_mut(0, 0, k, w)
+			.copy_from(t.rb().submatrix(start, start, k, w));
+		saved_cols
+			.rb_mut()
+			.submatrix_mut(0, 0, h, k)
+			.copy_from(t.rb().submatrix(0, start, h, k));
+		if let Some(q) = q.rb() {
+			saved_q
+				.rb_mut()
+				.submatrix_mut(0, 0, n, k)
+				.copy_from(q.submatrix(0, start, n, k));
+		}
+		let status = schur::real_schur::schur_swap_checked(
 			t.rb_mut(),
 			q.rb_mut(),
 			start,
 			n1,
 			n2,
-		) != 0
-		{
+			true,
+		);
+		let finite = t.rb().submatrix(start, start, k, w).is_all_finite()
+			&& t.rb().submatrix(0, start, h, k).is_all_finite()
+			&& q.rb()
+				.is_none_or(|q| q.submatrix(0, start, n, k).is_all_finite());
+		if status != 0 || !finite {
+			t.rb_mut()
+				.submatrix_mut(0, start, h, k)
+				.copy_from(saved_cols.rb().submatrix(0, 0, h, k));
+			t.rb_mut()
+				.submatrix_mut(start, start, k, w)
+				.copy_from(saved_rows.rb().submatrix(0, 0, k, w));
+			if let Some(q) = q.rb_mut() {
+				q.submatrix_mut(0, start, n, k)
+					.copy_from(saved_q.rb().submatrix(0, 0, n, k));
+			}
 			return Err(SchurReorderError { position: here });
 		}
 		here = if down { here + next } else { here - next };
@@ -1509,7 +1565,7 @@ pub fn reorder_schur_real<T: RealField>(
 /// use faer::linalg::evd::*;
 /// use faer::{Mat, Par, c64};
 /// let mut t = Mat::<c64>::identity(2, 2);
-/// let mut mem = MemBuffer::new(reorder_schur_scratch());
+/// let mut mem = MemBuffer::new(reorder_schur_scratch::<c64>(2));
 /// assert_eq!(
 /// 	reorder_schur_cplx(
 /// 		t.as_mut(),
@@ -1560,6 +1616,7 @@ pub fn eigenvectors_from_schur_scratch<T: ComplexField>(
 /// order. If `q` is supplied, returns eigenvectors of `q * t * q.transpose()`.
 /// Each real column has unit 2-norm. A pair of columns encodes `re + i im` for
 /// the positive-imaginary eigenvalue, normalized as one complex vector.
+/// `x` is output only: its previous contents are never read.
 ///
 /// # Panics
 /// Panics on incompatible square dimensions or insufficient scratch.
@@ -1628,6 +1685,7 @@ pub fn eigenvectors_from_schur_real<T: RealField>(
 /// Complex counterpart of [`eigenvectors_from_schur_real`]. `t` is upper
 /// triangular; every column is one unit-norm right eigenvector, in diagonal
 /// order. Optional `q` back-transforms by `q * x` (for `q * t * q.adjoint()`).
+/// `x` is output only: its previous contents are never read.
 ///
 /// # Panics
 /// Panics on incompatible square dimensions or insufficient scratch.

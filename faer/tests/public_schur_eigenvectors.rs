@@ -238,3 +238,53 @@ fn tridiagonal_dedicated_scratch() {
 		}
 	}
 }
+#[test]
+fn into_never_reads_previous_output() {
+	// A real pair followed by a singleton, with an orthogonal back-transform.
+	let t = faer::mat![[1.0f64, 2.0, 0.3], [-0.5, 1.0, -0.7], [0.0, 0.0, 4.0]];
+	let (c, s) = (0.6f64, 0.8f64);
+	let q = faer::mat![[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]];
+	let tc = Mat::from_fn(3, 3, |i, j| {
+		if i > j {
+			c64::ZERO
+		} else {
+			c64::new(t[(i, j)], 0.5 * (i + j) as f64)
+		}
+	});
+	let qc = Mat::from_fn(3, 3, |i, j| c64::new(q[(i, j)], 0.0));
+	for q in [None, Some(q.as_ref())] {
+		let mut mem = MemBuffer::new(eigenvectors_from_schur_scratch::<f64>(3));
+		let mut zeroed = Mat::zeros(3, 3);
+		let mut poisoned = Mat::from_fn(3, 3, |_, _| f64::NAN);
+		for x in [&mut zeroed, &mut poisoned] {
+			eigenvectors_from_schur_real(
+				t.as_ref(),
+				q,
+				x.as_mut(),
+				Par::Seq,
+				MemStack::new(&mut mem),
+				Default::default(),
+			)
+			.unwrap();
+		}
+		assert_eq!(zeroed, poisoned);
+	}
+	for q in [None, Some(qc.as_ref())] {
+		let mut mem = MemBuffer::new(eigenvectors_from_schur_scratch::<c64>(3));
+		let mut zeroed = Mat::zeros(3, 3);
+		let mut poisoned =
+			Mat::from_fn(3, 3, |_, _| c64::new(f64::NAN, f64::NAN));
+		for x in [&mut zeroed, &mut poisoned] {
+			eigenvectors_from_schur_cplx(
+				tc.as_ref(),
+				q,
+				x.as_mut(),
+				Par::Seq,
+				MemStack::new(&mut mem),
+				Default::default(),
+			)
+			.unwrap();
+		}
+		assert_eq!(zeroed, poisoned);
+	}
+}

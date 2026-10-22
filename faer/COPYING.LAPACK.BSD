@@ -5,6 +5,8 @@ ported algorithms:
 - schur decomposition (real + complex)
 - generalized hessenberg decomposition
 - generalized schur decomposition (real + complex)
+- schur reordering, 1x2 / 2x1 block swaps (dlaexc, dlasy2, order-3 dlarfx, dlapy2,
+  dlanv2-style norm fallback)
 -------------------------------------------------------------------------------
 
 Copyright (c) 1992-2025 The University of Tennessee and The University

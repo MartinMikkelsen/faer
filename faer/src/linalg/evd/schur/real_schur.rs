@@ -204,7 +204,14 @@ fn lahqr_schur22<T: RealField>(
 			z = &p + __tmp;
 			a = &d + &z;
 			d -= (bcmax / &z) * bcmin;
-			let ref tau = (c.abs2() + z.abs2()).sqrt();
+			let mut tau = (c.abs2() + z.abs2()).sqrt();
+			if !(tau.is_finite() && tau >= *safmn2) {
+				// LAPACK `dlanv2` uses the scaled `dlapy2` here; the squares
+				// overflow (or underflow) for extreme `c`, `z`, which made
+				// `cs = sn = 0`. Other inputs keep the historical arithmetic.
+				tau = lapy2(&c, &z);
+			}
+			let ref tau = tau;
 			cs = &z / tau;
 			sn = &c / tau;
 			b = b - c;
@@ -677,6 +684,269 @@ pub(crate) fn schur_swap_22<T: RealField>(
 	a[(j3, j1)] = zero();
 	0
 }
+// The functions from `lapy2` through `laexc_21` are Rust translations of
+// routines of Reference-LAPACK (https://github.com/Reference-LAPACK/lapack),
+// release v3.12.1 (commit 6ec7f2bc4ecf4c4a93496aa2fa519575bc0e39ca), files
+// `SRC/dlapy2.f` (DLAPY2), `SRC/dlasy2.f` (DLASY2), `SRC/dlarfx.f` (DLARFX,
+// order-3 case) and `SRC/dlaexc.f` (DLAEXC, `n1 + n2 = 3` cases); the
+// fallback in `lahqr_schur22` follows `SRC/dlanv2.f` (DLANV2) in using DLAPY2.
+// Material changes: DLASY2 is restricted to the 1x2 / 2x1 cases with
+// `isgn = -1` and no transposes; DLARFG is replaced by faer's
+// `make_householder_in_place`, converted to LAPACK's `tau`; DLARFX gains a
+// power-of-two rescaled recomputation for a column whose direct update
+// overflows; DLAEXC's acceptance test also rejects NaN. Standardization of the
+// swapped 2x2 blocks reuses faer's `lahqr_schur22`. LAPACK's copyright notice
+// and license terms are in `faer/COPYING.LAPACK.BSD`, which ships with the
+// crate (see `NOTICE`).
+
+/// LAPACK `dlapy2`: `sqrt(x^2 + y^2)` without unnecessary overflow, as
+/// `w sqrt(1 + (z / w)^2)` with `w = max(|x|, |y|)`, `z = min(|x|, |y|)`.
+/// faer's generic `hypot` squares scaled components and overflows near
+/// `max_positive / 2`.
+fn lapy2<T: RealField>(x: &T, y: &T) -> T {
+	if x.is_nan() {
+		return x.copy();
+	}
+	if y.is_nan() {
+		return y.copy();
+	}
+	let (x, y) = (x.abs(), y.abs());
+	let (w, z) = if x > y { (x, y) } else { (y, x) };
+	if z == zero() || !w.is_finite() {
+		w
+	} else {
+		let ref r = &z / &w;
+		w * (one::<T>() + r * r).sqrt()
+	}
+}
+/// LAPACK `dlasy2` restricted to the 1x2 (`n1 == 1`) and 2x1 (`n1 == 2`)
+/// cases with `isgn = -1` and no transposes: solves `tl x - x tr = scale b`
+/// for the `3 x 3` swap window `d` by complete pivoting. Returns
+/// `(scale, x[0], x[1])`.
+fn lasy2_12_21<T: RealField>(n1: usize, d: MatRef<'_, T>) -> (T, T, T) {
+	const LOCU12: [usize; 4] = [2, 3, 0, 1];
+	const LOCL21: [usize; 4] = [1, 0, 3, 2];
+	const LOCU22: [usize; 4] = [3, 2, 1, 0];
+	const XSWPIV: [bool; 4] = [false, false, true, true];
+	const BSWPIV: [bool; 4] = [false, true, false, true];
+	let ref eps = eps::<T>();
+	let ref smlnum = min_positive::<T>() / eps;
+	let (smin, tmp, mut btmp) = if n1 == 1 {
+		let tl = &d[(0, 0)];
+		let tr = d.submatrix(1, 1, 2, 2);
+		let max = tl
+			.abs()
+			.fmax(tr[(0, 0)].abs())
+			.fmax(tr[(0, 1)].abs())
+			.fmax(tr[(1, 0)].abs())
+			.fmax(tr[(1, 1)].abs());
+		(
+			(eps * max).fmax(smlnum.copy()),
+			[
+				tl - &tr[(0, 0)],
+				-&tr[(0, 1)],
+				-&tr[(1, 0)],
+				tl - &tr[(1, 1)],
+			],
+			[d[(0, 1)].copy(), d[(0, 2)].copy()],
+		)
+	} else {
+		let tl = d.submatrix(0, 0, 2, 2);
+		let tr = &d[(2, 2)];
+		let max = tr
+			.abs()
+			.fmax(tl[(0, 0)].abs())
+			.fmax(tl[(0, 1)].abs())
+			.fmax(tl[(1, 0)].abs())
+			.fmax(tl[(1, 1)].abs());
+		(
+			(eps * max).fmax(smlnum.copy()),
+			[
+				&tl[(0, 0)] - tr,
+				tl[(1, 0)].copy(),
+				tl[(0, 1)].copy(),
+				&tl[(1, 1)] - tr,
+			],
+			[d[(0, 2)].copy(), d[(1, 2)].copy()],
+		)
+	};
+	let mut ipiv = 0;
+	for i in 1..4 {
+		if tmp[i].abs() > tmp[ipiv].abs() {
+			ipiv = i;
+		}
+	}
+	let mut u11 = tmp[ipiv].copy();
+	if u11.abs() <= smin {
+		u11 = smin.copy();
+	}
+	let ref u12 = tmp[LOCU12[ipiv]].copy();
+	let ref l21 = &tmp[LOCL21[ipiv]] / &u11;
+	let mut u22 = &tmp[LOCU22[ipiv]] - u12 * l21;
+	if u22.abs() <= smin {
+		u22 = smin.copy();
+	}
+	if BSWPIV[ipiv] {
+		let temp = btmp[1].copy();
+		btmp[1] = &btmp[0] - l21 * &temp;
+		btmp[0] = temp;
+	} else {
+		btmp[1] = &btmp[1] - l21 * &btmp[0];
+	}
+	let mut scale = one::<T>();
+	let ref two_smlnum = from_f64::<T>(2.0) * smlnum;
+	if two_smlnum * btmp[1].abs() > u22.abs()
+		|| two_smlnum * btmp[0].abs() > u11.abs()
+	{
+		scale = from_f64::<T>(0.5) / btmp[0].abs().fmax(btmp[1].abs());
+		btmp[0] = &btmp[0] * &scale;
+		btmp[1] = &btmp[1] * &scale;
+	}
+	let x1 = &btmp[1] / &u22;
+	let x0 = &btmp[0] / &u11 - (u12 / &u11) * &x1;
+	if XSWPIV[ipiv] {
+		(scale, x1, x0)
+	} else {
+		(scale, x0, x1)
+	}
+}
+/// LAPACK `dlarfg` for an order-3 reflector, via faer's generator: returns
+/// the two computed entries of `v` and LAPACK's `tau`, so that
+/// `(I - tau v v^T) (alpha, x0, x1)^T = (beta, 0, 0)^T` with `v[alpha] = 1`.
+fn larfg3<T: RealField>(alpha: T, x0: T, x1: T) -> (T, T, T) {
+	stack_mat!(tail, 2, 1, T);
+	tail[(0, 0)] = x0;
+	tail[(1, 0)] = x1;
+	let mut head = alpha;
+	let HouseholderInfo { tau, .. } =
+		make_householder_in_place(&mut head, tail.rb_mut().col_mut(0));
+	(tail[(0, 0)].copy(), tail[(1, 0)].copy(), tau.recip())
+}
+/// Applies `I - tau v v^T` (order 3, `|v_i| <= 1`, `tau <= 2`, as produced
+/// by [`larfg3`]) to the vector `c`, with DLARFX's arithmetic. When an
+/// intermediate overflows, the vector is recomputed scaled by the exact power
+/// of two `1 / 8`, which bounds every intermediate by `max_positive`; the
+/// result then overflows only if the reflected vector itself is not
+/// representable. Other vectors keep DLARFX's arithmetic bit for bit.
+fn larfx3_vec<T: RealField>(c: [&T; 3], v: &[T; 3], t: &[T; 3]) -> [T; 3] {
+	let ref sum = &v[0] * c[0] + &v[1] * c[1] + &v[2] * c[2];
+	let out = [c[0] - sum * &t[0], c[1] - sum * &t[1], c[2] - sum * &t[2]];
+	if out.iter().all(|x| x.is_finite()) || !c.iter().all(|x| x.is_finite()) {
+		return out;
+	}
+	let ref down = from_f64::<T>(0.125);
+	let ref up = from_f64::<T>(8.0);
+	let c = [c[0] * down, c[1] * down, c[2] * down];
+	let ref sum = &v[0] * &c[0] + &v[1] * &c[1] + &v[2] * &c[2];
+	[
+		(&c[0] - sum * &t[0]) * up,
+		(&c[1] - sum * &t[1]) * up,
+		(&c[2] - sum * &t[2]) * up,
+	]
+}
+/// LAPACK `dlarfx` with an order-3 reflector `I - tau v v^T` from the left.
+fn larfx3_left<T: RealField>(mut c: MatMut<'_, T>, v: &[T; 3], tau: &T) {
+	let ref t = [tau * &v[0], tau * &v[1], tau * &v[2]];
+	for j in 0..c.ncols() {
+		let [c0, c1, c2] =
+			larfx3_vec([&c[(0, j)], &c[(1, j)], &c[(2, j)]], v, t);
+		c[(0, j)] = c0;
+		c[(1, j)] = c1;
+		c[(2, j)] = c2;
+	}
+}
+/// LAPACK `dlarfx` with an order-3 reflector `I - tau v v^T` from the right.
+fn larfx3_right<T: RealField>(mut c: MatMut<'_, T>, v: &[T; 3], tau: &T) {
+	let ref t = [tau * &v[0], tau * &v[1], tau * &v[2]];
+	for j in 0..c.nrows() {
+		let [c0, c1, c2] =
+			larfx3_vec([&c[(j, 0)], &c[(j, 1)], &c[(j, 2)]], v, t);
+		c[(j, 0)] = c0;
+		c[(j, 1)] = c1;
+		c[(j, 2)] = c2;
+	}
+}
+/// `dlaexc`'s acceptance threshold `max(10 eps |d|_max, safmin / eps)`.
+fn laexc_thresh<T: RealField>(d: MatRef<'_, T>) -> T {
+	let ref eps = eps::<T>();
+	let mut dnorm = zero::<T>();
+	for j in 0..d.ncols() {
+		for i in 0..d.nrows() {
+			dnorm = dnorm.fmax(d[(i, j)].abs());
+		}
+	}
+	(from_f64::<T>(10.0) * eps * dnorm).fmax(min_positive::<T>() / eps)
+}
+/// Mirrors LAPACK `dlaexc` for `n1 = 1, n2 = 2`: the swap is performed
+/// provisionally on a copy of the `3 x 3` window and rejected (status 1,
+/// `a`/`q` untouched) when the entries that must vanish or reproduce the moved
+/// singleton exceed the threshold; otherwise it is applied to `a` and `q`.
+/// Unlike LAPACK, a NaN test entry also rejects.
+fn laexc_12<T: RealField>(
+	mut a: MatMut<T>,
+	mut q: Option<MatMut<T>>,
+	j0: usize,
+) -> isize {
+	let n = a.nrows();
+	let (j1, j2) = (j0 + 1, j0 + 2);
+	stack_mat!(d, 3, 3, T);
+	d.copy_from(a.rb().submatrix(j0, j0, 3, 3));
+	let ref thresh = laexc_thresh(d.rb());
+	let (scale, x11, x12) = lasy2_12_21(1, d.rb());
+	// ( scale, x11, x12 ) H = ( 0, 0, * )
+	let (v0, v1, tau) = larfg3(x12, scale, x11);
+	let ref v = [v0, v1, one()];
+	let ref t11 = a[(j0, j0)].copy();
+	larfx3_left(d.rb_mut(), v, &tau);
+	larfx3_right(d.rb_mut(), v, &tau);
+	let test = [d[(2, 0)].abs(), d[(2, 1)].abs(), (&d[(2, 2)] - t11).abs()];
+	if !test.iter().all(|x| x <= thresh) {
+		return 1;
+	}
+	larfx3_left(a.rb_mut().submatrix_mut(j0, j0, 3, n - j0), v, &tau);
+	larfx3_right(a.rb_mut().submatrix_mut(0, j0, j2, 3), v, &tau);
+	a[(j2, j0)] = zero();
+	a[(j2, j1)] = zero();
+	a[(j2, j2)] = t11.copy();
+	if let Some(q) = q.rb_mut() {
+		let nq = q.nrows();
+		larfx3_right(q.submatrix_mut(0, j0, nq, 3), v, &tau);
+	}
+	0
+}
+/// Mirrors LAPACK `dlaexc` for `n1 = 2, n2 = 1`; see [`laexc_12`].
+fn laexc_21<T: RealField>(
+	mut a: MatMut<T>,
+	mut q: Option<MatMut<T>>,
+	j0: usize,
+) -> isize {
+	let n = a.nrows();
+	let (j1, j2) = (j0 + 1, j0 + 2);
+	stack_mat!(d, 3, 3, T);
+	d.copy_from(a.rb().submatrix(j0, j0, 3, 3));
+	let ref thresh = laexc_thresh(d.rb());
+	let (scale, x11, x21) = lasy2_12_21(2, d.rb());
+	// H ( -x11, -x21, scale )^T = ( *, 0, 0 )^T
+	let (v1, v2, tau) = larfg3(-x11, -x21, scale);
+	let ref v = [one(), v1, v2];
+	let ref t33 = a[(j2, j2)].copy();
+	larfx3_left(d.rb_mut(), v, &tau);
+	larfx3_right(d.rb_mut(), v, &tau);
+	let test = [d[(1, 0)].abs(), d[(2, 0)].abs(), (&d[(0, 0)] - t33).abs()];
+	if !test.iter().all(|x| x <= thresh) {
+		return 1;
+	}
+	larfx3_right(a.rb_mut().submatrix_mut(0, j0, j0 + 3, 3), v, &tau);
+	larfx3_left(a.rb_mut().submatrix_mut(j0, j1, 3, n - j1), v, &tau);
+	a[(j0, j0)] = t33.copy();
+	a[(j1, j0)] = zero();
+	a[(j2, j0)] = zero();
+	if let Some(q) = q.rb_mut() {
+		let nq = q.nrows();
+		larfx3_right(q.submatrix_mut(0, j0, nq, 3), v, &tau);
+	}
+	0
+}
 pub(crate) fn schur_swap<T: RealField>(
 	a: MatMut<T>,
 	q: Option<MatMut<T>>,
@@ -684,32 +954,44 @@ pub(crate) fn schur_swap<T: RealField>(
 	n1: usize,
 	n2: usize,
 ) -> isize {
-	// Preserve the internal dispatcher's historical handling of rejected swaps.
-	let _ = schur_swap_checked(a, q, j0, n1, n2);
+	// Preserve the internal dispatcher's historical kernels and handling of
+	// rejected swaps.
+	let _ = schur_swap_checked(a, q, j0, n1, n2, false);
 	0
 }
+/// Swaps adjacent real Schur blocks and returns the swap status. With
+/// `laexc`, the 1x2 and 2x1 cases use the [`laexc_12`]/[`laexc_21`] ports of
+/// LAPACK `dlaexc`, which can reject; otherwise faer's historical kernels,
+/// which always report success, are used.
 pub(crate) fn schur_swap_checked<T: RealField>(
 	mut a: MatMut<T>,
 	mut q: Option<MatMut<T>>,
 	j0: usize,
 	n1: usize,
 	n2: usize,
+	laexc: bool,
 ) -> isize {
 	let n = a.nrows();
 	let j1 = j0 + 1;
 	let j2 = j0 + 2;
 	if n1 == 2 && (a[(j1, j0)] == zero()) {
-		let first = schur_swap_checked(a.rb_mut(), q.rb_mut(), j1, 1, n2);
-		let second = schur_swap_checked(a.rb_mut(), q.rb_mut(), j0, 1, n2);
+		let first =
+			schur_swap_checked(a.rb_mut(), q.rb_mut(), j1, 1, n2, laexc);
+		let second =
+			schur_swap_checked(a.rb_mut(), q.rb_mut(), j0, 1, n2, laexc);
 		return if first != 0 { first } else { second };
 	}
 	if n2 == 2 && (a[(j0 + n1 + 1, j0 + n1)] == zero()) {
-		let first = schur_swap_checked(a.rb_mut(), q.rb_mut(), j0, n1, 1);
-		let second = schur_swap_checked(a.rb_mut(), q.rb_mut(), j1, n1, 1);
+		let first =
+			schur_swap_checked(a.rb_mut(), q.rb_mut(), j0, n1, 1, laexc);
+		let second =
+			schur_swap_checked(a.rb_mut(), q.rb_mut(), j1, n1, 1, laexc);
 		return if first != 0 { first } else { second };
 	}
 	let schur_swap_impl = match (n1, n2) {
 		(1, 1) => schur_swap_11::<T>,
+		(2, 1) if laexc => laexc_21::<T>,
+		(1, 2) if laexc => laexc_12::<T>,
 		(2, 1) => schur_swap_21::<T>,
 		(1, 2) => schur_swap_12::<T>,
 		(2, 2) => schur_swap_22::<T>,
@@ -2814,6 +3096,180 @@ mod tests {
 				let h_reconstructed = &q * &t * q.transpose();
 				let approx_eq = CwiseMat(ApproxEq::<f64>::eps());
 				assert!(h ~ h_reconstructed);
+			}
+		}
+	}
+	mod lapack_ports {
+		use super::super::*;
+		use crate::{Mat, assert};
+
+		fn rel<T: RealField>(a: &T, b: &T) -> T {
+			(a - b).abs() / b.abs()
+		}
+		#[test]
+		fn lapy2_avoids_overflow_and_underflow() {
+			// faer's generic `hypot` returns `inf` for the first input.
+			assert!(rel(&lapy2(&1e308f64, &1e297), &1e308) <= 1e-15);
+			assert!(rel(&lapy2(&-3e-320f64, &4e-320), &5e-320) <= 1e-3);
+			assert!(rel(&lapy2(&3e38f32, &-4e37), &3.026549e38) <= 1e-6);
+			assert!(rel(&lapy2(&3e-44f32, &4e-44), &5e-44) <= 0.2);
+			assert_eq!(lapy2(&0.0f64, &-2.0), 2.0);
+			assert!(lapy2(&f64::MAX, &f64::MAX).is_infinite());
+			assert!(lapy2(&f64::NAN, &1.0).is_nan());
+			assert!(lapy2(&1.0f32, &f32::NAN).is_nan());
+		}
+		/// The `dlanv2` branch of `lahqr_schur22` for real eigenvalues with an
+		/// off-diagonal near overflow: `sqrt(c^2 + z^2)` and faer's `hypot`
+		/// overflow and made `cs = sn = 0`.
+		#[test]
+		fn lahqr_schur22_scaled_norm() {
+			fn check<T: RealField>(a: f64, b: f64, c: f64, d: f64) {
+				let f = |x: f64| from_f64::<T>(x);
+				let ((a2, _, c2, d2), _, _, (cs, sn)) =
+					lahqr_schur22(f(a), f(b), f(c), f(d));
+				assert!(cs.is_finite() && sn.is_finite());
+				assert!(
+					(&cs * &cs + &sn * &sn - one::<T>()).abs()
+						<= from_f64::<T>(8.0) * eps::<T>()
+				);
+				assert!(c2 == zero::<T>());
+				// The trace is preserved; the eigenvalues are about
+				// `±sqrt(b c)`.
+				let scale = f(b.abs().max(c.abs()));
+				assert!(
+					((&a2 + &d2) / &scale - f(a + d) / &scale).abs()
+						<= from_f64::<T>(64.0) * eps::<T>()
+				);
+				let root = f(b.abs().sqrt() * c.abs().sqrt());
+				assert!(rel(&a2.abs(), &root) <= from_f64::<T>(1e-3));
+			}
+			check::<f64>(1e300, 1e300, 1e308, 0.0);
+			check::<f32>(1e30, 1e30, 3e38, 0.0);
+		}
+		#[test]
+		fn lasy2_solves_the_1x2_and_2x1_sylvester_equations() {
+			let d = MatRef::from_row_major_array(&[
+				[0.7, 2.0, 0.3],
+				[0.0, 1.0, -0.5],
+				[0.0, 0.8, 1.0],
+			]);
+			// n1 = 1: d00 x - x d[1..3, 1..3] = scale d[0, 1..3].
+			let (scale, x0, x1) = lasy2_12_21(1, d);
+			assert!(scale > 0.0 && scale <= 1.0);
+			let r0 = 0.7 * x0 - (x0 * 1.0 + x1 * 0.8) - scale * 2.0;
+			let r1 = 0.7 * x1 - (x0 * -0.5 + x1 * 1.0) - scale * 0.3;
+			assert!(r0.abs() <= 1e-14 && r1.abs() <= 1e-14);
+			let d = MatRef::from_row_major_array(&[
+				[1.0, 2.0, 0.3],
+				[-0.5, 1.0, -0.7],
+				[0.0, 0.0, 4.0],
+			]);
+			// n1 = 2: d[0..2, 0..2] x - x d22 = scale d[0..2, 2].
+			let (scale, x0, x1) = lasy2_12_21(2, d);
+			let r0 = (1.0 * x0 + 2.0 * x1) - x0 * 4.0 - scale * 0.3;
+			let r1 = (-0.5 * x0 + 1.0 * x1) - x1 * 4.0 - scale * -0.7;
+			assert!(r0.abs() <= 1e-14 && r1.abs() <= 1e-14);
+		}
+		#[test]
+		fn larfg3_and_larfx3_annihilate_and_rescale() {
+			let (v1, v2, tau) = larfg3(3.0f64, 4.0, -12.0);
+			let v = [1.0, v1, v2];
+			let t = [tau * v[0], tau * v[1], tau * v[2]];
+			let y = larfx3_vec([&3.0, &4.0, &-12.0], &v, &t);
+			assert!((y[0].abs() - 13.0).abs() <= 1e-14);
+			assert!(y[1].abs() <= 1e-14 && y[2].abs() <= 1e-14);
+			// A column whose direct update overflows before cancellation is
+			// recomputed scaled by 1/8; compare with the reflection of the
+			// column scaled by 2^-10 (exact in both directions).
+			// Here `v^T c = 2e308` overflows; the reflected column is about
+			// `(-1.46e308, 0.38e308, 0.85e308)`.
+			let c = [1e308, 1e308, -1e308];
+			let y = larfx3_vec([&c[0], &c[1], &c[2]], &v, &t);
+			let s = 2f64.powi(-10);
+			let ys =
+				larfx3_vec([&(c[0] * s), &(c[1] * s), &(c[2] * s)], &v, &t);
+			for i in 0..3 {
+				assert!(y[i].is_finite());
+				assert!((y[i] * s - ys[i]).abs() <= 1e-15 * 1e308 * s);
+			}
+			// The same reflection of a column scaled into the normal range
+			// takes the direct path, bit for bit.
+			let c = [0.5, -0.25, 2.0];
+			let sum = v[0] * c[0] + v[1] * c[1] + v[2] * c[2];
+			let y = larfx3_vec([&c[0], &c[1], &c[2]], &v, &t);
+			for i in 0..3 {
+				assert_eq!(y[i], c[i] - sum * t[i]);
+			}
+			// In f32 as well.
+			let (v1, v2, tau) = larfg3(3.0f32, 4.0, -12.0);
+			let v = [1.0f32, v1, v2];
+			let t = [tau * v[0], tau * v[1], tau * v[2]];
+			let y = larfx3_vec([&2e38f32, &2e38, &-2e38], &v, &t);
+			assert!(y.iter().all(|x| x.is_finite()));
+			assert!((y[0] / -2.923077e38 - 1.0).abs() <= 1e-5);
+		}
+		#[test]
+		fn laexc_thresh_is_dlaexc_threshold() {
+			let d = MatRef::from_row_major_array(&[[2.0f64, -4.0], [0.5, 1.0]]);
+			assert_eq!(laexc_thresh(d), 10.0 * f64::EPSILON * 4.0);
+			let d = MatRef::from_row_major_array(&[[0.0f64, 0.0], [0.0, 0.0]]);
+			assert_eq!(laexc_thresh(d), f64::MIN_POSITIVE / f64::EPSILON);
+		}
+		fn swap_is_similarity<T: RealField>(
+			rows: [[f64; 3]; 3],
+			kernel: fn(MatMut<T>, Option<MatMut<T>>, usize) -> isize,
+		) {
+			let original =
+				Mat::<T>::from_fn(3, 3, |i, j| from_f64::<T>(rows[i][j]));
+			let mut a = original.clone();
+			let mut q = Mat::<T>::identity(3, 3);
+			assert!(kernel(a.as_mut(), Some(q.as_mut()), 0) == 0);
+			let err = (&q * &a * q.transpose() - &original).norm_l2();
+			assert!(
+				err <= from_f64::<T>(32.0) * eps::<T>() * original.norm_l2()
+			);
+			let orth =
+				(q.transpose() * &q - Mat::<T>::identity(3, 3)).norm_l2();
+			assert!(orth <= from_f64::<T>(32.0) * eps::<T>());
+		}
+		#[test]
+		fn laexc_12_and_21_swap_with_a_similarity() {
+			let pair_first =
+				[[1.0, 2.0, 0.3], [-0.5, 1.0, -0.7], [0.0, 0.0, 4.0]];
+			let single_first =
+				[[4.0, 0.3, -0.7], [0.0, 1.0, 2.0], [0.0, -0.5, 1.0]];
+			swap_is_similarity::<f64>(pair_first, laexc_21::<f64>);
+			swap_is_similarity::<f32>(pair_first, laexc_21::<f32>);
+			swap_is_similarity::<f64>(single_first, laexc_12::<f64>);
+			swap_is_similarity::<f32>(single_first, laexc_12::<f32>);
+		}
+		/// Unlike LAPACK, a NaN in the acceptance test rejects the swap and
+		/// leaves `a` and `q` untouched.
+		#[test]
+		fn laexc_rejects_nan_without_touching_inputs() {
+			for (rows, kernel) in [
+				(
+					[[1.0, 2.0, 0.3], [-0.5, 1.0, f64::NAN], [0.0, 0.0, 4.0]],
+					laexc_21::<f64>
+						as fn(MatMut<f64>, Option<MatMut<f64>>, usize) -> isize,
+				),
+				(
+					[[4.0, f64::NAN, -0.7], [0.0, 1.0, 2.0], [0.0, -0.5, 1.0]],
+					laexc_12::<f64>,
+				),
+			] {
+				let original = Mat::<f64>::from_fn(3, 3, |i, j| rows[i][j]);
+				let mut a = original.clone();
+				let mut q = Mat::<f64>::identity(3, 3);
+				assert!(kernel(a.as_mut(), Some(q.as_mut()), 0) == 1);
+				for j in 0..3 {
+					for i in 0..3 {
+						assert!(
+							a[(i, j)].to_bits() == original[(i, j)].to_bits()
+						);
+					}
+				}
+				assert!(q == Mat::<f64>::identity(3, 3));
 			}
 		}
 	}

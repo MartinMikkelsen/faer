@@ -26,7 +26,7 @@ fn real<T: RealField>() {
 			} else {
 				ifst
 			};
-			let mut mem = MemBuffer::new(reorder_schur_scratch());
+			let mut mem = MemBuffer::new(reorder_schur_scratch::<T>(n));
 			let pos = reorder_schur_real(
 				t.as_mut(),
 				Some(q.as_mut()),
@@ -74,7 +74,7 @@ fn complex<T: ComplexField>(make: fn(f64, f64) -> T) {
 		for (ifst, ilst) in [(0, n - 1), (n - 1, 0)] {
 			let mut t = original.clone();
 			let mut q = Mat::identity(n, n);
-			let mut mem = MemBuffer::new(reorder_schur_scratch());
+			let mut mem = MemBuffer::new(reorder_schur_scratch::<T>(n));
 			assert_eq!(
 				reorder_schur_cplx(
 					t.as_mut(),
@@ -122,7 +122,7 @@ fn rejected_swap_preserves_last_successful_state() {
 	];
 	let mut t = original.clone();
 	let mut q = Mat::identity(4, 4);
-	let mut mem = MemBuffer::new(reorder_schur_scratch());
+	let mut mem = MemBuffer::new(reorder_schur_scratch::<f64>(4));
 	assert_eq!(
 		reorder_schur_real(
 			t.as_mut(),
@@ -162,7 +162,7 @@ fn rejection_keeps_earlier_successful_swaps() {
 	let mut expected_q = Mat::identity(5, 5);
 	let mut t = original.clone();
 	let mut q = Mat::identity(5, 5);
-	let mut mem = MemBuffer::new(reorder_schur_scratch());
+	let mut mem = MemBuffer::new(reorder_schur_scratch::<f64>(5));
 	assert_eq!(
 		reorder_schur_real(
 			expected.as_mut(),
@@ -190,4 +190,174 @@ fn rejection_keeps_earlier_successful_swaps() {
 	assert_eq!(q, expected_q);
 	close((&q * &t * q.adjoint()).as_ref(), original.as_ref());
 	schur_form(t.as_ref(), true);
+}
+
+/// Relative similarity residual and orthogonality error, computed after
+/// scaling by the largest entry so that extreme inputs stay representable.
+fn metrics<T: RealField>(original: &Mat<T>, t: &Mat<T>, q: &Mat<T>) -> (T, T) {
+	let n = original.nrows();
+	let mut scale = zero::<T>();
+	for j in 0..n {
+		for i in 0..n {
+			scale = scale.fmax(original[(i, j)].abs()).fmax(t[(i, j)].abs());
+		}
+	}
+	let a = Mat::from_fn(n, n, |i, j| &original[(i, j)] / &scale);
+	let b = Mat::from_fn(n, n, |i, j| &t[(i, j)] / &scale);
+	let residual = (q * b * q.transpose() - &a).norm_l2() / a.norm_l2();
+	let orthogonality =
+		(q.transpose() * q - Mat::<T>::identity(n, n)).norm_l2();
+	(residual, orthogonality)
+}
+
+/// Runs a reordering with `q = I`. The public contract is "stable or reject":
+/// success means finite `t`, `q` forming an orthogonal similarity in Schur
+/// form; a rejection of the first swap leaves `t` and `q` untouched. Returns
+/// whether the reordering was accepted.
+fn stable_or_rejected<T: RealField>(
+	original: &Mat<T>,
+	ifst: usize,
+	ilst: usize,
+	start: usize,
+) -> bool {
+	let n = original.nrows();
+	let mut t = original.clone();
+	let mut q = Mat::<T>::identity(n, n);
+	let mut mem = MemBuffer::new(reorder_schur_scratch::<T>(n));
+	match reorder_schur_real(
+		t.as_mut(),
+		Some(q.as_mut()),
+		ifst,
+		ilst,
+		Par::Seq,
+		MemStack::new(&mut mem),
+	) {
+		Ok(_) => {
+			assert!(t.is_all_finite() && q.is_all_finite());
+			let (residual, orthogonality) = metrics(original, &t, &q);
+			assert!(residual <= tolerance::<T>(n), "residual {residual:?}");
+			assert!(orthogonality <= tolerance::<T>(n));
+			schur_form(t.as_ref(), true);
+			true
+		},
+		Err(err) => {
+			assert_eq!(err, SchurReorderError { position: start });
+			assert!(t == *original);
+			assert!(q == Mat::<T>::identity(n, n));
+			false
+		},
+	}
+}
+
+/// faer's historical 2x1/1x2 kernels returned `Ok` here with a broken `q`
+/// (`||q t q^T - t|| / ||t|| = 1`, `||q^T q - I|| = sqrt 2`). LAPACK `dtrexc`
+/// (macOS Accelerate) accepts both swaps with relative residuals 1.7e-16 and
+/// 2.2e-16, so the `dlaexc` port must accept them too.
+#[test]
+fn reviewer_2x1_and_mirrored_1x2_swaps_are_accepted_and_stable() {
+	let b = f64::from_bits(0x16687E92154EF7A9);
+	let k = f64::from_bits(0x6974E718D7D7625D);
+	let t = faer::mat![
+		[0.0, b, k],
+		[-k, 0.0, -3.0000000000000014e199],
+		[0.0, 0.0, 0.0],
+	];
+	assert!(stable_or_rejected(&t, 0, 2, 0));
+	// The mirrored 1x2 swap. Row 2 is the pair's second row, so the moving
+	// block starts at row 1.
+	let t = faer::mat![
+		[0.0, -3.0000000000000014e199, k],
+		[0.0, 0.0, b],
+		[0.0, -k, 0.0],
+	];
+	assert!(stable_or_rejected(&t, 2, 0, 1));
+}
+
+fn ordinary<T: RealField>() {
+	let f = |x: f64| from_f64::<T>(x);
+	let pair_first = Mat::from_fn(3, 3, |i, j| {
+		f([[1.0, 2.0, 0.3], [-0.5, 1.0, -0.7], [0.0, 0.0, 4.0]][i][j])
+	});
+	let single_first = Mat::from_fn(3, 3, |i, j| {
+		f([[4.0, 0.3, -0.7], [0.0, 1.0, 2.0], [0.0, -0.5, 1.0]][i][j])
+	});
+	for (original, ifst, ilst, pos, single) in
+		[(pair_first, 0, 2, 1, 0), (single_first, 0, 1, 2, 2)]
+	{
+		let mut t = original.clone();
+		let mut q = Mat::<T>::identity(3, 3);
+		let mut mem = MemBuffer::new(reorder_schur_scratch::<T>(3));
+		assert_eq!(
+			reorder_schur_real(
+				t.as_mut(),
+				Some(q.as_mut()),
+				ifst,
+				ilst,
+				Par::Seq,
+				MemStack::new(&mut mem),
+			),
+			Ok(pos)
+		);
+		let (residual, orthogonality) = metrics(&original, &t, &q);
+		assert!(residual <= tolerance::<T>(3));
+		assert!(orthogonality <= tolerance::<T>(3));
+		schur_form(t.as_ref(), true);
+		assert!((&t[(single, single)] - f(4.0)).abs() <= tolerance::<T>(3));
+	}
+}
+#[test]
+fn ordinary_2x1_and_1x2_swaps() {
+	ordinary::<f64>();
+	ordinary::<f32>();
+}
+
+/// A moderate diagonal window with entries near overflow outside it.
+fn outside_window<T: RealField>(column: [f64; 3]) -> Mat<T> {
+	let local = [[1.0, 2.0, 0.3], [-0.5, 1.0, -0.7], [0.0, 0.0, 4.0]];
+	Mat::from_fn(4, 4, |i, j| {
+		from_f64(if i < 3 && j < 3 {
+			local[i][j]
+		} else if j == 3 && i < 3 {
+			column[i]
+		} else if i == 3 && j == 3 {
+			7.0
+		} else {
+			0.0
+		})
+	})
+}
+/// The direct `dlarfx` update of the last column overflows before
+/// cancellation (faer's historical 2x1 kernel produced NaN, the first port
+/// `inf`). LAPACK `dtrexc` / `strexc` (macOS Accelerate) accept every case
+/// here with finite output.
+#[test]
+fn swap_keeps_large_outside_window_column_finite() {
+	for column in [[1e308, 1e308, 1e308], [-1e308, 1e308, 1e308]] {
+		assert!(stable_or_rejected(&outside_window::<f64>(column), 0, 2, 0));
+	}
+	for column in [[2.5e38, 2.5e38, 2.5e38], [-1e38, 1e38, 1e38]] {
+		assert!(stable_or_rejected(&outside_window::<f32>(column), 0, 2, 0));
+	}
+}
+/// When the reflected outside column is not representable, the swap is
+/// rejected and `t`, `q` stay as they were. LAPACK `dtrexc` / `strexc` report
+/// success with `inf`/NaN entries for these inputs.
+#[test]
+fn overflowing_swap_is_rejected_unchanged() {
+	let column = [f64::MAX, -f64::MAX, f64::MAX];
+	assert!(!stable_or_rejected(&outside_window::<f64>(column), 0, 2, 0));
+	let column = [-2.5e38, 2.5e38, 2.5e38];
+	assert!(!stable_or_rejected(&outside_window::<f32>(column), 0, 2, 0));
+}
+/// The standardization of the swapped pair needs `dlanv2`'s scaled norm:
+/// `sqrt(c^2 + z^2)` and faer's generic `hypot` both overflow here, which made
+/// `q` lose orthogonality. LAPACK `dtrexc` accepts with residual below 1e-15.
+#[test]
+fn standardization_of_extreme_pair_stays_orthogonal() {
+	let t =
+		faer::mat![[0.0, 1e308, 0.0], [-1e154, 0.0, -1e289], [0.0, 0.0, 0.0]];
+	assert!(stable_or_rejected(&t, 0, 2, 0));
+	let t =
+		faer::mat![[0.0f32, 3e38, 0.0], [-1e19, 0.0, -1e34], [0.0, 0.0, 0.0]];
+	assert!(stable_or_rejected(&t, 0, 2, 0));
 }
