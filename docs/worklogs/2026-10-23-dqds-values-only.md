@@ -151,3 +151,19 @@ cheaper at 32 as well. 32 cells faster and 3 slower beyond 5%: `qr_factor` f64 F
 are the binary-layout effect this campaign has measured before (a pair of one source moves a cell by
 25% at that size), but they are **unresolved** and the blast-radius arm has to settle them before
 adoption.
+
+A third attempt combined the shift-relative tolerance with the **analytic two-value deflation** (the
+trailing 2x2 solved directly and both values released) and without the Gershgorin clamp. It fails to
+converge on `n = 4` with a negative diagonal: an unclamped shift makes an intermediate factor go
+non-positive, the retry cascade cannot recover inside its budget, and the sweep gives up.
+
+The three attempts together locate the missing piece precisely: it is **not** the deflation test and
+**not** the two-value release, it is the **shift**. LAPACK's `dlasq4` produces a shift that is
+admissible by construction - it starts from the previous sweep's smallest factor (`TAU = -DMIN`) and
+refines it inside the trailing block - so `dlasq5`'s factors stay positive and `dlasq3` never has to
+retry. A trailing-2x2 shift clamped to keep it small enough to stay admissible loses the speed a
+shift is for; the clamp and the shift have to be designed together.
+
+That is the next unit of work, and it is bigger than the deflation: a shift rule that is admissible
+by construction, with the deflation tolerance switched back to shift-relative and the two-value
+release on top. Until then the tree keeps `801c197`, verified at 1e-10.
