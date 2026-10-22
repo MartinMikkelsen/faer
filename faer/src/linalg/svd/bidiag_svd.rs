@@ -1079,7 +1079,7 @@ pub(super) fn divide_and_conquer<T: RealField>(
 			MatU::TwoRows(mut u) => {
 				u.fill(zero());
 				u[(0, 0)] = one();
-				u[(1, n)] = zero();
+				u[(1, n)] = one();
 			},
 			MatU::TwoRowsStorage(_) => {},
 		}

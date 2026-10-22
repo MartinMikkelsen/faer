@@ -983,6 +983,20 @@ mod tests {
 		}
 	}
 	#[test]
+	fn test_zero_child_at_split() {
+		for n in [128, 256] {
+			for pos in [0, n / 2, n - 1] {
+				let a = Mat::<f64>::from_fn(n, n, |i, j| {
+					if i == pos && j == pos { 1.0 } else { 0.0 }
+				});
+				check_tiny_split(a.as_ref());
+				let complex =
+					Mat::<c64>::from_fn(n, n, |i, j| c64::new(0.0, a[(i, j)]));
+				check_tiny_split(complex.as_ref());
+			}
+		}
+	}
+	#[test]
 	fn test_real() {
 		let rng = &mut StdRng::seed_from_u64(1);
 		for (m, n) in [
