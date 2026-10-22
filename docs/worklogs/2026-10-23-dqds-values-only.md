@@ -123,3 +123,9 @@ session had left.
 
 So the tree keeps the strict test: `801c197`, tests green, 10-25% faster, and the remaining
 0.47 -> 0.275 at n=64 stays open with the diagnosis and the two failed candidates recorded here.
+
+A second attempt changed only the tolerance (keeping the strict structure) and the rule for a negative
+last factor: it still does not converge on the mixed-scale block, which says the missing piece is
+`dlasq3`'s **analytic two-eigenvalue deflation** (the trailing 2x2 solved directly, two values released
+at once), not a looser threshold. That is the next unit of work; the tree keeps `801c197` until it
+exists, verified at 1e-10.
