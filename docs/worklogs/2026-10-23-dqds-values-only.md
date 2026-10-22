@@ -102,3 +102,24 @@ the strict `b_i <= eps^2 sqrt(a_i a_{i+1})` test.
 **Next lever, in order:** the deflation tolerance (aggressive, relative to the shift, as `dlasq3`
 does) and then the shift refinement (`dlasq4`). That is where the remaining 0.47 -> 0.275 sits, and it
 is a tuning exercise on an implementation that now exists and is verified, not a new algorithm.
+
+## The tuning attempt, and why it is not in the tree
+
+The two levers the measurement pointed at were tried and are **not shipped**, because they trade the
+accuracy the kernel was verified at for speed:
+
+- **Deflation relative to the accumulated shift** (`TOL2 = (100 eps)^2`, both of `dlasq3`'s conditions)
+  instead of the strict `b_i <= eps^2 sqrt(a_i a_{i+1})`.
+- **Late-failure shift correction** (`tau = (tau + dmin)(1 - 2 eps)` when the minimum factor went
+  negative and the one before it did not), a Gershgorin clamp on the candidate shift, and accepting a
+  negative *final* factor by its magnitude, which is what lets a badly scaled block converge at all.
+
+With all of them the badly scaled case (`d = [1e-6, O(1), O(1)]`) converges instead of falling back, but
+the smallest singular value comes out at ~1.3e-6 relative error against `thin_svd` where the shipped
+kernel is at 1e-10, i.e. the deflation is deflating a coupling that still carried six digits. That is
+the classic trade-off and it needs the analytic two-eigenvalue deflation (`dlasq3`'s 2x2/3x3 solves)
+rather than a threshold, plus a high-precision reference to check against - neither of which this
+session had left.
+
+So the tree keeps the strict test: `801c197`, tests green, 10-25% faster, and the remaining
+0.47 -> 0.275 at n=64 stays open with the diagnosis and the two failed candidates recorded here.
