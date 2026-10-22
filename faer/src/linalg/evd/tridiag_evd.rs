@@ -31,7 +31,14 @@ pub(crate) fn qr_algorithm<T: RealField>(
 		let ref half = from_f64::<T>(0.5);
 		let ref t0 =
 			(a - d).hypot(b.mul_pow2(from_f64::<T>(2.0))).mul_pow2(half);
-		let ref t1 = (a + d) * half;
+		let ref sum = a + d;
+		// halve before summing only when the trace overflows: halving a
+		// subnormal is not exact, so the direct form is kept where it works
+		let ref t1 = if sum.is_finite() {
+			sum.mul_pow2(half)
+		} else {
+			a.mul_pow2(half) + d.mul_pow2(half)
+		};
 		let ref r0 = t1 - t0;
 		let ref r1 = t1 + t0;
 		let ref tol = r0.abs().fmax(r1.abs()) * eps;

@@ -2701,8 +2701,14 @@ impl<T: ComplexField> SolveLstsqCore<T> for Svd<T> {
 		);
 		for j in 0..k {
 			for i in 0..size {
-				let s = recip(&real(&self.S()[i]));
-				tmp[(i, j)] = mul_real(&tmp[(i, j)], &s);
+				let s = real(&self.S()[i]);
+				// a zero direction contributes nothing; its reciprocal would
+				// turn a zero projection into NaN
+				tmp[(i, j)] = if s == zero() {
+					zero()
+				} else {
+					mul_real(&tmp[(i, j)], &s.recip())
+				};
 			}
 		}
 		linalg::matmul::matmul_with_conj(
@@ -3098,5 +3104,19 @@ mod tests {
 		let b = mat![[0.0], [0.0], [0.0]];
 		let x = a.qr().solve_lstsq(b.as_ref());
 		assert!(!x.has_nan());
+	}
+
+	#[test]
+	fn svd_lstsq_rank_deficient() {
+		let a = mat![[1.0f64, 0.0], [0.0, 0.0], [0.0, 0.0]];
+		let b = mat![[2.0f64], [0.0], [0.0]];
+		let svd = a.svd().unwrap();
+		let x = svd.solve_lstsq(b.as_ref());
+		let reference = svd.pseudoinverse() * &b;
+		assert!(!x.has_nan());
+		let err = &x - &reference;
+		assert!(err.norm_max() < 1e-12);
+		assert_eq!(x[(0, 0)], 2.0);
+		assert_eq!(x[(1, 0)], 0.0);
 	}
 }

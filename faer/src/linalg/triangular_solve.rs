@@ -113,7 +113,16 @@ fn solve_lower_triangular_in_place_base_case_generic_imp<
 			let inv = &maybe_conj_lhs(tril[(i0, i0)].recip());
 			let (x0, rhs) = rhs.split_first_row_mut().unwrap();
 			_ = rhs;
-			zip!(x0).for_each(|unzip!(x0)| *x0 = &*x0 * inv);
+			if T::IS_REAL && !inv.is_finite() {
+				// a tiny real pivot overflows its reciprocal even when
+				// `x / pivot` is representable, so divide in that case; a
+				// complex quotient squares the denominator and would turn the
+				// same input into NaN, so complex keeps the reciprocal path
+				let l00 = &maybe_conj_lhs(tril[(i0, i0)].copy());
+				zip!(x0).for_each(|unzip!(x0)| *x0 = &*x0 / l00);
+			} else {
+				zip!(x0).for_each(|unzip!(x0)| *x0 = &*x0 * inv);
+			}
 		},
 		2 => {
 			let i0 = N.check(0);
@@ -601,4 +610,26 @@ fn solve_upper_triangular_in_place_imp<'N, 'K, T: ComplexField>(
 		rhs.reverse_rows_mut(),
 		par,
 	);
+}
+#[cfg(test)]
+mod tests {
+	use super::*;
+	#[test]
+	fn tiny_pivot_scalar_solve() {
+		fn check<T: ComplexField + Clone>(pivot: T) {
+			let a = Mat::<T>::from_fn(1, 1, |_, _| pivot.clone());
+			for conj in [Conj::No, Conj::Yes] {
+				let mut rhs = Mat::<T>::from_fn(1, 1, |_, _| pivot.clone());
+				solve_lower_triangular_in_place_with_conj(
+					a.as_ref(),
+					conj,
+					rhs.as_mut(),
+					Par::Seq,
+				);
+				assert_eq!(rhs[(0, 0)].clone(), one::<T>());
+			}
+		}
+		check(1e-310f64);
+		check(1e-44f32);
+	}
 }

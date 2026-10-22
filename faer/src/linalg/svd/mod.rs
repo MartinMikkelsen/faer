@@ -652,6 +652,9 @@ pub fn svd<T: ComplexField>(
 		if let Some(mut u) = u.rb_mut() {
 			u.rb_mut().subrows_mut(n, m - n).fill(zero());
 			if u.ncols() == m {
+				// the extra columns are `Q * [0; I]`, so their top block has
+				// to start at zero instead of at the caller's old entries
+				u.rb_mut().submatrix_mut(0, n, n, m - n).fill(zero());
 				u.rb_mut()
 					.submatrix_mut(n, n, m - n, m - n)
 					.diagonal_mut()
@@ -1344,5 +1347,44 @@ mod tests {
 		let pinv = mat.svd().unwrap().pseudoinverse();
 		let err = &pinv * &mat - Mat::<f64>::identity(n, n);
 		assert!(err.norm_max() < 1e-10);
+	}
+	/// full factors must be orthogonal even when the caller's output buffers
+	/// hold old entries; the tall/wide QR path used to leave the top-right block
+	/// of `U` (and, after transposition, of `V`) as it found it
+	#[test]
+	fn full_factors_ignore_old_output_entries() {
+		for (m, n) in [(4, 2), (2, 4)] {
+			let a = Mat::<f64>::identity(m, n);
+			let size = Ord::min(m, n);
+			let mut s = Diag::<f64>::zeros(size);
+			let mut u = Mat::<f64>::full(m, m, 1.0);
+			let mut v = Mat::<f64>::full(n, n, 1.0);
+			svd(
+				a.as_ref(),
+				s.as_mut(),
+				Some(u.as_mut()),
+				Some(v.as_mut()),
+				Par::Seq,
+				MemStack::new(&mut MemBuffer::new(svd_scratch::<f64>(
+					m,
+					n,
+					ComputeSvdVectors::Full,
+					ComputeSvdVectors::Full,
+					Par::Seq,
+					default(),
+				))),
+				default(),
+			)
+			.unwrap();
+			let orth_u =
+				(u.transpose() * &u - Mat::<f64>::identity(m, m)).norm_max();
+			let orth_v =
+				(v.transpose() * &v - Mat::<f64>::identity(n, n)).norm_max();
+			assert!(orth_u < 1e-12, "U orthogonality error {orth_u}");
+			assert!(orth_v < 1e-12, "V orthogonality error {orth_v}");
+			let rec = u.as_ref().get(.., ..size) * s.as_ref()
+				* v.as_ref().get(.., ..size).transpose();
+			assert!((&rec - &a).norm_max() < 1e-12);
+		}
 	}
 }
