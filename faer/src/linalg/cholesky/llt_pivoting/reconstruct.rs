@@ -105,4 +105,50 @@ mod tests {
 		}
 		assert!(A_rec ~ A);
 	}
+	/// a rank-deficient positive-definite matrix stops at its numerical rank;
+	/// the inactive part of the factor must not keep the input's entries, or
+	/// `reconstruct` multiplies them back in (`tensor4all/faer#45`)
+	#[test]
+	fn test_early_rank_reconstruct() {
+		let n = 3;
+		let A = Mat::<f64>::from_fn(n, n, |i, j| {
+			if i == j { 1.0 + f64::EPSILON } else { 1.0 }
+		});
+		let mut L = A.clone();
+		let perm_fwd = &mut *vec![0usize; n];
+		let perm_bwd = &mut *vec![0usize; n];
+		let (info, perm) = factor::cholesky_in_place(
+			L.as_mut(),
+			perm_fwd,
+			perm_bwd,
+			Par::Seq,
+			MemStack::new(&mut MemBuffer::new(
+				factor::cholesky_in_place_scratch::<usize, f64>(
+					n,
+					Par::Seq,
+					default(),
+				),
+			)),
+			default(),
+		)
+		.unwrap();
+		assert_eq!(info.rank, 1);
+		let mut A_rec = Mat::zeros(n, n);
+		reconstruct::reconstruct(
+			A_rec.as_mut(),
+			L.as_ref(),
+			perm,
+			Par::Seq,
+			MemStack::new(&mut MemBuffer::new(
+				reconstruct::reconstruct_scratch::<usize, f64>(n, Par::Seq),
+			)),
+		);
+		// the stored factor is the rank-1 one, so every stored (lower
+		// triangular) entry is the truncated matrix's entry, not the input's
+		for j in 0..n {
+			for i in j..n {
+				assert!((A_rec[(i, j)] - 1.0).abs() < 1e-12);
+			}
+		}
+	}
 }
