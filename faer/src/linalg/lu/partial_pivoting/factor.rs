@@ -47,9 +47,27 @@ fn lu_in_place_unblocked<I: Index, T: ComplexField>(
 			n_trans += 1;
 		}
 		let mut matrix = matrix.rb_mut().get_mut(.., start..end);
-		let ref inv = matrix[(row, row)].recip();
-		for i in row + 1..m {
-			matrix[(i, row)] *= inv;
+		// An exactly zero pivot column is a singular factor, not a division: OpenBLAS's
+		// `getf2_k` leaves the (all zero) column alone instead of scaling it by infinity.
+		let pivot = matrix[(row, row)].copy();
+		if pivot != zero() {
+			if pivot.abs() >= min_positive() {
+				let ref inv = pivot.recip();
+				for i in row + 1..m {
+					matrix[(i, row)] *= inv;
+				}
+			} else {
+				// the reciprocal of a subnormal pivot overflows, and the complex quotient
+				// forms its squared denominator, so rescale both operands instead: a power
+				// of two keeps the scaling exact and the squares in range (`dgetf2`
+				// divides elementwise below `SFMIN`)
+				let ref shift = max_positive::<T::Real>();
+				let ref pivot = pivot.mul_real(shift);
+				for i in row + 1..m {
+					matrix[(i, row)] =
+						&matrix[(i, row)].mul_real(shift) / pivot;
+				}
+			}
 		}
 		let (_, A01, A10, A11) = matrix.rb_mut().split_at_mut(row + 1, row + 1);
 		let A01 = A01.row(row);
@@ -350,7 +368,7 @@ mod tests {
 	use super::*;
 	use crate::stats::prelude::*;
 	use crate::utils::approx::*;
-	use crate::{Mat, assert, c64};
+	use crate::{Mat, assert, c32, c64};
 	use dyn_stack::MemBuffer;
 	#[test]
 	fn test_plu() {
@@ -535,6 +553,112 @@ mod tests {
 			}
 			assert!(perm_seq == perm_par);
 			assert!(trans_seq == trans_par);
+		}
+	}
+	/// An exactly zero pivot column is a singular matrix, not a failed factorization: the
+	/// factors stay finite and still reconstruct the input, with the singularity left in `U`.
+	/// A subnormal pivot must not be scaled by its infinite reciprocal either. OpenBLAS's
+	/// `getf2_k` skips the column when the pivot is exactly zero, and reference `dgetf2`
+	/// divides elementwise below `SFMIN`.
+	#[test]
+	fn zero_pivot_column_reconstructs() {
+		fn zero_pivot<T: ComplexField>(n: usize) -> Mat<T> {
+			Mat::<T>::from_fn(n, n, |i, j| {
+				if j > 0 {
+					from_f64::<T>((i + 2 * j) as f64)
+				} else {
+					zero()
+				}
+			})
+		}
+		// the pivot is the largest entry of a column, so a subnormal pivot needs a
+		// subnormal fixture: `tiny` is the smallest useful one for each dtype
+		fn subnormal<T: ComplexField>(tiny: f64) -> Mat<T> {
+			let tiny = from_f64::<T>(tiny);
+			Mat::<T>::from_fn(2, 2, |i, j| match (i, j) {
+				(0, 0) => tiny.copy(),
+				(0, 1) => one(),
+				(1, 0) => tiny.mul_real(from_f64::<T::Real>(0.5)),
+				(1, 1) => from_f64::<T>(2.0),
+				_ => zero(),
+			})
+		}
+		for n in [1usize, 2, 3, 128] {
+			check_factor::<f32>(zero_pivot::<f32>(n).as_ref(), None);
+			check_factor::<c32>(zero_pivot::<c32>(n).as_ref(), None);
+			check_factor::<f64>(zero_pivot::<f64>(n).as_ref(), None);
+			check_factor::<c64>(zero_pivot::<c64>(n).as_ref(), None);
+		}
+		// a power of two so that the subnormal and its half are both exact and the
+		// expected multiplier is exactly `0.5`
+		check_factor::<f32>(
+			subnormal::<f32>(2f64.powi(-147)).as_ref(),
+			Some(0.5f32),
+		);
+		check_factor::<c32>(
+			subnormal::<c32>(2f64.powi(-147)).as_ref(),
+			Some(c32::new(0.5, 0.0)),
+		);
+		check_factor::<f64>(
+			subnormal::<f64>(2f64.powi(-1072)).as_ref(),
+			Some(0.5f64),
+		);
+		check_factor::<c64>(
+			subnormal::<c64>(2f64.powi(-1072)).as_ref(),
+			Some(c64::new(0.5, 0.0)),
+		);
+	}
+	fn check_factor<T: ComplexField>(a: MatRef<'_, T>, l10: Option<T>) {
+		let tol = eps::<T::Real>() * from_f64::<T::Real>(64.0);
+		let approx_eq = CwiseMat(ApproxEq {
+			abs_tol: tol.copy(),
+			rel_tol: tol,
+		});
+		let n = a.nrows();
+		for par in [Par::Seq, Par::rayon(8)] {
+			let mut LU = a.cloned();
+			let perm = &mut *vec![0usize; n];
+			let perm_inv = &mut *vec![0usize; n];
+			let params = PartialPivLuParams {
+				recursion_threshold: 2,
+				block_size: 2,
+				..auto!(T)
+			};
+			let p = lu_in_place(
+				LU.as_mut(),
+				perm,
+				perm_inv,
+				par,
+				MemStack::new(&mut MemBuffer::new(lu_in_place_scratch::<
+					usize,
+					T,
+				>(
+					n, n, par, params.into()
+				))),
+				params.into(),
+			)
+			.1;
+			assert!(LU.as_ref().is_all_finite());
+			let mut L = LU.as_ref().cloned();
+			let mut U = LU.as_ref().cloned();
+			for j in 0..n {
+				for i in 0..j {
+					L[(i, j)] = zero();
+				}
+				L[(j, j)] = one();
+			}
+			for j in 0..n {
+				for i in j + 1..n {
+					U[(i, j)] = zero();
+				}
+			}
+			assert!(p.inverse() * L.as_ref() * U.as_ref() ~ a);
+			if let Some(ref x) = l10 {
+				assert!(
+					(L[(1, 0)].copy() - x.copy()).abs()
+						<= eps::<T::Real>() * from_f64::<T::Real>(4.0)
+				);
+			}
 		}
 	}
 }

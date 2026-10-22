@@ -148,8 +148,11 @@ fn qr_in_place_unblocked<'out, I: Index, T: ComplexField>(
 				best = val;
 			}
 		}
-		let ref scale_fwd = best.copy();
-		let ref scale_bwd = best.recip();
+		// scaling by the largest column norm keeps the reduction in range; a zero
+		// matrix has nothing to scale, and LAPACK's `dlarfg` makes an all-zero column
+		// the identity reflector rather than a division by its norm.
+		let ref scale_fwd = if best > zero() { best.copy() } else { one() };
+		let ref scale_bwd = scale_fwd.recip();
 		zip!(A.rb_mut()).for_each(|unzip!(a)| *a = a.mul_real(scale_bwd));
 		for j in 0..n {
 			norm[j] = (norm[j].real() * scale_bwd).to_cplx();
@@ -422,7 +425,7 @@ mod tests {
 	use super::*;
 	use crate::stats::prelude::*;
 	use crate::utils::approx::*;
-	use crate::{Mat, assert, c64};
+	use crate::{Mat, assert, c32, c64};
 	use dyn_stack::MemBuffer;
 	#[test]
 	fn test_unblocked_qr() {
@@ -553,5 +556,68 @@ mod tests {
 				assert!(Q * R * q ~ A);
 			}
 		}
+	}
+	/// A nonempty zero matrix has a valid factorization -- zero `R` and a unitary `Q` --
+	/// so scaling by the largest column norm must not divide by a zero pivot scale.
+	#[test]
+	fn zero_matrix_reconstructs() {
+		// 64x64 crosses the blocking threshold, the rest keep the panel path short
+		for (m, n) in [(1, 1), (3, 2), (8, 8), (64, 64)] {
+			for par in [Par::Seq, Par::rayon(8)] {
+				check_zero_matrix::<f32>(m, n, par);
+				check_zero_matrix::<c32>(m, n, par);
+				check_zero_matrix::<f64>(m, n, par);
+				check_zero_matrix::<c64>(m, n, par);
+			}
+		}
+	}
+	fn check_zero_matrix<T: ComplexField>(m: usize, n: usize, par: Par) {
+		let size = Ord::min(m, n);
+		let bs = 15;
+		let approx_eq = CwiseMat(ApproxEq {
+			abs_tol: from_f64::<T::Real>(1e-10),
+			rel_tol: from_f64::<T::Real>(1e-10),
+		});
+		let a = Mat::<T>::zeros(m, n);
+		let a = a.as_ref();
+		let mut QR = a.cloned();
+		let mut H = Mat::<T>::zeros(bs, size);
+		let col_perm = &mut *vec![0usize; n];
+		let col_perm_inv = &mut *vec![0usize; n];
+		let perm = qr_in_place(
+			QR.as_mut(),
+			H.as_mut(),
+			col_perm,
+			col_perm_inv,
+			par,
+			MemStack::new(&mut MemBuffer::new(
+				qr_in_place_scratch::<usize, T>(m, n, bs, par, default()),
+			)),
+			default(),
+		)
+		.1;
+		assert!(QR.as_ref().is_all_finite());
+		assert!(QR.as_ref().norm_max() == zero::<T::Real>());
+		let mut q = Mat::<T, _, _>::zeros(m, m);
+		for j in 0..m {
+			q[(j, j)] = one();
+		}
+		householder::apply_block_householder_sequence_on_the_left_in_place_with_conj(
+			QR.as_ref().subcols(0, size),
+			H.as_ref(),
+			Conj::No,
+			q.as_mut(),
+			Par::Seq,
+			MemStack::new(&mut MemBuffer::new(
+				householder::apply_block_householder_sequence_on_the_left_in_place_scratch::<T>(m, bs, m),
+			)),
+		);
+		// `R` is exactly zero, so the factor itself stands for it -- which makes the
+		// reconstruction true for any finite `Q`, so `Q`'s unitarity is checked separately
+		assert!(
+			(q.adjoint() * &q - Mat::<T>::identity(m, m)).norm_max()
+				<= eps::<T::Real>() * from_f64::<T::Real>(32.0)
+		);
+		assert!(q * QR.as_ref() * perm ~ a);
 	}
 }
