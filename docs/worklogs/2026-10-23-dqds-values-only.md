@@ -220,3 +220,37 @@ vendors' 0.275 ms and it lands at 0.47 (0.886 against the pin), so the target is
 does not call it met. What the arm establishes is: verified to 1e-10, 0.88-0.96 from 32 to 256, neutral
 at 512 and above, no attributable guard regression. The remaining work is the shift rule (`dlasq4`),
 which is also what 512 and above need.
+
+## Why 512 and above did not move, and the gate that fixes it
+
+The probe answers it with the two stages separated, pin against this branch (f64, `svd_values`):
+
+| n, threads | bidiagonalisation | values stage (pin) | values stage (dqds) | total (pin -> dqds) |
+| --- | --- | --- | --- | --- |
+| 256, 1T | 5.92 | 6.34 | 4.43 | 12.26 -> 10.31 |
+| 512, 1T | 42.89 | 22.35 | 15.79 | 65.24 -> 58.75 |
+| 512, 8T | 34.50 | 13.71 | 16.63 | 48.22 -> 51.14 |
+
+Two causes, both measured:
+
+1. **dqds is serial; the divide-and-conquer it replaced threads its merge.** At one thread dqds is
+   29% cheaper on the values stage at 512; at eight threads the same stage is 13.71 ms threaded
+   against 16.63 serial, so the exchange becomes a small loss.
+2. **Dilution.** At 512 the bidiagonalisation is 66% of the call at 1T and 72% at 8T, so even the
+   29% cut moves the total only 10%.
+
+The campaign's per-shape median over four dtypes, two orders and three budgets hid both: 512 read
+0.931 at 1T and 1.033/1.035 at 4T/8T, median 1.010.
+
+**The route is therefore by (budget, size)**: dqds when the budget is one, or below `n = 256`;
+divide and conquer otherwise. Measured in the same arm (`20261023T065035Z-dqds-gated`, 192 cells,
+`svd_values` only):
+
+| | 32 | 64 | 96 | 128 | 256 | 512 | 1024x64 | 4096x256 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1T | 0.909 | 0.879 | 0.877 | **0.789** | 0.856 | 0.922 | 0.975 | 0.978 |
+| 4T | 0.910 | 0.879 | 0.877 | 0.911 | 1.004 | 0.999 | 0.977 | 0.999 |
+| 8T | 0.911 | 0.873 | 0.877 | 0.899 | 0.999 | 1.000 | 0.986 | 0.998 |
+
+110 cells faster, **0 slower beyond 5%**. The remaining headroom at 512 is no longer in the values
+stage: it is the bidiagonalisation, which is 66-72% of that call.
