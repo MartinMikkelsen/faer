@@ -608,7 +608,19 @@ pub(crate) fn schur_swap<T: ComplexField>(
 	let j2 = j0 + 2;
 	let t00 = a[(j0, j0)].copy();
 	let t11 = a[(j1, j1)].copy();
-	let (rot, _) = JacobiRotation::<T>::rotg(a[(j0, j1)].copy(), &t11 - &t00);
+	let mut t01 = a[(j0, j1)].copy();
+	let mut diff = &t11 - &t00;
+	if !diff.is_finite() {
+		// The diagonal difference overflows before the rotation is formed, and
+		// `rotg` then divides an infinite component by an infinite norm.
+		// Halving both inputs is exact and leaves the rotation unchanged,
+		// since it only depends on their ratio. Other inputs keep the
+		// previous arithmetic.
+		let ref half = from_f64::<T::Real>(0.5);
+		t01 = t01.mul_real(half);
+		diff = t11.mul_real(half) - t00.mul_real(half);
+	}
+	let (rot, _) = JacobiRotation::<T>::rotg(t01, diff);
 	a[(j1, j1)] = t00;
 	a[(j0, j0)] = t11;
 	if j2 < n {

@@ -361,3 +361,59 @@ fn standardization_of_extreme_pair_stays_orthogonal() {
 		faer::mat![[0.0f32, 3e38, 0.0], [-1e19, 0.0, -1e34], [0.0, 0.0, 0.0]];
 	assert!(stable_or_rejected(&t, 0, 2, 0));
 }
+
+/// The complex swap kernel formed the diagonal difference before scaling, so a
+/// finite pair of diagonals near `max_positive` gave an infinite difference and
+/// the rotation came out `NaN`: `reorder_schur_cplx` reported success with a
+/// fully `NaN` `q`. The inputs are now halved (exact, and the ratio — hence the
+/// rotation — is unchanged) when the difference overflows.
+fn extreme_diagonal<T: ComplexField>(max: f64, make: fn(f64, f64) -> T) {
+	let f = |x: f64| from_f64::<T::Real>(x);
+	let original = Mat::<T>::from_fn(2, 2, |i, j| match (i, j) {
+		(0, 0) => make(-max, 0.0),
+		(0, 1) => make(1.0, 0.0),
+		(1, 1) => make(max, 0.0),
+		_ => make(0.0, 0.0),
+	});
+	let mut t = original.clone();
+	let mut q = Mat::<T>::identity(2, 2);
+	let mut mem = MemBuffer::new(reorder_schur_scratch::<T>(2));
+	assert_eq!(
+		reorder_schur_cplx(
+			t.as_mut(),
+			Some(q.as_mut()),
+			0,
+			1,
+			Par::Seq,
+			MemStack::new(&mut mem)
+		),
+		1
+	);
+	assert!(t.is_all_finite() && q.is_all_finite(), "t={t:?} q={q:?}");
+	assert!(t[(0, 0)] == make(max, 0.0) && t[(1, 1)] == make(-max, 0.0));
+	assert!(t[(1, 0)] == zero::<T>());
+	unitary(q.as_ref());
+	// Halve before the similarity: no intermediate may exceed `max_positive`.
+	let ref half = f(0.5);
+	let scaled = Mat::from_fn(2, 2, |i, j| t[(i, j)].mul_real(half));
+	let expected = Mat::from_fn(2, 2, |i, j| original[(i, j)].mul_real(half));
+	let back = &q * &scaled * q.adjoint();
+	let tol = f(2048.0) * eps::<T::Real>() * expected[(0, 0)].abs();
+	for j in 0..2 {
+		for i in 0..2 {
+			assert!(
+				(&back[(i, j)] - &expected[(i, j)]).abs() <= tol,
+				"{i},{j}: {back:?} vs {expected:?}"
+			);
+		}
+	}
+}
+#[test]
+fn extreme_diagonal_swap_stays_finite() {
+	extreme_diagonal::<f64>(f64::MAX, |r, _| r);
+	extreme_diagonal::<f32>(f32::MAX as f64, |r, _| r as f32);
+	extreme_diagonal::<c64>(f64::MAX, c64::new);
+	extreme_diagonal::<c32>(f32::MAX as f64, |r, i| {
+		c32::new(r as f32, i as f32)
+	});
+}

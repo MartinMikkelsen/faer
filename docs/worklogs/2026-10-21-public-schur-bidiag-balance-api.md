@@ -202,3 +202,28 @@
 - Formatting uses the CI's nightly formatter, restricted to changed ranges in
   existing files. The workspace-wide check also reports pre-existing formatting
   differences in untouched files; those are intentionally not reformatted.
+
+## Maintainer fix: complex reordering rotation scale
+
+Review of the merged `main` head found that `reorder_schur_cplx` reported success
+with a fully `NaN` `q` for finite input. The pre-existing complex swap kernel
+formed `t11 - t00` before scaling; for a finite pair of diagonals near
+`max_positive` that difference is `inf`, and the complex `rotg` then divides an
+infinite component by an infinite norm.
+
+The fix halves the two `rotg` inputs by an exact power of two when the
+difference is not finite. The rotation depends only on their ratio, so it is
+unchanged, and every other input keeps the previous arithmetic bit for bit.
+Reproducer (`T = [[-f64::MAX, 1], [0, f64::MAX]]`, `q = I`, move 0 to 1): before,
+`pos = 1` with a `NaN` `q`; after, `pos = 1`, finite `t`/`q` and the exact
+similarity. The `usize` return and the "cannot reject" contract are unchanged:
+unlike the real path, every complex block is 1 by 1, so there is nothing to
+reject. A finite input whose swapped form itself is not representable is not
+documented as finite, and no example of it was found (trailing entries at
+`1e308` and `max_positive` off-diagonals stay finite).
+
+Test `extreme_diagonal_swap_stays_finite` in `tests/public_schur_reorder.rs`
+covers f32, f64, c32 and c64 and fails without the fix. Verified on Linux
+x86-64, stable, release: the five focused targets (25 tests), `linalg::evd` and
+`linalg::svd` library tests and all 55 doctests pass; `cargo fmt --check` is
+clean.
