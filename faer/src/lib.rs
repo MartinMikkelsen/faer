@@ -154,6 +154,40 @@
 //! using [`Mat::self_adjoint_eigenvalues`] (nondecreasing order),
 //! [`Mat::eigenvalues`] with the same conditions described above.
 //!
+//! # parallelism
+//!
+//! every operation takes a [`Par`]: [`Par::Seq`] runs it on the calling thread, and
+//! [`Par::Rayon`]`(n)` splits its parallel regions over `n` threads of the global rayon pool. the
+//! regions are issued through [`spindle`], the thread-pool helper the parallel paths are built on,
+//! and how they are scheduled depends on whether the **caller holds the worker group**:
+//!
+//! - outside [`spindle::with_lock`], every region is a plain rayon fork/join: the workers are woken
+//!   for it and put back to sleep after it, and which worker gets which part is arbitrary
+//! - inside [`spindle::with_lock`]`(n, || { ... })`, `n` workers are held for the whole closure:
+//!   they spin between regions instead of being woken for each one, and worker `k` keeps part `k`
+//!   of every partition, so the data a region leaves in a core's cache is the data the next region
+//!   on that core reads
+//!
+//! the difference is small for one large product and large for an algorithm made of many short
+//! regions: the bidiagonalization behind the SVD issues two vector products per step, and at
+//! `n = 512` on eight threads it costs 25.5 ms with plain regions and 19.2 ms with the group held
+//! (`docs/worklogs/2026-10-23-blocked-bidiag.md`), which is where the values-only SVD reaches the
+//! vendor's time. the library does not take the lock itself: its scope is the caller's session or
+//! region, taking it once around a sequence of calls is what pays, and nesting is allowed (a lock
+//! taken inside another borrows the outer group's workers, which is what the native gemm kernel
+//! does on every threaded product). so a caller with a thread budget should wrap its work:
+//!
+//! ```ignore
+//! let par = Par::rayon(8);
+//! faer::spindle::with_lock(8, || {
+//!     // every faer call in here with `par` runs its regions over the held group
+//!     svd_in_place(a.as_mut(), s.as_mut(), None, None, par, stack, params)
+//! });
+//! ```
+//!
+//! the held workers busy-wait for a bounded time between regions, then sleep; the budget they
+//! occupy is the one the caller handed to `Par::Rayon`
+//!
 //! # crate features
 //!
 //! - `std`: enabled by default. links with the standard library to enable
@@ -930,7 +964,9 @@ pub enum Par {
 	/// sequential, non portable across different platforms
 	Seq,
 	/// parallelized using the global rayon threadpool, non portable across
-	/// different platforms
+	/// different platforms. the regions this budget splits run fastest when the caller holds the
+	/// worker group around its calls with [`spindle::with_lock`] (see the crate documentation's
+	/// *parallelism* section)
 	#[cfg(feature = "rayon")]
 	Rayon(NonZeroUsize),
 }
@@ -968,6 +1004,11 @@ pub type cx128 = traits::cx128;
 #[allow(non_camel_case_types)]
 /// `Complex<f64>`
 pub type fx128 = traits::fx128;
+/// the thread-pool helper the parallel paths are built on, re-exported so that a caller with a
+/// thread budget can hold the worker group across its calls with [`spindle::with_lock`]: see the
+/// crate documentation's *parallelism* section
+#[cfg(feature = "rayon")]
+pub use spindle;
 pub use col::{Col, ColMut, ColRef};
 pub use mat::{Mat, MatMut, MatRef};
 pub use row::{Row, RowMut, RowRef};

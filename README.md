@@ -40,6 +40,15 @@ see the [official website](https://faer.veganb.tw) and the [docs.rs](https://doc
 
 questions about using the library, contributing, and future directions can be discussed in the [zulip server](https://faer.zulipchat.com).
 
+# parallelism
+
+operations take a `Par`; with `Par::rayon(n)` the parallel regions run on the global rayon pool. a
+caller with a thread budget should hold the worker group around its calls,
+`faer::spindle::with_lock(n, || { ... })`: without it every region is a plain rayon fork/join that
+wakes the workers and partitions the work afresh, and an algorithm made of many short regions (the
+bidiagonalization behind the SVD, two vector products per step) runs a third slower. see the
+*parallelism* section of the crate documentation.
+
 # contributing
 
 if you'd like to contribute to `faer`, check out the list of "good first issue"

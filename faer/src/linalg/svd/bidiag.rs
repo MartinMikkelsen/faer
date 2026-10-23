@@ -91,39 +91,21 @@ pub fn bidiag_in_place<T: ComplexField>(
 	let mut Hl = H_left;
 	let mut Hr = H_right;
 
-	// blocked phase: whole panels while the remaining dimension clears the floor. the worker
-	// group is held for the whole phase (`spindle::with_lock`): its regions are two vector
-	// products per step and one update per panel, and with the group held the workers spin
-	// between regions instead of being woken for each one, and each keeps the same column range
-	// of the trailing block across regions.
+	// blocked phase: whole panels while the remaining dimension clears the floor. its regions are
+	// two vector products per step and one update per panel, and they run fastest when the caller
+	// holds the worker group around the call (`faer::spindle::with_lock`, see the crate docs):
+	// spinning workers that keep their column range of the trailing block. the library does not
+	// take the lock itself; measured at n = 512, 8T: 19.2 ms held against 25.5 ms with plain regions.
 	let mut p = 0;
 	if size > BLOCK_FLOOR {
-		let phase = |A: MatMut<'_, T>,
-		             Hl: RowMut<'_, T>,
-		             Hr: RowMut<'_, T>,
-		             stack: &mut MemStack| {
-			bidiag_blocked_phase(A, Hl, Hr, par, params.par_threshold, stack)
-		};
-		p = match par {
-			Par::Seq => phase(
-				A.rb_mut(),
-				Hl.rb_mut().row_mut(0),
-				Hr.rb_mut().row_mut(0),
-				stack,
-			),
-			#[cfg(feature = "rayon")]
-			Par::Rayon(nthreads) => {
-				let (A, Hl, Hr, stack) = (
-					A.rb_mut(),
-					Hl.rb_mut().row_mut(0),
-					Hr.rb_mut().row_mut(0),
-					&mut *stack,
-				);
-				spindle::with_lock(nthreads.get(), move || {
-					phase(A, Hl, Hr, stack)
-				})
-			},
-		};
+		p = bidiag_blocked_phase(
+			A.rb_mut(),
+			Hl.rb_mut().row_mut(0),
+			Hr.rb_mut().row_mut(0),
+			par,
+			params.par_threshold,
+			stack,
+		);
 	}
 
 	// unblocked tail: the trailing block is already current, so it starts with fresh local
