@@ -167,3 +167,32 @@ shift is for; the clamp and the shift have to be designed together.
 That is the next unit of work, and it is bigger than the deflation: a shift rule that is admissible
 by construction, with the deflation tolerance switched back to shift-relative and the two-value
 release on top. Until then the tree keeps `801c197`, verified at 1e-10.
+
+## Blast-radius arm
+
+`linalg-small,linalg-mid,linalg-tall`, families `svd_values,svd_thin,qr_factor,eigh`, four dtypes,
+1T/4T/8T, MKL arm, paired in one stack: baseline `20261023T012045Z-dqds-blast-baseline` at the pin,
+candidate `20261023T000823Z-dqds-blast` at `7452d24`; identical measured paths, `faer-upstream`
+control 1.0016 over 720 cells.
+
+`svd_values`, median of the 24 cells per shape (below 1 is faster):
+
+| 32 | 64 | 96 | 128 | 256 | 512 | 1024x64 | 4096x256 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 0.925 | **0.886** | 0.882 | 0.895 | 0.958 | 1.010 | 0.984 | 1.010 |
+
+So the gain is real from 32 to 256 (peak 0.75 single cells at 128) and gone at 512 and above, where the
+bidiagonalisation dominates and dqds and divide-and-conquer cost the same. 111 cells faster, 40 slower
+beyond 5%: **36 are `qr_factor`** (1.09-1.24, mostly `f32`/`c32` at 4T/8T) and 4 are `svd_values`.
+
+`qr_factor` does not call this code - `compute_bidiag_real_svd` is reached only by the two SVD entry
+points - so those 36 are the binary-layout effect this campaign has measured before, but 36 cells is
+above the 22-of-780 rate a same-source pair showed, and the protocol does not accept a guard cell on an
+explanation. **Adoption is blocked on that**, and the next measurement is the one that settles it: the
+same arm with the dqds call compiled but switched off (as the column-slab work did with its split), so
+the layout moves and the algorithm does not.
+
+## Status
+
+Verified at 1e-10, in tree, faster from 32 to 256, neutral above, and **not adopted**: the `qr_factor`
+guard needs its control, and the 512-and-up range needs the shift work above before dqds can claim it.
