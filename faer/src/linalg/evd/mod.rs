@@ -144,7 +144,11 @@ pub fn self_adjoint_evd_scratch<T: ComplexField>(
 				tridiag_evd::divide_and_conquer_scratch::<T>(n, par)
 			},
 			temp_mat_scratch::<T>(n, 1),
-			linalg::householder::apply_block_householder_sequence_on_the_left_in_place_scratch::<T>(n - 1, bs, n),
+			linalg::householder::apply_block_householder_sequence_on_the_left_in_place_scratch::<T>(
+				n.saturating_sub(1),
+				bs,
+				n,
+			),
 		]),
 	])
 }
@@ -2497,5 +2501,41 @@ mod self_adjoint_tests {
 		let pinv = mat.self_adjoint_eigen(Side::Lower).unwrap().pseudoinverse();
 		let err = &mat * &pinv - Mat::<f64>::identity(n, n);
 		assert!(err.norm_max() < 1e-10);
+	}
+}
+#[cfg(test)]
+mod scale_and_empty_tests {
+	//! Regression tests for `tensor4all/faer#42` and `#44`: the 2x2 shortcut
+	//! averaged the diagonal as `(a + d) * 0.5`, which overflows for a finite
+	//! spectrum near the floating-point limit, and the scratch query computed
+	//! `n - 1` on an empty matrix.
+	use super::*;
+	#[test]
+	fn two_by_two_finite_spectrum_at_the_range_limit() {
+		let a = crate::mat![[1e308f64, 0.0], [0.0, 1e308]];
+		let eig = a.self_adjoint_eigen(Side::Lower).unwrap();
+		assert_eq!(eig.S()[0], 1e308);
+		assert_eq!(eig.S()[1], 1e308);
+		let a = crate::mat![[1e38f32, 0.0], [0.0, 1e38]];
+		let eig = a.self_adjoint_eigen(Side::Lower).unwrap();
+		assert_eq!(eig.S()[0], 1e38);
+		assert_eq!(eig.S()[1], 1e38);
+	}
+	/// halving a subnormal is not exact, so the direct trace form stays in
+	/// charge wherever it does not overflow
+	#[test]
+	fn two_by_two_subnormal_diagonal() {
+		let q = f64::from_bits(1);
+		let a = Mat::<f64>::from_fn(2, 2, |i, j| if i == j { q } else { 0.0 });
+		let eig = a.self_adjoint_eigen(Side::Lower).unwrap();
+		assert_eq!(eig.S()[0], q);
+		assert_eq!(eig.S()[1], q);
+	}
+	#[test]
+	fn empty_matrix() {
+		let a = Mat::<f64>::zeros(0, 0);
+		let eig = a.self_adjoint_eigen(Side::Lower).unwrap();
+		assert_eq!(eig.U().shape(), (0, 0));
+		assert_eq!(eig.S().dim(), 0);
 	}
 }

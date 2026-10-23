@@ -119,7 +119,10 @@ pub fn cholesky_in_place<'out, I: Index, T: ComplexField>(
 						}
 						if ajj < tol {
 							rank = j;
-							a[(j, j)] = ajj.to_cplx();
+							// the trailing columns of `a` still hold the input matrix;
+							// clear them so the stored factor is the rank-`rank` one
+							// that `reconstruct` reads back as `L L^H`
+							a.rb_mut().get_mut(.., j..).fill(zero());
 							break 'exit;
 						}
 					}

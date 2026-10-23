@@ -38,15 +38,15 @@ pub fn reconstruct<I: Index, T: ComplexField>(
 	let mut j = 0;
 	while j < n {
 		if s[j] == zero() {
-			let d = &L[(j, j)].real();
+			let d = &diagonal[j].real();
 			for i in 0..n {
 				out[(i, j)] = out[(i, j)].mul_real(d);
 			}
 			j += 1;
 		} else {
 			let akp1k = &s[j].copy();
-			let ak = &L[(j, j)].real();
-			let akp1 = &L[(j + 1, j + 1)].real();
+			let ak = &diagonal[j].real();
+			let akp1 = &diagonal[j + 1].real();
 			for i in 0..n {
 				let xk = &out[(i, j)];
 				let xkp1 = &out[(i, j + 1)];
@@ -142,5 +142,64 @@ mod tests {
 			}
 		}
 		assert!(A_rec ~ A);
+	}
+	/// The high-level wrapper stores the block diagonal separately and keeps a unit
+	/// diagonal in `L`, so reconstruction has to read `diagonal` for both block sizes.
+	#[test]
+	fn test_reconstruct_separate_diagonal() {
+		fn check<T: ComplexField>() {
+			let approx_eq =
+				CwiseMat(ApproxEq::<T::Real>::eps() * from_f64::<T::Real>(8.0));
+			for n in [1usize, 2, 3, 5] {
+				let mut L = Mat::<T>::identity(n, n);
+				for j in 0..n {
+					for i in j + 1..n {
+						L[(i, j)] = from_f64::<T>((i + j) as f64 * 0.5 - 1.0);
+					}
+				}
+				let mut diagonal = Diag::<T>::zeros(n);
+				let mut subdiagonal = Diag::<T>::zeros(n);
+				for j in 0..n {
+					diagonal[j] = from_f64::<T>(2.0 + j as f64);
+					if j % 3 == 1 && j + 1 < n {
+						subdiagonal[j] = from_f64::<T>(0.5 * j as f64);
+					}
+				}
+				let mut B = Mat::<T>::zeros(n, n);
+				for j in 0..n {
+					B[(j, j)] = diagonal[j].copy();
+					if subdiagonal[j] != zero() {
+						B[(j + 1, j)] = subdiagonal[j].copy();
+						B[(j, j + 1)] = subdiagonal[j].copy();
+					}
+				}
+				let expected = &L * &B * L.adjoint();
+				let identity = || (0..n).collect::<Vec<_>>().into_boxed_slice();
+				let perm =
+					Perm::<usize>::new_checked(identity(), identity(), n);
+				let mut rec = Mat::<T>::zeros(n, n);
+				reconstruct(
+					rec.as_mut(),
+					L.as_ref(),
+					diagonal.as_ref(),
+					subdiagonal.as_ref(),
+					perm.as_ref(),
+					Par::Seq,
+					MemStack::new(&mut MemBuffer::new(reconstruct_scratch::<
+						usize,
+						T,
+					>(n, Par::Seq))),
+				);
+				// reconstruct fills the lower triangle only
+				for j in 0..n {
+					for i in 0..j {
+						rec[(i, j)] = rec[(j, i)].copy();
+					}
+				}
+				assert!(rec ~ expected);
+			}
+		}
+		check::<f32>();
+		check::<f64>();
 	}
 }

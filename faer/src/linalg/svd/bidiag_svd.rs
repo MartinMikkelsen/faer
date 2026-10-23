@@ -1090,8 +1090,11 @@ pub(super) fn divide_and_conquer<T: RealField>(
 			},
 			MatU::TwoRows(mut u) => {
 				u.fill(zero());
+				// rows 0 and n of the identity block, as reference `dlasd1` takes for a
+				// subproblem's own singular vectors: the parent merge consumes the
+				// boundary entry in the bottom row through `lambda` and `phi`.
 				u[(0, 0)] = one();
-				u[(1, n)] = zero();
+				u[(1, n)] = one();
 			},
 			MatU::TwoRowsStorage(_) => {},
 		}
