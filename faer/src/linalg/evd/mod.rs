@@ -12,6 +12,7 @@
 //!
 //! if $A$ is self-adjoint, then $U$ can be made unitary ($U^{-1} = U^H$), and
 //! $S$ is real valued
+mod balance;
 /// hessenberg decomposition
 pub mod hessenberg;
 #[doc(hidden)]
@@ -21,6 +22,10 @@ pub mod tridiag;
 pub(crate) mod tridiag_evd;
 use crate::assert;
 use crate::internal_prelude::*;
+pub use balance::{
+	BalanceError, balance_eigenvectors_in_place, balance_eigenvectors_scratch,
+	balance_in_place, balance_scratch,
+};
 use hessenberg::HessenbergParams;
 use linalg::matmul::triangular::BlockStructure;
 pub use schur::SchurParams;
@@ -139,8 +144,52 @@ pub fn self_adjoint_evd_scratch<T: ComplexField>(
 				tridiag_evd::divide_and_conquer_scratch::<T>(n, par)
 			},
 			temp_mat_scratch::<T>(n, 1),
-			linalg::householder::apply_block_householder_sequence_on_the_left_in_place_scratch::<T>(n - 1, bs, n),
+			linalg::householder::apply_block_householder_sequence_on_the_left_in_place_scratch::<T>(
+				n.saturating_sub(1),
+				bs,
+				n,
+			),
 		]),
+	])
+}
+/// Workspace for [`tridiagonal_self_adjoint_evd`].
+///
+/// # Examples
+/// ```
+/// use faer::Par;
+/// use faer::linalg::evd::*;
+/// let _buffer =
+/// 	dyn_stack::MemBuffer::new(tridiagonal_self_adjoint_evd_scratch::<f64>(
+/// 		3,
+/// 		ComputeEigenvectors::Yes,
+/// 		Par::Seq,
+/// 		Default::default(),
+/// 	));
+/// ```
+pub fn tridiagonal_self_adjoint_evd_scratch<T: ComplexField>(
+	dim: usize,
+	compute_u: ComputeEigenvectors,
+	par: Par,
+	params: Spec<SelfAdjointEvdParams, T>,
+) -> StackReq {
+	let n = dim;
+	StackReq::all_of(&[
+		temp_mat_scratch::<T::Real>(n, 1).array(2),
+		if compute_u == ComputeEigenvectors::No {
+			StackReq::EMPTY
+		} else {
+			temp_mat_scratch::<T::Real>(n, if T::IS_REAL { 0 } else { n }).and(
+				temp_mat_scratch::<T>(n, 1).or(
+					if n < params.recursion_threshold {
+						StackReq::EMPTY
+					} else {
+						tridiag_evd::divide_and_conquer_scratch::<T::Real>(
+							n, par,
+						)
+					},
+				),
+			)
+		},
 	])
 }
 /// computes the matrix $A$'s eigendecomposition, assuming it is tridiagonal and
@@ -1148,6 +1197,564 @@ pub fn evd_scratch<T: ComplexField>(
 		]),
 	])
 }
+/// Workspace for [`hessenberg_schur_real`] and
+/// [`hessenberg_schur_cplx`].
+///
+/// # Examples
+/// ```
+/// use faer::Par;
+/// use faer::linalg::evd::hessenberg_schur_scratch;
+/// let req =
+/// 	hessenberg_schur_scratch::<f64>(3, true, Par::Seq, Default::default());
+/// let _buffer = dyn_stack::MemBuffer::new(req);
+/// ```
+pub fn hessenberg_schur_scratch<T: ComplexField>(
+	dim: usize,
+	compute_z: bool,
+	par: Par,
+	params: Spec<SchurParams, T>,
+) -> StackReq {
+	schur::multishift_qr_scratch::<T>(dim, dim, true, compute_z, par, *params)
+}
+/// Overwrites an upper-Hessenberg `h` with its real Schur form `t`.
+/// Updates optional `z` to `z * q`, where `h_original = q * t * q.transpose()`.
+/// Real conjugate pairs have equal diagonal entries, opposite-sign
+/// off-diagonals, and eigenvalues `wr ± i wi`, with the positive imaginary part
+/// first. `wr` and `wi` each have length `n`; `z`, when present, is `n` by `n`.
+///
+/// # Panics
+/// Panics on incompatible dimensions or insufficient scratch. The input must
+/// be upper Hessenberg (entries below its first subdiagonal must be zero).
+///
+/// # Errors
+/// Returns [`EvdError::NoConvergence`] for nonfinite input or QR
+/// nonconvergence. After nonconvergence, `h` and `z` contain the accumulated
+/// similarity updates.
+///
+/// # Examples
+/// ```
+/// use dyn_stack::{MemBuffer, MemStack};
+/// use faer::linalg::evd::*;
+/// use faer::{Col, Mat, Par};
+/// let mut h = faer::mat![[1.0f64, 2.0], [-2.0, 1.0]];
+/// let mut z = Mat::identity(2, 2);
+/// let (mut wr, mut wi) = (Col::zeros(2), Col::zeros(2));
+/// let mut mem = MemBuffer::new(hessenberg_schur_scratch::<f64>(
+/// 	2,
+/// 	true,
+/// 	Par::Seq,
+/// 	Default::default(),
+/// ));
+/// hessenberg_schur_real(
+/// 	h.as_mut(),
+/// 	Some(z.as_mut()),
+/// 	wr.as_mut(),
+/// 	wi.as_mut(),
+/// 	Par::Seq,
+/// 	MemStack::new(&mut mem),
+/// 	Default::default(),
+/// )
+/// .unwrap();
+/// assert!(wi[0] > 0.0 && wi[1] < 0.0);
+/// ```
+pub fn hessenberg_schur_real<T: RealField>(
+	mut h: MatMut<'_, T>,
+	z: Option<MatMut<'_, T>>,
+	mut wr: ColMut<'_, T>,
+	mut wi: ColMut<'_, T>,
+	par: Par,
+	stack: &mut MemStack,
+	params: Spec<SchurParams, T>,
+) -> Result<(), EvdError> {
+	let n = h.nrows();
+	assert!(h.ncols() == n && wr.nrows() == n && wi.nrows() == n);
+	if let Some(z) = z.rb() {
+		assert!(z.nrows() == n && z.ncols() == n);
+	}
+	if !h.is_all_finite() {
+		return Err(EvdError::NoConvergence);
+	}
+	if n <= 1 {
+		if n == 1 {
+			wr[0] = h[(0, 0)].copy();
+			wi[0] = zero();
+		}
+		return Ok(());
+	}
+	let (info, _, _) = schur::real_schur::multishift_qr(
+		true,
+		h.rb_mut(),
+		z,
+		wr,
+		wi,
+		0,
+		n,
+		par,
+		stack,
+		*params,
+	);
+	if info != 0 {
+		return Err(EvdError::NoConvergence);
+	}
+	// The QR kernel uses entries below the Hessenberg band as workspace.
+	for j in 0..n {
+		for i in j + 2..n {
+			h[(i, j)] = zero();
+		}
+	}
+	Ok(())
+}
+/// Complex counterpart of [`hessenberg_schur_real`]: `h` becomes upper
+/// triangular, `w` receives its diagonal, and optional `z` becomes `z * q`.
+/// The similarity is `h_original = q * t * q.adjoint()`.
+///
+/// # Panics
+/// Panics on incompatible dimensions, a real scalar type, or insufficient
+/// scratch; `h` must be upper Hessenberg.
+///
+/// # Errors
+/// Returns [`EvdError::NoConvergence`] for nonfinite input or QR
+/// nonconvergence; accumulated similarity updates remain in `h` and `z`.
+///
+/// # Examples
+/// ```
+/// use dyn_stack::{MemBuffer, MemStack};
+/// use faer::linalg::evd::*;
+/// use faer::{Col, Mat, Par, c64};
+/// let mut h = Mat::<c64>::identity(2, 2);
+/// let mut w = Col::zeros(2);
+/// let mut mem = MemBuffer::new(hessenberg_schur_scratch::<c64>(
+/// 	2,
+/// 	false,
+/// 	Par::Seq,
+/// 	Default::default(),
+/// ));
+/// hessenberg_schur_cplx(
+/// 	h.as_mut(),
+/// 	None,
+/// 	w.as_mut(),
+/// 	Par::Seq,
+/// 	MemStack::new(&mut mem),
+/// 	Default::default(),
+/// )
+/// .unwrap();
+/// assert_eq!(w[0], c64::new(1.0, 0.0));
+/// ```
+pub fn hessenberg_schur_cplx<T: ComplexField>(
+	mut h: MatMut<'_, T>,
+	z: Option<MatMut<'_, T>>,
+	mut w: ColMut<'_, T>,
+	par: Par,
+	stack: &mut MemStack,
+	params: Spec<SchurParams, T>,
+) -> Result<(), EvdError> {
+	assert!(!T::IS_REAL);
+	let n = h.nrows();
+	assert!(h.ncols() == n && w.nrows() == n);
+	if let Some(z) = z.rb() {
+		assert!(z.nrows() == n && z.ncols() == n);
+	}
+	if !h.is_all_finite() {
+		return Err(EvdError::NoConvergence);
+	}
+	if n <= 1 {
+		if n == 1 {
+			w[0] = h[(0, 0)].copy();
+		}
+		return Ok(());
+	}
+	let (info, _, _) = schur::complex_schur::multishift_qr(
+		true,
+		h.rb_mut(),
+		z,
+		w,
+		0,
+		n,
+		par,
+		stack,
+		*params,
+	);
+	if info != 0 {
+		return Err(EvdError::NoConvergence);
+	}
+	// Return a full triangular matrix, without the QR kernel's workspace.
+	for j in 0..n {
+		for i in j + 1..n {
+			h[(i, j)] = zero();
+		}
+	}
+	Ok(())
+}
+/// An adjacent real Schur block swap was rejected as ill-conditioned.
+/// `position` is the current first row of the moving block.
+///
+/// # Examples
+/// ```
+/// use faer::linalg::evd::SchurReorderError;
+/// let err = SchurReorderError { position: 2 };
+/// assert_eq!(err.position, 2);
+/// ```
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct SchurReorderError {
+	/// Current first row of the moving block, after the last successful swap.
+	pub position: usize,
+}
+/// Workspace for [`reorder_schur_real`] and [`reorder_schur_cplx`]: a copy of
+/// the rows and columns of `t` and the columns of `q` that one adjacent swap
+/// updates, so that a rejected swap can be undone.
+///
+/// # Examples
+/// ```
+/// let req = faer::linalg::evd::reorder_schur_scratch::<f64>(3);
+/// let _buffer = dyn_stack::MemBuffer::new(req);
+/// ```
+pub fn reorder_schur_scratch<T: ComplexField>(dim: usize) -> StackReq {
+	StackReq::all_of(&[
+		temp_mat_scratch::<T>(4, dim),
+		temp_mat_scratch::<T>(dim, 4),
+		temp_mat_scratch::<T>(dim, 4),
+	])
+}
+/// Moves a real Schur block from `ifst` to `ilst`, updating optional `q`.
+/// Indices are zero-based rows; the second row of a pair denotes its first row.
+/// Like `xTREXC`, when moving down across a differently sized destination
+/// block, the final first row is adjusted so the moving block follows that
+/// block. Returns the final first row; conjugate pairs are never split.
+///
+/// # Panics
+/// Panics on invalid dimensions/indices. `t` must be in standardized real Schur
+/// form.
+///
+/// # Errors
+/// Returns [`SchurReorderError`] when an adjacent swap is rejected. As in
+/// LAPACK `xTREXC`/`xLAEXC`, a swap involving a 2 by 2 block is performed
+/// provisionally on a copy of its diagonal window and rejected when the
+/// provisional entries that must vanish (and, for a moved 1 by 1 block, its
+/// diagonal value) are off by more than `max(10 eps |window|_max,
+/// safmin / eps)`. A swap whose update of `t` or `q` overflows is rejected
+/// too. `t` and `q` are left exactly as after the last successful swap (in
+/// valid Schur form, with the block standardization); the error gives the
+/// moving block's current position. On success, `t` and `q` are finite.
+///
+/// # Examples
+/// ```
+/// use dyn_stack::{MemBuffer, MemStack};
+/// use faer::Par;
+/// use faer::linalg::evd::*;
+/// let mut t = faer::mat![[1.0f64, 0.0], [0.0, 2.0]];
+/// let mut mem = MemBuffer::new(reorder_schur_scratch::<f64>(2));
+/// assert_eq!(
+/// 	reorder_schur_real(
+/// 		t.as_mut(),
+/// 		None,
+/// 		0,
+/// 		1,
+/// 		Par::Seq,
+/// 		MemStack::new(&mut mem)
+/// 	)
+/// 	.unwrap(),
+/// 	1
+/// );
+/// assert_eq!(t[(1, 1)], 1.0);
+/// ```
+pub fn reorder_schur_real<T: RealField>(
+	mut t: MatMut<'_, T>,
+	mut q: Option<MatMut<'_, T>>,
+	mut ifst: usize,
+	mut ilst: usize,
+	_par: Par,
+	stack: &mut MemStack,
+) -> Result<usize, SchurReorderError> {
+	let n = t.nrows();
+	assert!(t.ncols() == n && ifst < n && ilst < n);
+	if let Some(q) = q.rb() {
+		assert!(q.nrows() == n && q.ncols() == n);
+	}
+	let (mut saved_rows, stack) = temp_mat_zeroed::<T, _, _>(4, n, stack);
+	let (mut saved_cols, stack) = temp_mat_zeroed::<T, _, _>(n, 4, stack);
+	let (mut saved_q, _) = temp_mat_zeroed::<T, _, _>(n, 4, stack);
+	let mut saved_rows = saved_rows.as_mat_mut();
+	let mut saved_cols = saved_cols.as_mat_mut();
+	let mut saved_q = saved_q.as_mat_mut();
+	if ifst > 0 && t[(ifst, ifst - 1)] != zero() {
+		ifst -= 1;
+	}
+	if ilst > 0 && t[(ilst, ilst - 1)] != zero() {
+		ilst -= 1;
+	}
+	let block_size = |t: MatRef<'_, T>, i: usize| {
+		if i + 1 < n && t[(i + 1, i)] != zero() {
+			2
+		} else {
+			1
+		}
+	};
+	let moving = block_size(t.rb(), ifst);
+	if ifst < ilst {
+		let dest = block_size(t.rb(), ilst);
+		ilst = ilst + dest - moving;
+	}
+	let mut here = ifst;
+	while here != ilst {
+		let down = here < ilst;
+		let next = if down {
+			block_size(t.rb(), here + moving)
+		} else if here > 1 && t[(here - 1, here - 2)] != zero() {
+			2
+		} else {
+			1
+		};
+		let start = if down { here } else { here - next };
+		let (n1, n2) = if down { (moving, next) } else { (next, moving) };
+		// A swap updates rows `start..start + k` (from column `start`) and
+		// columns `start..start + k` (up to row `start + k`) of `t`, and
+		// columns `start..start + k` of `q`. Keep a copy so that a rejected
+		// or overflowing swap leaves the state of the last successful one.
+		let k = n1 + n2;
+		let w = n - start;
+		let h = start + k;
+		saved_rows
+			.rb_mut()
+			.submatrix_mut(0, 0, k, w)
+			.copy_from(t.rb().submatrix(start, start, k, w));
+		saved_cols
+			.rb_mut()
+			.submatrix_mut(0, 0, h, k)
+			.copy_from(t.rb().submatrix(0, start, h, k));
+		if let Some(q) = q.rb() {
+			saved_q
+				.rb_mut()
+				.submatrix_mut(0, 0, n, k)
+				.copy_from(q.submatrix(0, start, n, k));
+		}
+		let status = schur::real_schur::schur_swap_checked(
+			t.rb_mut(),
+			q.rb_mut(),
+			start,
+			n1,
+			n2,
+			true,
+		);
+		let finite = t.rb().submatrix(start, start, k, w).is_all_finite()
+			&& t.rb().submatrix(0, start, h, k).is_all_finite()
+			&& q.rb()
+				.is_none_or(|q| q.submatrix(0, start, n, k).is_all_finite());
+		if status != 0 || !finite {
+			t.rb_mut()
+				.submatrix_mut(0, start, h, k)
+				.copy_from(saved_cols.rb().submatrix(0, 0, h, k));
+			t.rb_mut()
+				.submatrix_mut(start, start, k, w)
+				.copy_from(saved_rows.rb().submatrix(0, 0, k, w));
+			if let Some(q) = q.rb_mut() {
+				q.submatrix_mut(0, start, n, k)
+					.copy_from(saved_q.rb().submatrix(0, 0, n, k));
+			}
+			return Err(SchurReorderError { position: here });
+		}
+		here = if down { here + next } else { here - next };
+	}
+	Ok(here)
+}
+/// Moves a complex triangular Schur diagonal entry from `ifst` to `ilst`,
+/// updating optional `q`. All blocks are 1 by 1; the complex swap cannot
+/// reject.
+///
+/// # Panics
+/// Panics on invalid dimensions/indices. `t` must be upper triangular.
+///
+/// # Examples
+/// ```
+/// use dyn_stack::{MemBuffer, MemStack};
+/// use faer::linalg::evd::*;
+/// use faer::{Mat, Par, c64};
+/// let mut t = Mat::<c64>::identity(2, 2);
+/// let mut mem = MemBuffer::new(reorder_schur_scratch::<c64>(2));
+/// assert_eq!(
+/// 	reorder_schur_cplx(
+/// 		t.as_mut(),
+/// 		None,
+/// 		0,
+/// 		1,
+/// 		Par::Seq,
+/// 		MemStack::new(&mut mem)
+/// 	),
+/// 	1
+/// );
+/// ```
+pub fn reorder_schur_cplx<T: ComplexField>(
+	mut t: MatMut<'_, T>,
+	mut q: Option<MatMut<'_, T>>,
+	ifst: usize,
+	ilst: usize,
+	_par: Par,
+	_stack: &mut MemStack,
+) -> usize {
+	let n = t.nrows();
+	assert!(t.ncols() == n && ifst < n && ilst < n);
+	if let Some(q) = q.rb() {
+		assert!(q.nrows() == n && q.ncols() == n);
+	}
+	let mut here = ifst;
+	while here != ilst {
+		let start = if here < ilst { here } else { here - 1 };
+		schur::complex_schur::schur_swap(t.rb_mut(), q.rb_mut(), start);
+		here = if here < ilst { here + 1 } else { here - 1 };
+	}
+	here
+}
+/// Workspace for [`eigenvectors_from_schur_real`] and
+/// [`eigenvectors_from_schur_cplx`].
+///
+/// # Examples
+/// ```
+/// let req = faer::linalg::evd::eigenvectors_from_schur_scratch::<f64>(3);
+/// let _buffer = dyn_stack::MemBuffer::new(req);
+/// ```
+pub fn eigenvectors_from_schur_scratch<T: ComplexField>(
+	dim: usize,
+) -> StackReq {
+	temp_mat_scratch::<T>(dim, dim)
+}
+/// Computes all right eigenvectors of standardized real Schur `t` in diagonal
+/// order. If `q` is supplied, returns eigenvectors of `q * t * q.transpose()`.
+/// Each real column has unit 2-norm. A pair of columns encodes `re + i im` for
+/// the positive-imaginary eigenvalue, normalized as one complex vector.
+/// `x` is output only: its previous contents are never read.
+///
+/// # Panics
+/// Panics on incompatible square dimensions or insufficient scratch.
+///
+/// # Errors
+/// Returns [`EvdError::NoConvergence`] for nonfinite input or
+/// nonfinite/degenerate output.
+///
+/// # Examples
+/// ```
+/// use dyn_stack::{MemBuffer, MemStack};
+/// use faer::linalg::evd::*;
+/// use faer::{Mat, Par};
+/// let t = faer::mat![[1.0f64, 2.0], [0.0, 3.0]];
+/// let mut x = Mat::zeros(2, 2);
+/// let mut mem = MemBuffer::new(eigenvectors_from_schur_scratch::<f64>(2));
+/// eigenvectors_from_schur_real(
+/// 	t.as_ref(),
+/// 	None,
+/// 	x.as_mut(),
+/// 	Par::Seq,
+/// 	MemStack::new(&mut mem),
+/// 	Default::default(),
+/// )
+/// .unwrap();
+/// assert!((x.col(1).norm_l2() - 1.0).abs() < 1e-14);
+/// ```
+pub fn eigenvectors_from_schur_real<T: RealField>(
+	t: MatRef<'_, T>,
+	q: Option<MatRef<'_, T>>,
+	mut x: MatMut<'_, T>,
+	par: Par,
+	stack: &mut MemStack,
+	params: Spec<EvdFromSchurParams, T>,
+) -> Result<(), EvdError> {
+	let n = t.nrows();
+	assert!(t.ncols() == n && x.nrows() == n && x.ncols() == n);
+	if let Some(q) = q {
+		assert!(q.nrows() == n && q.ncols() == n);
+	}
+	if !t.is_all_finite() {
+		return Err(EvdError::NoConvergence);
+	}
+	let (mut v, _) = temp_mat_zeroed::<T, _, _>(n, n, stack);
+	let mut v = v.as_mat_mut();
+	evd_from_real_schur_imp(t, v.rb_mut(), par, *params);
+	if let Some(q) = q {
+		linalg::matmul::matmul(
+			x.rb_mut(),
+			Accum::Replace,
+			q,
+			v.rb(),
+			one(),
+			par,
+		);
+	} else {
+		x.copy_from(v.rb());
+	}
+	normalize_eigenvectors(x.rb_mut(), t);
+	if eigenvectors_ok(x.rb()) {
+		Ok(())
+	} else {
+		Err(EvdError::NoConvergence)
+	}
+}
+/// Complex counterpart of [`eigenvectors_from_schur_real`]. `t` is upper
+/// triangular; every column is one unit-norm right eigenvector, in diagonal
+/// order. Optional `q` back-transforms by `q * x` (for `q * t * q.adjoint()`).
+/// `x` is output only: its previous contents are never read.
+///
+/// # Panics
+/// Panics on incompatible square dimensions or insufficient scratch.
+///
+/// # Errors
+/// Returns [`EvdError::NoConvergence`] for nonfinite input or
+/// nonfinite/degenerate output.
+///
+/// # Examples
+/// ```
+/// use dyn_stack::{MemBuffer, MemStack};
+/// use faer::linalg::evd::*;
+/// use faer::{Mat, Par, c64};
+/// let t = Mat::<c64>::identity(2, 2);
+/// let mut x = Mat::zeros(2, 2);
+/// let mut mem = MemBuffer::new(eigenvectors_from_schur_scratch::<c64>(2));
+/// eigenvectors_from_schur_cplx(
+/// 	t.as_ref(),
+/// 	None,
+/// 	x.as_mut(),
+/// 	Par::Seq,
+/// 	MemStack::new(&mut mem),
+/// 	Default::default(),
+/// )
+/// .unwrap();
+/// assert_eq!(x, t);
+/// ```
+pub fn eigenvectors_from_schur_cplx<T: ComplexField>(
+	t: MatRef<'_, T>,
+	q: Option<MatRef<'_, T>>,
+	mut x: MatMut<'_, T>,
+	par: Par,
+	stack: &mut MemStack,
+	params: Spec<EvdFromSchurParams, T>,
+) -> Result<(), EvdError> {
+	let n = t.nrows();
+	assert!(t.ncols() == n && x.nrows() == n && x.ncols() == n);
+	if let Some(q) = q {
+		assert!(q.nrows() == n && q.ncols() == n);
+	}
+	if !t.is_all_finite() {
+		return Err(EvdError::NoConvergence);
+	}
+	let (mut v, _) = temp_mat_zeroed::<T, _, _>(n, n, stack);
+	let mut v = v.as_mat_mut();
+	evd_from_cplx_schur_imp(t, Conj::No, v.rb_mut(), par, *params);
+	if let Some(q) = q {
+		linalg::matmul::matmul(
+			x.rb_mut(),
+			Accum::Replace,
+			q,
+			v.rb(),
+			one(),
+			par,
+		);
+	} else {
+		x.copy_from(v.rb());
+	}
+	normalize_eigenvectors(x.rb_mut(), t);
+	if eigenvectors_ok(x.rb()) {
+		Ok(())
+	} else {
+		Err(EvdError::NoConvergence)
+	}
+}
 fn evd_imp<T: ComplexField>(
 	A: MatRef<'_, T>,
 	s: ColMut<'_, T>,
@@ -1894,5 +2501,41 @@ mod self_adjoint_tests {
 		let pinv = mat.self_adjoint_eigen(Side::Lower).unwrap().pseudoinverse();
 		let err = &mat * &pinv - Mat::<f64>::identity(n, n);
 		assert!(err.norm_max() < 1e-10);
+	}
+}
+#[cfg(test)]
+mod scale_and_empty_tests {
+	//! Regression tests for `tensor4all/faer#42` and `#44`: the 2x2 shortcut
+	//! averaged the diagonal as `(a + d) * 0.5`, which overflows for a finite
+	//! spectrum near the floating-point limit, and the scratch query computed
+	//! `n - 1` on an empty matrix.
+	use super::*;
+	#[test]
+	fn two_by_two_finite_spectrum_at_the_range_limit() {
+		let a = crate::mat![[1e308f64, 0.0], [0.0, 1e308]];
+		let eig = a.self_adjoint_eigen(Side::Lower).unwrap();
+		assert_eq!(eig.S()[0], 1e308);
+		assert_eq!(eig.S()[1], 1e308);
+		let a = crate::mat![[1e38f32, 0.0], [0.0, 1e38]];
+		let eig = a.self_adjoint_eigen(Side::Lower).unwrap();
+		assert_eq!(eig.S()[0], 1e38);
+		assert_eq!(eig.S()[1], 1e38);
+	}
+	/// halving a subnormal is not exact, so the direct trace form stays in
+	/// charge wherever it does not overflow
+	#[test]
+	fn two_by_two_subnormal_diagonal() {
+		let q = f64::from_bits(1);
+		let a = Mat::<f64>::from_fn(2, 2, |i, j| if i == j { q } else { 0.0 });
+		let eig = a.self_adjoint_eigen(Side::Lower).unwrap();
+		assert_eq!(eig.S()[0], q);
+		assert_eq!(eig.S()[1], q);
+	}
+	#[test]
+	fn empty_matrix() {
+		let a = Mat::<f64>::zeros(0, 0);
+		let eig = a.self_adjoint_eigen(Side::Lower).unwrap();
+		assert_eq!(eig.U().shape(), (0, 0));
+		assert_eq!(eig.S().dim(), 0);
 	}
 }

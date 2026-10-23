@@ -242,7 +242,11 @@ fn compute_gevd_generic<T: ComplexField>(
 	let mut alpha_im = alpha_im;
 	let mut beta = beta;
 	for u in [u_left.rb_mut(), u_right.rb_mut()] {
-		if let Some(u) = u {
+		if let Some(mut u) = u {
+			// the outputs may be reused buffers; initialize them as full identities,
+			// which is what LAPACK's `dgges` does with `dlaset` before `dhgeqz`
+			// accumulates the transformations
+			u.fill(zero());
 			u.diagonal_mut().column_vector_mut().fill(one());
 		}
 	}
@@ -1775,5 +1779,89 @@ mod t {
 			}
 		}
 		assert_eq!(panics, 0, "gevd_scratch under-allocates");
+	}
+	/// `gevd_real` writes into caller-provided output buffers, so a reused buffer
+	/// must not leak into the eigenvectors through the entries it leaves unwritten.
+	#[test]
+	fn reused_eigenvector_buffers() {
+		fn check<T: faer::traits::RealField>(
+			a: Mat<T>,
+			b: Mat<T>,
+			prefills: [T; 2],
+			tol: T,
+		) {
+			for prefill in prefills {
+				for (want_left, want_right) in
+					[(false, true), (true, false), (true, true)]
+				{
+					let mut am = a.clone();
+					let mut bm = b.clone();
+					let mut sre = faer::diag::Diag::<T>::zeros(2);
+					let mut sim = faer::diag::Diag::<T>::zeros(2);
+					let mut bet = faer::diag::Diag::<T>::zeros(2);
+					let mut ul = Mat::<T>::full(2, 2, prefill.clone());
+					let mut ur = Mat::<T>::full(2, 2, prefill.clone());
+					let ce = |v: bool| {
+						if v { CE::Yes } else { CE::No }
+					};
+					linalg::gevd::gevd_real(
+						am.as_mut(),
+						bm.as_mut(),
+						sre.as_mut(),
+						sim.as_mut(),
+						bet.as_mut(),
+						want_left.then(|| ul.as_mut()),
+						want_right.then(|| ur.as_mut()),
+						Par::Seq,
+						MemStack::new(&mut MemBuffer::new(
+							linalg::gevd::gevd_scratch::<T>(
+								2,
+								ce(want_left),
+								ce(want_right),
+								Par::Seq,
+								Spec::default(),
+							),
+						)),
+						Spec::default(),
+					)
+					.unwrap();
+					// the residual alone would also accept all-zero eigenvectors, and
+					// `norm_max` skips NaN entries, so require real vectors and finite sums
+					let nonzero = |v: &Mat<T>| {
+						for j in 0..v.ncols() {
+							assert!(v.col(j).norm_l2() > tol);
+						}
+					};
+					if want_right {
+						assert!(ur.is_all_finite());
+						nonzero(&ur);
+						let res =
+							(&a * &ur) * bet.as_ref() - &ur * sre.as_ref();
+						assert!(res.is_all_finite());
+						assert!(res.norm_max() < tol);
+					}
+					if want_left {
+						assert!(ul.is_all_finite());
+						nonzero(&ul);
+						let res = bet.as_ref() * (ul.adjoint() * &a)
+							- sre.as_ref() * (ul.adjoint() * &b);
+						assert!(res.is_all_finite());
+						assert!(res.norm_max() < tol);
+					}
+				}
+			}
+		}
+		check(
+			Mat::<f32>::from_fn(2, 2, |i, j| [[2.0, 1.0], [0.0, 3.0]][i][j]),
+			Mat::<f32>::identity(2, 2),
+			[0.0, 2.0],
+			1e-5,
+		);
+		check(
+			Mat::<f64>::from_fn(2, 2, |i, j| [[2.0, 1.0], [0.0, 3.0]][i][j]),
+			Mat::<f64>::identity(2, 2),
+			[0.0, 2.0],
+			1e-12,
+		);
 	}
 }

@@ -1759,8 +1759,8 @@ impl<'a, T, Rows: Shape, Cols: Shape> MatMut<'a, T, Rows, Cols> {
 				slice.as_mut_ptr(),
 				nrows,
 				ncols,
-				1,
 				row_stride as isize,
+				1,
 			)
 		}
 	}
@@ -1978,5 +1978,18 @@ mod tests {
 		assert_eq!(m.as_mut().max(), Some(9.0));
 		let mut empty: Mat<f64> = Mat::new();
 		assert_eq!(empty.as_mut().max(), None);
+	}
+	#[test]
+	fn codeberg_305() {
+		const PAD: f64 = -42.0;
+		let mut slice = [0.0, 1.0, 2.0, PAD, 3.0, 4.0, 5.0, PAD, PAD, PAD];
+		{
+			let mut mat_view = MatMut::from_row_major_slice_with_stride_mut(
+				&mut slice, 2, 3, 4,
+			);
+			assert_eq!(mat![[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]], mat_view);
+			mat_view[(1, 2)] = 99.0;
+		}
+		assert_eq!(slice, [0.0, 1.0, 2.0, PAD, 3.0, 4.0, 99.0, PAD, PAD, PAD]);
 	}
 }

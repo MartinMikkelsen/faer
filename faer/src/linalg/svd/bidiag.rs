@@ -593,15 +593,18 @@ fn bidiag_unblocked<T: ComplexField>(
 			*y = (&*y + &*a).mul_real(tl_inv);
 			*a -= &*y;
 		});
-		// a row whose norm is below the smallest normal number is a zero row for the reflector
-		// (`make_householder_in_place` treats such a tail as zero): its reciprocal would overflow
-		// and scale the row to infinities and NaNs, so it is left unscaled with a norm of one
-		let norm = {
-			let norm = wk.rb().norm_l2();
-			if norm >= min_positive() { norm } else { one() }
-		};
-		let ref norm_inv = norm.recip();
-		if norm != one() {
+		// a subnormal row norm has an infinite reciprocal, so rescale the row first: reference
+		// `dlarfg` does the same when its normaliser underflows (main's fix, carried onto the
+		// contiguous row). the row's own norm is kept for the head's restoration below.
+		let norm = wk.rb().norm_l2();
+		if norm != zero() {
+			let ref norm_inv = if norm >= min_positive() {
+				(&norm).recip()
+			} else {
+				let ref shift = from_f64::<T::Real>(4503599627370496.0);
+				z!(wk.rb_mut()).for_each(|uz!(a)| *a = a.mul_real(shift));
+				(&norm * shift).recip()
+			};
 			z!(wk.rb_mut()).for_each(|uz!(a)| *a = a.mul_real(norm_inv));
 		}
 		matmul(

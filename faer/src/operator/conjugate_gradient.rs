@@ -167,6 +167,7 @@ pub fn conjugate_gradient<T: ComplexField>(
 				z!(&mut r, &b).for_each(|uz!(res, rhs)| *res = rhs - &*res);
 				r.norm_l2()
 			} else {
+				r.copy_from(&b);
 				b_norm.copy()
 			};
 		if abs_residual < threshold {
@@ -481,5 +482,36 @@ mod tests {
 			(A * out - rhs).norm_l2() <= params.rel_tolerance * rhs.norm_l2()
 		);
 		assert!(result.iter_count <= 1);
+	}
+	#[test]
+	fn codeberg_326() {
+		let ref A = mat![[2.0]];
+		let ref rhs = mat![[2.0]];
+		let precond = IdentityPrecond { dim: 1 };
+		let params = CgParams {
+			initial_guess: InitialGuessStatus::Zero,
+			..CgParams::default()
+		};
+		let req = conjugate_gradient_scratch(precond, A.as_ref(), 1, Par::Seq);
+		for fill in [0x00u8, 0x3F, 0xFF] {
+			// the workspace is uninitialized memory: any byte pattern must work
+			let mut buffer = alloc::vec![
+				core::mem::MaybeUninit::new(fill);
+				req.unaligned_bytes_required()
+			];
+			let ref mut out = Mat::<f64>::zeros(1, 1);
+			let result = conjugate_gradient(
+				out.as_mut(),
+				precond,
+				A.as_ref(),
+				rhs.as_ref(),
+				params,
+				|_| {},
+				Par::Seq,
+				MemStack::new(&mut buffer),
+			);
+			let _info = result.unwrap();
+			assert!((out[(0, 0)] - 1.0).abs() < 1e-10);
+		}
 	}
 }

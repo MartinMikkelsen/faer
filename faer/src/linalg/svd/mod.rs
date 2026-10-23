@@ -232,21 +232,45 @@ fn compute_bidiag_cplx_svd<T: ComplexField>(
 			one()
 		} else {
 			let norm1 = x.real().abs().fmax(x.imag().abs());
-			let y = x.mul_real(norm1.recip());
+			// a subnormal component scale has an infinite reciprocal; rescale it the
+			// way reference `dlarfg` does instead of dividing by a zero product
+			let ref shift = if norm1 >= min_positive::<T::Real>() {
+				from_f64::<T::Real>(1.0)
+			} else {
+				from_f64::<T::Real>(4503599627370496.0)
+			};
+			let y = x.mul_real(shift).mul_real((&norm1 * shift).recip());
 			y.mul_real(y.abs().recip())
+		}
+	};
+	let magnitude = |x: &T| {
+		// `abs` squares components scaled by `sqrt(min_positive)` or
+		// `sqrt(max_positive)`, which flushes a magnitude below `min_positive`
+		// to zero and overflows above about `max_positive / 2`. Outside
+		// `[min_positive, 1 / min_positive]`, rescale by that exact power of
+		// two first; other entries keep the historical `abs` bit for bit.
+		let sml = min_positive::<T::Real>();
+		let big = sml.recip();
+		let m = x.real().abs().fmax(x.imag().abs());
+		if m < sml && m != zero() {
+			x.mul_real(&big).abs() * sml
+		} else if m > big && m.is_finite() {
+			x.mul_real(&sml).abs() * big
+		} else {
+			x.abs()
 		}
 	};
 	let mut col_normalized = normalized(diag[0].conj());
 	col_mul[0] = col_normalized.copy();
-	diag_real[0] = diag[0].abs();
+	diag_real[0] = magnitude(&diag[0]);
 	subdiag_real[n - 1] = zero();
 	for i in 1..n {
 		let row_normalized =
 			normalized((&subdiag[i - 1] * col_normalized).conj());
-		subdiag_real[i - 1] = subdiag[i - 1].abs();
+		subdiag_real[i - 1] = magnitude(&subdiag[i - 1]);
 		row_mul[i - 1] = row_normalized.conj();
 		col_normalized = normalized((&diag[i] * row_normalized).conj());
-		diag_real[i] = diag[i].abs();
+		diag_real[i] = magnitude(&diag[i]);
 		col_mul[i] = col_normalized.copy();
 	}
 	compute_bidiag_real_svd(
@@ -350,6 +374,152 @@ fn compute_bidiag_real_svd<T: RealField>(
 			params.recursion_threshold,
 		)
 	}
+}
+/// Workspace for [`bidiagonal_svd`], including the padded
+/// lower-bidiagonal storage used by the existing divide-and-conquer
+/// implementation.
+///
+/// # Examples
+/// ```
+/// use faer::Par;
+/// use faer::linalg::svd::bidiagonal_svd_scratch;
+/// let _buffer = dyn_stack::MemBuffer::new(bidiagonal_svd_scratch::<f64>(
+/// 	3,
+/// 	Par::Seq,
+/// 	Default::default(),
+/// ));
+/// ```
+pub fn bidiagonal_svd_scratch<T: ComplexField>(
+	dim: usize,
+	par: Par,
+	params: Spec<SvdParams, T>,
+) -> StackReq {
+	let n = dim;
+	if n == 0 {
+		return StackReq::EMPTY;
+	}
+	StackReq::all_of(&[
+		temp_mat_scratch::<T>(n, 1).array(2),
+		temp_mat_scratch::<T>(n + 1, n + 1),
+		temp_mat_scratch::<T>(n, n),
+		bidiag_cplx_svd_scratch::<T>(n, true, true, par, *params),
+	])
+}
+/// Computes a square bidiagonal SVD `B = U * diag(s) * V.adjoint()`.
+/// `diag` is overwritten with nonnegative, descending singular values (with
+/// zero imaginary part). `offdiag` has length `n.saturating_sub(1)` and is
+/// unchanged. `upper` selects the superdiagonal rather than the subdiagonal.
+/// Both `u` and `v` are `n` by `n`; the output is **V**, not its adjoint.
+/// Real and complex entries are supported via the existing phase reduction.
+///
+/// # Panics
+/// Panics on incompatible dimensions or insufficient scratch.
+///
+/// # Errors
+/// Returns [`SvdError::NoConvergence`] for nonfinite input, iteration
+/// failure, or a result that would not be finite (for example when a complex
+/// entry's modulus overflows). Finite input never yields `Ok` with nonfinite
+/// output. Outputs are unspecified on error; `offdiag` is always unchanged.
+///
+/// # Examples
+/// ```
+/// use dyn_stack::{MemBuffer, MemStack};
+/// use faer::linalg::svd::*;
+/// use faer::{Mat, Par};
+/// let mut d = [3.0f64, -2.0];
+/// let (mut u, mut v) = (Mat::zeros(2, 2), Mat::zeros(2, 2));
+/// let mut mem = MemBuffer::new(bidiagonal_svd_scratch::<f64>(
+/// 	2,
+/// 	Par::Seq,
+/// 	Default::default(),
+/// ));
+/// bidiagonal_svd(
+/// 	&mut d,
+/// 	&[0.0],
+/// 	true,
+/// 	u.as_mut(),
+/// 	v.as_mut(),
+/// 	Par::Seq,
+/// 	MemStack::new(&mut mem),
+/// 	Default::default(),
+/// )
+/// .unwrap();
+/// assert_eq!(d, [3.0, 2.0]);
+/// ```
+pub fn bidiagonal_svd<T: ComplexField>(
+	diag: &mut [T],
+	offdiag: &[T],
+	upper: bool,
+	mut u: MatMut<'_, T>,
+	mut v: MatMut<'_, T>,
+	par: Par,
+	stack: &mut MemStack,
+	params: Spec<SvdParams, T>,
+) -> Result<(), SvdError> {
+	let n = diag.len();
+	assert!(offdiag.len() == n.saturating_sub(1));
+	assert!(
+		u.nrows() == n && u.ncols() == n && v.nrows() == n && v.ncols() == n
+	);
+	if !diag.iter().chain(offdiag).all(|x| x.is_finite()) {
+		return Err(SvdError::NoConvergence);
+	}
+	if n == 0 {
+		return Ok(());
+	}
+	// SAFETY: Every entry is written below before the kernel reads the
+	// diagonal.
+	let (mut d, stack) = unsafe { temp_mat_uninit::<T, _, _>(n, 1, stack) };
+	let (mut e, stack) = temp_mat_zeroed::<T, _, _>(n, 1, stack);
+	// SAFETY: The phase-reduction kernel fully writes each factor on success;
+	// its error path returns before either factor is read here.
+	let (mut left, stack) =
+		unsafe { temp_mat_uninit::<T, _, _>(n + 1, n + 1, stack) };
+	// SAFETY: Same full-overwrite contract as the left factor above.
+	let (mut right, stack) = unsafe { temp_mat_uninit::<T, _, _>(n, n, stack) };
+	let mut d = d.as_mat_mut().col_mut(0).try_as_col_major_mut().unwrap();
+	let mut e = e.as_mat_mut().col_mut(0).try_as_col_major_mut().unwrap();
+	for i in 0..n {
+		d[i] = if upper {
+			diag[i].conj()
+		} else {
+			diag[i].copy()
+		};
+		if i + 1 < n {
+			e[i] = if upper {
+				offdiag[i].conj()
+			} else {
+				offdiag[i].copy()
+			};
+		}
+	}
+	compute_bidiag_cplx_svd(
+		d.rb_mut(),
+		e.rb_mut(),
+		Some(left.as_mat_mut()),
+		Some(right.as_mat_mut()),
+		*params,
+		par,
+		stack,
+	)?;
+	// Backstop: finite input never reports success with nonfinite output.
+	if !(d.rb().is_all_finite()
+		&& left.as_mat_ref().submatrix(0, 0, n, n).is_all_finite()
+		&& right.as_mat_ref().is_all_finite())
+	{
+		return Err(SvdError::NoConvergence);
+	}
+	for i in 0..n {
+		diag[i] = d[i].copy();
+	}
+	if upper {
+		u.copy_from(right.as_mat_ref());
+		v.copy_from(left.as_mat_ref().submatrix(0, 0, n, n));
+	} else {
+		u.copy_from(left.as_mat_ref().submatrix(0, 0, n, n));
+		v.copy_from(right.as_mat_ref());
+	}
+	Ok(())
 }
 /// bidiag -> divide conquer svd / qr algo
 fn svd_imp<T: ComplexField>(
@@ -675,6 +845,9 @@ pub fn svd<T: ComplexField>(
 		if let Some(mut u) = u.rb_mut() {
 			u.rb_mut().subrows_mut(n, m - n).fill(zero());
 			if u.ncols() == m {
+				// the extra columns are `Q * [0; I]`, so their top block has
+				// to start at zero instead of at the caller's old entries
+				u.rb_mut().submatrix_mut(0, n, n, m - n).fill(zero());
 				u.rb_mut()
 					.submatrix_mut(n, n, m - n, m - n)
 					.diagonal_mut()
@@ -928,6 +1101,262 @@ mod tests {
 			assert!(s2 ~ s);
 		}
 	}
+	fn check_tiny_split<T: ComplexField>(a: MatRef<'_, T>) {
+		let (m, n) = a.shape();
+		let size = Ord::min(m, n);
+		let compute = |threshold, want_u, want_v| {
+			let params = Spec::new(SvdParams {
+				recursion_threshold: threshold,
+				..auto!(T)
+			});
+			let mut s = Col::zeros(size);
+			let mut u = Mat::zeros(m, if want_u { size } else { 0 });
+			let mut v = Mat::zeros(n, if want_v { size } else { 0 });
+			let vectors = |want| {
+				if want {
+					ComputeSvdVectors::Thin
+				} else {
+					ComputeSvdVectors::No
+				}
+			};
+			svd(
+				a,
+				s.as_mut().as_diagonal_mut(),
+				if want_u { Some(u.as_mut()) } else { None },
+				if want_v { Some(v.as_mut()) } else { None },
+				Par::Seq,
+				MemStack::new(&mut MemBuffer::new(svd_scratch::<T>(
+					m,
+					n,
+					vectors(want_u),
+					vectors(want_v),
+					Par::Seq,
+					params,
+				))),
+				params,
+			)
+			.unwrap();
+			(s, u, v)
+		};
+		let (reference, _, _) = compute(usize::MAX, true, true);
+		for (want_u, want_v) in
+			[(true, true), (false, false), (true, false), (false, true)]
+		{
+			let (s, u, v) = compute(128, want_u, want_v);
+			assert!((&s - &reference).norm_max() < from_f64::<T::Real>(1e-13));
+			if want_u {
+				assert!(
+					(u.adjoint() * &u - Mat::<T>::identity(size, size))
+						.norm_l2() < from_f64::<T::Real>(1e-13)
+				);
+			}
+			if want_v {
+				assert!(
+					(v.adjoint() * &v - Mat::<T>::identity(size, size))
+						.norm_l2() < from_f64::<T::Real>(1e-13)
+				);
+			}
+			if want_u && want_v {
+				let back = &u * s.as_diagonal() * v.adjoint();
+				assert!(
+					(&back - a).norm_l2() / a.norm_l2()
+						< from_f64::<T::Real>(1e-13)
+				);
+			}
+		}
+	}
+	#[test]
+	fn test_tiny_diagonal_at_split() {
+		for n in [128, 256] {
+			for tiny in [0.0, 1e-15, 1e-13, 1e-10, 1e-6] {
+				let a = Mat::<f64>::from_fn(n, n, |i, j| {
+					if (i == j && i < 64) || (j == i + 1 && i < 64) {
+						1.0
+					} else if i == 64 && j == 64 {
+						tiny
+					} else {
+						0.0
+					}
+				});
+				check_tiny_split(a.as_ref());
+				let complex =
+					Mat::<c64>::from_fn(n, n, |i, j| c64::new(0.0, a[(i, j)]));
+				check_tiny_split(complex.as_ref());
+			}
+		}
+	}
+	/// A zero block at a divide-and-conquer split must still hand its parent merge the
+	/// identity boundary entry that carries the nonzero part of the spectrum, whatever
+	/// singular vectors the caller asked for (#33).
+	#[test]
+	fn test_zero_block_at_split() {
+		fn check<T: ComplexField>(
+			n: usize,
+			threshold: usize,
+			want: (bool, bool),
+			tol: f64,
+		) {
+			let (want_u, want_v) = want;
+			let a = Mat::<T>::from_fn(n, n, |i, j| {
+				if i == n / 2 && j == n / 2 {
+					one()
+				} else {
+					zero()
+				}
+			});
+			let params = Spec::new(SvdParams {
+				recursion_threshold: threshold,
+				..auto!(T)
+			});
+			let vectors = |want| {
+				if want {
+					ComputeSvdVectors::Full
+				} else {
+					ComputeSvdVectors::No
+				}
+			};
+			let mut s = Col::<T>::zeros(n);
+			let mut u = Mat::<T>::zeros(n, if want_u { n } else { 0 });
+			let mut v = Mat::<T>::zeros(n, if want_v { n } else { 0 });
+			svd(
+				a.as_ref(),
+				s.as_mut().as_diagonal_mut(),
+				if want_u { Some(u.as_mut()) } else { None },
+				if want_v { Some(v.as_mut()) } else { None },
+				Par::Seq,
+				MemStack::new(&mut MemBuffer::new(svd_scratch::<T>(
+					n,
+					n,
+					vectors(want_u),
+					vectors(want_v),
+					Par::Seq,
+					params,
+				))),
+				params,
+			)
+			.unwrap();
+			// `norm_max` skips NaN entries, so finiteness is stated separately
+			assert!(s.is_all_finite());
+			if want_u {
+				assert!(u.is_all_finite());
+			}
+			if want_v {
+				assert!(v.is_all_finite());
+			}
+			let expected =
+				Col::<T>::from_fn(n, |i| if i == 0 { one() } else { zero() });
+			let tol = from_f64::<T::Real>(tol);
+			assert!((&s - &expected).norm_max() <= tol.copy());
+			let identity = Mat::<T>::identity(n, n);
+			if want_u && want_v {
+				let back = &u * s.as_diagonal() * v.adjoint();
+				assert!((&back - &a).norm_max() <= tol.copy());
+			}
+			if want_u {
+				assert!(
+					(u.adjoint() * &u - &identity).norm_max() <= tol.copy()
+				);
+			}
+			if want_v {
+				assert!(
+					(v.adjoint() * &v - &identity).norm_max() <= tol.copy()
+				);
+			}
+		}
+		for n in [8usize, 16, 32] {
+			for threshold in [4, 8] {
+				for want in
+					[(true, true), (false, false), (true, false), (false, true)]
+				{
+					check::<f32>(n, threshold, want, 1e-5);
+					check::<c32>(n, threshold, want, 1e-5);
+					check::<f64>(n, threshold, want, 1e-13);
+					check::<c64>(n, threshold, want, 1e-13);
+				}
+			}
+		}
+		// the reported `singular_values()` call runs at the default threshold
+		let threshold = <SvdParams as Auto<f64>>::auto().recursion_threshold;
+		check::<f64>(256, threshold, (false, false), 1e-13);
+	}
+	/// An extreme but finite scale must not overflow or underflow the reduction that
+	/// bidiagonalisation and the SVD share (#36): the spectrum and the reconstruction
+	/// stay finite and accurate.
+	#[test]
+	fn test_extreme_scale() {
+		fn check<T: ComplexField>(s: f64, tol: f64) {
+			let scale = from_f64::<T>(s);
+			let a = Mat::<T>::from_fn(2, 2, |i, j| match (i, j) {
+				(0, 0) => scale.copy(),
+				(0, 1) => scale.mul_real(from_f64::<T::Real>(0.5)),
+				(1, 1) => scale.copy(),
+				_ => zero(),
+			});
+			let params = Spec::new(SvdParams {
+				recursion_threshold: 4,
+				..auto!(T)
+			});
+			let mut sigma = Mat::<T>::zeros(2, 2);
+			let mut u = Mat::<T>::zeros(2, 2);
+			let mut v = Mat::<T>::zeros(2, 2);
+			svd(
+				a.as_ref(),
+				sigma.as_mut().diagonal_mut(),
+				Some(u.as_mut()),
+				Some(v.as_mut()),
+				Par::Seq,
+				MemStack::new(&mut MemBuffer::new(svd_scratch::<T>(
+					2,
+					2,
+					ComputeSvdVectors::Thin,
+					ComputeSvdVectors::Thin,
+					Par::Seq,
+					params,
+				))),
+				params,
+			)
+			.unwrap();
+			let rec = &u * &sigma * v.adjoint();
+			let err = (&rec - &a).norm_max();
+			assert!(rec.is_all_finite());
+			assert!(err <= a.norm_max() * from_f64::<T::Real>(tol));
+		}
+		for s in [1.0f64, 1e160, 1e-300] {
+			check::<f64>(s, 1e-14);
+			check::<c64>(s, 1e-14);
+		}
+		for s in [1.0f64, 1e30, 1e-35] {
+			check::<f32>(s, 1e-6);
+			check::<c32>(s, 1e-6);
+		}
+	}
+	/// A rank-one matrix's bidiagonalisation cascades down to subnormal entries, where the
+	/// row norm's reciprocal (and, for complex input, the phase normalisation's) overflows.
+	#[test]
+	fn test_rank_one_subnormal_cascade() {
+		for n in [16usize, 32, 150] {
+			test_svd(Mat::<f32>::full(n, n, 1.0).as_ref());
+			test_svd(Mat::<c32>::full(n, n, c32::ONE).as_ref());
+		}
+		for n in [32usize, 150] {
+			test_svd(Mat::<f64>::full(n, n, 1.0).as_ref());
+			test_svd(Mat::<c64>::full(n, n, c64::ONE).as_ref());
+		}
+	}
+	#[test]
+	fn test_zero_child_at_split() {
+		for n in [128, 256] {
+			for pos in [0, n / 2, n - 1] {
+				let a = Mat::<f64>::from_fn(n, n, |i, j| {
+					if i == pos && j == pos { 1.0 } else { 0.0 }
+				});
+				check_tiny_split(a.as_ref());
+				let complex =
+					Mat::<c64>::from_fn(n, n, |i, j| c64::new(0.0, a[(i, j)]));
+				check_tiny_split(complex.as_ref());
+			}
+		}
+	}
 	#[test]
 	fn test_real() {
 		let rng = &mut StdRng::seed_from_u64(1);
@@ -1111,5 +1540,110 @@ mod tests {
 		let pinv = mat.svd().unwrap().pseudoinverse();
 		let err = &pinv * &mat - Mat::<f64>::identity(n, n);
 		assert!(err.norm_max() < 1e-10);
+	}
+	/// The phase reduction's magnitude and phase helpers outside the normal
+	/// range: for an exact power of two `s`, the singular values of `s B` are
+	/// `s` times those of `B`. Entries below `min_positive` were flushed to
+	/// zero or made `inf`/NaN, entries above `1 / min_positive` overflowed.
+	fn cplx_phase_reduction_is_scale_exact<T: ComplexField>(
+		make: fn(f64, f64) -> T,
+	) {
+		let n = 3;
+		let base_d = [make(1.8, -0.4), make(-0.3, 0.7), make(0.5, 0.5)];
+		let base_e = [make(0.2, 0.6), make(-0.8, 0.1)];
+		let params: SvdParams = auto!(T);
+		let run = |s: &T::Real| {
+			let mut d = Col::<T>::from_fn(n, |i| base_d[i].mul_real(s));
+			let mut e = Col::<T>::from_fn(n, |i| {
+				if i + 1 < n {
+					base_e[i].mul_real(s)
+				} else {
+					zero()
+				}
+			});
+			let mut u = Mat::<T>::zeros(n + 1, n + 1);
+			let mut v = Mat::<T>::zeros(n, n);
+			compute_bidiag_cplx_svd(
+				d.as_mut().try_as_col_major_mut().unwrap(),
+				e.as_mut().try_as_col_major_mut().unwrap(),
+				Some(u.as_mut()),
+				Some(v.as_mut()),
+				params,
+				Par::Seq,
+				MemStack::new(&mut MemBuffer::new(
+					bidiag_cplx_svd_scratch::<T>(
+						n,
+						true,
+						true,
+						Par::Seq,
+						params,
+					),
+				)),
+			)
+			.unwrap();
+			assert!(u.is_all_finite() && v.is_all_finite());
+			d
+		};
+		let reference = run(&one());
+		let sml = min_positive::<T::Real>();
+		for s in [sml.recip(), &sml * from_f64::<T::Real>(0.0625)] {
+			let d = run(&s);
+			for i in 0..n {
+				let scaled_back = d[i].real() / &s;
+				assert!(
+					(scaled_back - reference[i].real()).abs()
+						<= from_f64::<T::Real>(1e3)
+							* eps::<T::Real>() * reference[0].real()
+				);
+			}
+		}
+	}
+	#[test]
+	fn cplx_phase_reduction_outside_normal_range() {
+		cplx_phase_reduction_is_scale_exact::<c64>(c64::new);
+		cplx_phase_reduction_is_scale_exact::<c32>(|r, i| {
+			c32::new(r as f32, i as f32)
+		});
+		cplx_phase_reduction_is_scale_exact::<f64>(|r, _| r);
+		cplx_phase_reduction_is_scale_exact::<f32>(|r, _| r as f32);
+	}
+	/// full factors must be orthogonal even when the caller's output buffers
+	/// hold old entries; the tall/wide QR path used to leave the top-right block
+	/// of `U` (and, after transposition, of `V`) as it found it
+	#[test]
+	fn full_factors_ignore_old_output_entries() {
+		for (m, n) in [(4, 2), (2, 4)] {
+			let a = Mat::<f64>::identity(m, n);
+			let size = Ord::min(m, n);
+			let mut s = Diag::<f64>::zeros(size);
+			let mut u = Mat::<f64>::full(m, m, 1.0);
+			let mut v = Mat::<f64>::full(n, n, 1.0);
+			svd(
+				a.as_ref(),
+				s.as_mut(),
+				Some(u.as_mut()),
+				Some(v.as_mut()),
+				Par::Seq,
+				MemStack::new(&mut MemBuffer::new(svd_scratch::<f64>(
+					m,
+					n,
+					ComputeSvdVectors::Full,
+					ComputeSvdVectors::Full,
+					Par::Seq,
+					default(),
+				))),
+				default(),
+			)
+			.unwrap();
+			let orth_u =
+				(u.transpose() * &u - Mat::<f64>::identity(m, m)).norm_max();
+			let orth_v =
+				(v.transpose() * &v - Mat::<f64>::identity(n, n)).norm_max();
+			assert!(orth_u < 1e-12, "U orthogonality error {orth_u}");
+			assert!(orth_v < 1e-12, "V orthogonality error {orth_v}");
+			let rec = u.as_ref().get(.., ..size) * s.as_ref()
+				* v.as_ref().get(.., ..size).transpose();
+			assert!((&rec - &a).norm_max() < 1e-12);
+		}
 	}
 }

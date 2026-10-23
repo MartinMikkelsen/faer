@@ -40,6 +40,21 @@ provenance rule for proprietary yardsticks.
 * Upstream remote is Codeberg (`git remote add upstream
   https://codeberg.org/sarah-quinones/faer.git`). The GitHub parent
   `sarah-quinones/faer-rs` is a mirror; do not treat it as the source of truth.
+* **Direction of an upstream change is a fact to verify, not to infer.** Content
+  that is byte-identical to upstream is upstream's work unless its commit message
+  says otherwise; read the messages before writing who wrote what. A tree-hash
+  comparison proves a merge changed nothing, not who authored the code.
+* Upstream updates arrive as a merge commit from `upstream/main` (fetch with
+  `git fetch upstream +refs/heads/main:refs/remotes/upstream/main`), landing on a
+  branch that already contains the fork's own work, and the sync records the new
+  base revision in the `Upstream base` row of `PATCHSET.md`. If the imported work
+  was already cherry-picked here, the sync is ancestry-only: say so and show the
+  tree hashes match, rather than presenting the imported fixes as the fork's.
+* An imported upstream fix is upstream-to-fork. Its commit message names the
+  upstream commit SHAs or Codeberg PR numbers **and the original authors**, and
+  carries the upstream tests: `Taken from upstream faer (Codeberg #NNN): <shas>,
+  by <authors>`. Never describe such a fix as the fork's own work; feeding a fork
+  change back upstream stays under the deferred-feedback rule below.
 * Every experiment carries one focused test. Run it locally; the fork CI gate is
   a build, not the full upstream suite (faer's test dependencies are heavy).
   The inherited upstream workflows still run their own heavier jobs.
