@@ -285,18 +285,15 @@ fn compute_bidiag_real_svd<T: RealField>(
 			return Err(SvdError::NoConvergence);
 		}
 	}
-	// dqds is serial by construction, and above one thread the divide-and-conquer it would replace
-	// is not: at 512 the values stage is 13.7 ms threaded against 16.6 ms serial (measured), while
-	// at one thread dqds is 29% cheaper at every size. So the route is by (budget, size), with the
-	// crossover measured at `svd_values` 256 and 512 in the campaign arm.
-	const DQDS_MAX_THREADED_N: usize = 256;
-	let dqds_here = !matches!(par, Par::Rayon(_)) || n < DQDS_MAX_THREADED_N;
-	if dqds_here && u.is_none() && v.is_none() {
+	if u.is_none() && v.is_none() {
 		// Values only: dqds applies no rotations, so a sweep costs one division and one
 		// multiplication per entry instead of a rotation's hypot and its two-sided update, and it
 		// is what LAPACK's values-only route uses at every size (`DBDSDC(compq='N')` ->
-		// `DLASDQ` -> `DBDSQR`'s `ROTATE`-false branch -> `DLASQ1`). A rank-deficient bidiagonal
-		// keeps the rotation path below, because the qd transform divides by the factors.
+		// `DLASDQ` -> `DBDSQR`'s `ROTATE`-false branch -> `DLASQ1`). It is serial, and still
+		// cheaper than the threaded divide-and-conquer at every size and budget measured
+		// (`docs/worklogs/2026-10-23-dqds-shift.md`: 6.6 ms against 13.3 ms at n = 512 on eight
+		// threads, 25 against 43 at 1024). A rank-deficient bidiagonal keeps the rotation path
+		// below, because the qd transform divides by the factors.
 		if !diag.rb().iter().any(|x| *x == zero()) {
 			return dqds::singular_values(diag.as_slice_mut(), subdiag.as_slice_mut());
 		}
