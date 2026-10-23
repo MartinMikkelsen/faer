@@ -230,7 +230,12 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 				let n_chunks = rows.div_ceil(chunk);
 				let mut partials = vec![T::zero(); n_chunks * n * n];
 				let source = basis_bot;
-				partials.par_chunks_mut(n * n).enumerate().for_each(
+				// through spindle, like every other region in this crate: a raw rayon iterator
+				// finds the pool's threads occupied when the caller holds the worker group
+				// (`spindle::with_lock`), and the split then runs starved
+				spindle::for_each(
+					n_chunks,
+					partials.par_chunks_mut(n * n).enumerate(),
 					|(index, part)| {
 						let lo = index * chunk;
 						let hi = rows.min(lo + chunk);
@@ -658,7 +663,9 @@ fn apply_block_householder_on_the_left_in_place_generic<
 				let top_basis = essentials_top.as_dyn_rows().as_dyn_cols();
 				let bot_basis = essentials_bot.as_dyn_rows().as_dyn_cols();
 				let conj = Conj::Yes.compose(conj_lhs);
-				partials.par_chunks_mut(n * k).enumerate().for_each(
+				spindle::for_each(
+					n_chunks,
+					partials.par_chunks_mut(n * k).enumerate(),
 					|(index, part)| {
 						let lo = index * chunk;
 						let hi = rows.min(lo + chunk);
