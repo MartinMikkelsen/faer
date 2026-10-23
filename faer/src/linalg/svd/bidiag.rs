@@ -5,7 +5,10 @@ use linalg::matmul::{dot, matmul};
 
 /// width of one blocked panel: `BLOCK_SIZE` columns and rows are reduced with level-2 work
 /// against deferred corrections, then the trailing block is brought up to date once with two
-/// level-3 products (LAPACK's `dlabrd` panel and `dgebrd`'s `A -= V Y^H + X U` update).
+/// level-3 products: the block reduction of Dongarra, Hammarling and Sorensen, *Block reduction of
+/// matrices to condensed forms for eigenvalue computations* (J. Comput. Appl. Math. 27, 1989), the
+/// algorithm LAPACK's `dlabrd`/`dgebrd` implement. the recurrences here are derived from this
+/// crate's reflector conventions, not translated from any implementation.
 ///
 /// measured (`docs/worklogs/2026-10-23-blocked-bidiag.md`): the per-step recurrence costs grow
 /// with the width while the update's cost shrinks with it, and 8 to 16 is flat at every size

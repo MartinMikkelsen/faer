@@ -16,8 +16,11 @@
 //!
 //! which is the algorithm of Fernando & Parlett, *Accurate singular values and differential qd
 //! algorithms* (Numer. Math. 67, 1994) and Parlett & Marques, *An implementation of the dqds
-//! algorithm (positive case)* (LAPACK Working Note). It applies no rotations, so a sweep costs one
-//! division and one multiplication per entry. Nothing here is translated from LAPACK or OpenBLAS
+//! algorithm (positive case)* (LAPACK Working Note 155, 2000). It applies no rotations, so a sweep
+//! costs one division and one multiplication per entry. The release test in the eigenvalue's units
+//! and the correction of a shift rejected at the last factor are the paper's; the shift itself (the
+//! trailing 2x2's eigenvalue backed off by its eigenvector-weighted second-order coupling) is this
+//! crate's own, chosen by counting sweeps. Nothing here is translated from LAPACK or OpenBLAS
 //! source.
 //!
 //! A sweep writes the factors it produces into a second buffer, so an accepted sweep is a swap of
