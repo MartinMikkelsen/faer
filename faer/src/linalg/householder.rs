@@ -129,6 +129,9 @@ pub(crate) fn make_householder_out_of_place<T: ComplexField>(
 	make_householder_imp(head, out, Some(tail))
 }
 #[doc(hidden)]
+/// bases up to this width have their `V^H V` formed as inner products on the calling thread
+/// (see `upgrade_householder_factor`)
+const NARROW_BASIS: usize = 8;
 pub fn upgrade_householder_factor<T: ComplexField>(
 	householder_factor: MatMut<'_, T>,
 	essentials: MatRef<'_, T>,
@@ -222,7 +225,25 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 			&& rows >= 2 * n
 			&& rows >= 4 * threads
 			&& rows * n * n >= 8 * 1024;
-		if deep {
+		if n <= NARROW_BASIS {
+			// a narrow basis: its `n (n - 1) / 2` inner products on the calling thread. the gemm
+			// kernel runs this `n x rows x n` shape at 7 GB/s, and the split above pulls the basis
+			// the leaf just wrote out of this core's cache into the workers' for less work than
+			// the transfer costs (measured in the recursive QR at 4096 rows, n = 3: 23 us per call
+			// split, 13 us as one gemm, 3 us as inner products)
+			for col in 1..n {
+				for row in 0..col {
+					let s = crate::linalg::matmul::dot::inner_prod(
+						basis_bot.col(row).transpose(),
+						Conj::Yes,
+						basis_bot.col(col),
+						Conj::No,
+					);
+					householder_factor[(row, col)] =
+						householder_factor[(row, col)].clone() + s;
+				}
+			}
+		} else if deep {
 			#[cfg(feature = "rayon")]
 			{
 				use rayon::prelude::*;
