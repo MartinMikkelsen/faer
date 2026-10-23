@@ -227,17 +227,34 @@ fn compute_bidiag_cplx_svd<T: ComplexField>(
 			y.mul_real(y.abs().recip())
 		}
 	};
+	let magnitude = |x: &T| {
+		// `abs` squares components scaled by `sqrt(min_positive)` or
+		// `sqrt(max_positive)`, which flushes a magnitude below `min_positive`
+		// to zero and overflows above about `max_positive / 2`. Outside
+		// `[min_positive, 1 / min_positive]`, rescale by that exact power of
+		// two first; other entries keep the historical `abs` bit for bit.
+		let sml = min_positive::<T::Real>();
+		let big = sml.recip();
+		let m = x.real().abs().fmax(x.imag().abs());
+		if m < sml && m != zero() {
+			x.mul_real(&big).abs() * sml
+		} else if m > big && m.is_finite() {
+			x.mul_real(&sml).abs() * big
+		} else {
+			x.abs()
+		}
+	};
 	let mut col_normalized = normalized(diag[0].conj());
 	col_mul[0] = col_normalized.copy();
-	diag_real[0] = diag[0].abs();
+	diag_real[0] = magnitude(&diag[0]);
 	subdiag_real[n - 1] = zero();
 	for i in 1..n {
 		let row_normalized =
 			normalized((&subdiag[i - 1] * col_normalized).conj());
-		subdiag_real[i - 1] = subdiag[i - 1].abs();
+		subdiag_real[i - 1] = magnitude(&subdiag[i - 1]);
 		row_mul[i - 1] = row_normalized.conj();
 		col_normalized = normalized((&diag[i] * row_normalized).conj());
-		diag_real[i] = diag[i].abs();
+		diag_real[i] = magnitude(&diag[i]);
 		col_mul[i] = col_normalized.copy();
 	}
 	compute_bidiag_real_svd(
@@ -328,6 +345,152 @@ fn compute_bidiag_real_svd<T: RealField>(
 			params.recursion_threshold,
 		)
 	}
+}
+/// Workspace for [`bidiagonal_svd`], including the padded
+/// lower-bidiagonal storage used by the existing divide-and-conquer
+/// implementation.
+///
+/// # Examples
+/// ```
+/// use faer::Par;
+/// use faer::linalg::svd::bidiagonal_svd_scratch;
+/// let _buffer = dyn_stack::MemBuffer::new(bidiagonal_svd_scratch::<f64>(
+/// 	3,
+/// 	Par::Seq,
+/// 	Default::default(),
+/// ));
+/// ```
+pub fn bidiagonal_svd_scratch<T: ComplexField>(
+	dim: usize,
+	par: Par,
+	params: Spec<SvdParams, T>,
+) -> StackReq {
+	let n = dim;
+	if n == 0 {
+		return StackReq::EMPTY;
+	}
+	StackReq::all_of(&[
+		temp_mat_scratch::<T>(n, 1).array(2),
+		temp_mat_scratch::<T>(n + 1, n + 1),
+		temp_mat_scratch::<T>(n, n),
+		bidiag_cplx_svd_scratch::<T>(n, true, true, par, *params),
+	])
+}
+/// Computes a square bidiagonal SVD `B = U * diag(s) * V.adjoint()`.
+/// `diag` is overwritten with nonnegative, descending singular values (with
+/// zero imaginary part). `offdiag` has length `n.saturating_sub(1)` and is
+/// unchanged. `upper` selects the superdiagonal rather than the subdiagonal.
+/// Both `u` and `v` are `n` by `n`; the output is **V**, not its adjoint.
+/// Real and complex entries are supported via the existing phase reduction.
+///
+/// # Panics
+/// Panics on incompatible dimensions or insufficient scratch.
+///
+/// # Errors
+/// Returns [`SvdError::NoConvergence`] for nonfinite input, iteration
+/// failure, or a result that would not be finite (for example when a complex
+/// entry's modulus overflows). Finite input never yields `Ok` with nonfinite
+/// output. Outputs are unspecified on error; `offdiag` is always unchanged.
+///
+/// # Examples
+/// ```
+/// use dyn_stack::{MemBuffer, MemStack};
+/// use faer::linalg::svd::*;
+/// use faer::{Mat, Par};
+/// let mut d = [3.0f64, -2.0];
+/// let (mut u, mut v) = (Mat::zeros(2, 2), Mat::zeros(2, 2));
+/// let mut mem = MemBuffer::new(bidiagonal_svd_scratch::<f64>(
+/// 	2,
+/// 	Par::Seq,
+/// 	Default::default(),
+/// ));
+/// bidiagonal_svd(
+/// 	&mut d,
+/// 	&[0.0],
+/// 	true,
+/// 	u.as_mut(),
+/// 	v.as_mut(),
+/// 	Par::Seq,
+/// 	MemStack::new(&mut mem),
+/// 	Default::default(),
+/// )
+/// .unwrap();
+/// assert_eq!(d, [3.0, 2.0]);
+/// ```
+pub fn bidiagonal_svd<T: ComplexField>(
+	diag: &mut [T],
+	offdiag: &[T],
+	upper: bool,
+	mut u: MatMut<'_, T>,
+	mut v: MatMut<'_, T>,
+	par: Par,
+	stack: &mut MemStack,
+	params: Spec<SvdParams, T>,
+) -> Result<(), SvdError> {
+	let n = diag.len();
+	assert!(offdiag.len() == n.saturating_sub(1));
+	assert!(
+		u.nrows() == n && u.ncols() == n && v.nrows() == n && v.ncols() == n
+	);
+	if !diag.iter().chain(offdiag).all(|x| x.is_finite()) {
+		return Err(SvdError::NoConvergence);
+	}
+	if n == 0 {
+		return Ok(());
+	}
+	// SAFETY: Every entry is written below before the kernel reads the
+	// diagonal.
+	let (mut d, stack) = unsafe { temp_mat_uninit::<T, _, _>(n, 1, stack) };
+	let (mut e, stack) = temp_mat_zeroed::<T, _, _>(n, 1, stack);
+	// SAFETY: The phase-reduction kernel fully writes each factor on success;
+	// its error path returns before either factor is read here.
+	let (mut left, stack) =
+		unsafe { temp_mat_uninit::<T, _, _>(n + 1, n + 1, stack) };
+	// SAFETY: Same full-overwrite contract as the left factor above.
+	let (mut right, stack) = unsafe { temp_mat_uninit::<T, _, _>(n, n, stack) };
+	let mut d = d.as_mat_mut().col_mut(0).try_as_col_major_mut().unwrap();
+	let mut e = e.as_mat_mut().col_mut(0).try_as_col_major_mut().unwrap();
+	for i in 0..n {
+		d[i] = if upper {
+			diag[i].conj()
+		} else {
+			diag[i].copy()
+		};
+		if i + 1 < n {
+			e[i] = if upper {
+				offdiag[i].conj()
+			} else {
+				offdiag[i].copy()
+			};
+		}
+	}
+	compute_bidiag_cplx_svd(
+		d.rb_mut(),
+		e.rb_mut(),
+		Some(left.as_mat_mut()),
+		Some(right.as_mat_mut()),
+		*params,
+		par,
+		stack,
+	)?;
+	// Backstop: finite input never reports success with nonfinite output.
+	if !(d.rb().is_all_finite()
+		&& left.as_mat_ref().submatrix(0, 0, n, n).is_all_finite()
+		&& right.as_mat_ref().is_all_finite())
+	{
+		return Err(SvdError::NoConvergence);
+	}
+	for i in 0..n {
+		diag[i] = d[i].copy();
+	}
+	if upper {
+		u.copy_from(right.as_mat_ref());
+		v.copy_from(left.as_mat_ref().submatrix(0, 0, n, n));
+	} else {
+		u.copy_from(left.as_mat_ref().submatrix(0, 0, n, n));
+		v.copy_from(right.as_mat_ref());
+	}
+	Ok(())
 }
 /// bidiag -> divide conquer svd / qr algo
 fn svd_imp<T: ComplexField>(
@@ -1347,6 +1510,72 @@ mod tests {
 		let pinv = mat.svd().unwrap().pseudoinverse();
 		let err = &pinv * &mat - Mat::<f64>::identity(n, n);
 		assert!(err.norm_max() < 1e-10);
+	}
+	/// The phase reduction's magnitude and phase helpers outside the normal
+	/// range: for an exact power of two `s`, the singular values of `s B` are
+	/// `s` times those of `B`. Entries below `min_positive` were flushed to
+	/// zero or made `inf`/NaN, entries above `1 / min_positive` overflowed.
+	fn cplx_phase_reduction_is_scale_exact<T: ComplexField>(
+		make: fn(f64, f64) -> T,
+	) {
+		let n = 3;
+		let base_d = [make(1.8, -0.4), make(-0.3, 0.7), make(0.5, 0.5)];
+		let base_e = [make(0.2, 0.6), make(-0.8, 0.1)];
+		let params: SvdParams = auto!(T);
+		let run = |s: &T::Real| {
+			let mut d = Col::<T>::from_fn(n, |i| base_d[i].mul_real(s));
+			let mut e = Col::<T>::from_fn(n, |i| {
+				if i + 1 < n {
+					base_e[i].mul_real(s)
+				} else {
+					zero()
+				}
+			});
+			let mut u = Mat::<T>::zeros(n + 1, n + 1);
+			let mut v = Mat::<T>::zeros(n, n);
+			compute_bidiag_cplx_svd(
+				d.as_mut().try_as_col_major_mut().unwrap(),
+				e.as_mut().try_as_col_major_mut().unwrap(),
+				Some(u.as_mut()),
+				Some(v.as_mut()),
+				params,
+				Par::Seq,
+				MemStack::new(&mut MemBuffer::new(
+					bidiag_cplx_svd_scratch::<T>(
+						n,
+						true,
+						true,
+						Par::Seq,
+						params,
+					),
+				)),
+			)
+			.unwrap();
+			assert!(u.is_all_finite() && v.is_all_finite());
+			d
+		};
+		let reference = run(&one());
+		let sml = min_positive::<T::Real>();
+		for s in [sml.recip(), &sml * from_f64::<T::Real>(0.0625)] {
+			let d = run(&s);
+			for i in 0..n {
+				let scaled_back = d[i].real() / &s;
+				assert!(
+					(scaled_back - reference[i].real()).abs()
+						<= from_f64::<T::Real>(1e3)
+							* eps::<T::Real>() * reference[0].real()
+				);
+			}
+		}
+	}
+	#[test]
+	fn cplx_phase_reduction_outside_normal_range() {
+		cplx_phase_reduction_is_scale_exact::<c64>(c64::new);
+		cplx_phase_reduction_is_scale_exact::<c32>(|r, i| {
+			c32::new(r as f32, i as f32)
+		});
+		cplx_phase_reduction_is_scale_exact::<f64>(|r, _| r);
+		cplx_phase_reduction_is_scale_exact::<f32>(|r, _| r as f32);
 	}
 	/// full factors must be orthogonal even when the caller's output buffers
 	/// hold old entries; the tall/wide QR path used to leave the top-right block

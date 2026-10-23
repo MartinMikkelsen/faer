@@ -299,15 +299,27 @@ pub(super) fn qr_algorithm<T: RealField>(
 		return Ok(());
 	}
 	let ref max_inv = max.recip();
+	// Outside the normal range `max` has an infinite or subnormal (inexact)
+	// reciprocal: divide instead. Other inputs keep the multiply, so their
+	// results are bit-for-bit unchanged.
+	let divide = !(max_inv.is_finite() && *max_inv >= min_positive::<T>());
 	let mut diag = diag;
 	let mut subdiag = subdiag;
 	let mut u = u;
 	let mut v = v;
 	for x in diag.rb_mut().iter_mut() {
-		*x *= max_inv;
+		if divide {
+			*x = x.copy() / max;
+		} else {
+			*x *= max_inv;
+		}
 	}
 	for x in subdiag.rb_mut().iter_mut() {
-		*x *= max_inv;
+		if divide {
+			*x = x.copy() / max;
+		} else {
+			*x *= max_inv;
+		}
 	}
 	{
 		let ref eps2 = eps * eps;
@@ -1093,9 +1105,16 @@ pub(super) fn divide_and_conquer<T: RealField>(
 		return Ok(());
 	}
 	let ref max_inv = max.recip();
+	// See `qr_algorithm`: divide when `max` has no finite normal reciprocal.
+	let divide = !(max_inv.is_finite() && *max_inv >= min_positive::<T>());
 	for i in 0..n {
-		diag[i] *= max_inv;
-		subdiag[i] *= max_inv;
+		if divide {
+			diag[i] = diag[i].copy() / max;
+			subdiag[i] = subdiag[i].copy() / max;
+		} else {
+			diag[i] *= max_inv;
+			subdiag[i] *= max_inv;
+		}
 	}
 	let k = n / 2;
 	let rem = n - k - 1;
@@ -1951,5 +1970,77 @@ mod tests {
 			rot.apply_on_the_left_in_place((y, x));
 		}
 		assert!(M ~ M_orig);
+	}
+	/// Pre-scaling by `1 / max` in the QR and divide-and-conquer solvers: for
+	/// an exact power of two `s` outside the normal range of `1 / max`, the
+	/// singular values of `s B` must be `s` times those of `B`.
+	fn prescale_is_scale_exact<T: RealField>() {
+		let base_d = [1.8, -0.7, 0.4, 1.1, -0.5, 0.9];
+		let base_e = [0.3, -1.2, 0.6, 0.2, -0.8];
+		for n in [3usize, 6] {
+			let run = |s: &T| {
+				let mut d =
+					Col::<T>::from_fn(n, |i| from_f64::<T>(base_d[i]) * s);
+				let mut e = Col::<T>::from_fn(n, |i| {
+					if i + 1 < n {
+						from_f64::<T>(base_e[i]) * s
+					} else {
+						zero()
+					}
+				});
+				let mut u = Mat::<T>::identity(n + 1, n + 1);
+				let mut v = Mat::<T>::identity(n, n);
+				if n < 4 {
+					qr_algorithm(
+						d.as_mut().try_as_col_major_mut().unwrap(),
+						e.as_mut().try_as_col_major_mut().unwrap(),
+						Some(u.as_mut().submatrix_mut(0, 0, n, n)),
+						Some(v.as_mut()),
+					)
+					.unwrap();
+				} else {
+					divide_and_conquer(
+						d.as_mut().try_as_col_major_mut().unwrap(),
+						e.as_mut().try_as_col_major_mut().unwrap(),
+						MatU::Full(u.as_mut()),
+						Some(v.as_mut()),
+						Par::Seq,
+						MemStack::new(&mut MemBuffer::new(
+							divide_and_conquer_scratch::<T>(
+								n,
+								4,
+								true,
+								true,
+								Par::Seq,
+							),
+						)),
+						4,
+					)
+					.unwrap();
+				}
+				assert!(u.is_all_finite() && v.is_all_finite());
+				d
+			};
+			let reference = run(&one());
+			let mut max = zero::<T>();
+			for i in 0..n {
+				max = max.fmax(reference[i].abs());
+			}
+			let sml = min_positive::<T>();
+			for s in [sml.recip(), &sml * from_f64::<T>(0.0625)] {
+				let d = run(&s);
+				for i in 0..n {
+					assert!(
+						(&d[i] / &s - &reference[i]).abs()
+							<= from_f64::<T>(1e3) * eps::<T>() * &max
+					);
+				}
+			}
+		}
+	}
+	#[test]
+	fn prescale_outside_normal_range() {
+		prescale_is_scale_exact::<f64>();
+		prescale_is_scale_exact::<f32>();
 	}
 }
