@@ -196,3 +196,27 @@ the layout moves and the algorithm does not.
 
 Verified at 1e-10, in tree, faster from 32 to 256, neutral above, and **not adopted**: the `qr_factor`
 guard needs its control, and the 512-and-up range needs the shift work above before dqds can claim it.
+
+## The `qr_factor` guard, settled by the split-off control
+
+The control compiled the kernel and never called it (`const DQDS_ENABLED: bool = false` in front of
+the values-only branch), so the binary's layout moved with the change and the algorithm did not:
+`20261023T043848Z-dqds-off-control`, same stack, `qr_factor,svd_values` at 64/96/128, four dtypes,
+4T/8T. Three ratios: on/pin, off/pin, on/off.
+
+- `svd_values` 128x128: on/pin 0.88-0.93, **off/pin 0.99-1.01**, on/off 0.87-0.92. The gain belongs to
+  the call, and the control reproduces the pin exactly.
+- `qr_factor` 128x128: on/pin 0.93-1.24, off/pin 0.87-1.06, **on/off 1.01-1.20**. `qr_factor` never
+  reaches this code, and a one-bit change that only alters what the optimiser eliminates moves those
+  cells by the same amount the change appeared to. So the 36 guard cells are the binary-layout effect,
+  not a cost of this kernel.
+
+The campaign's decision rule agrees: the unchanged `faer-upstream` row reproduced the baseline in every
+pair (1.0016 and 1.0026), and a per-cell rule is exactly what the toolkit's own `control_check`
+documentation warns against.
+
+**Status: EXPERIMENT, not adopted.** The predeclared primary target was `svd_values/64` approaching the
+vendors' 0.275 ms and it lands at 0.47 (0.886 against the pin), so the target is not met and the record
+does not call it met. What the arm establishes is: verified to 1e-10, 0.88-0.96 from 32 to 256, neutral
+at 512 and above, no attributable guard regression. The remaining work is the shift rule (`dlasq4`),
+which is also what 512 and above need.
