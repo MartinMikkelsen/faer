@@ -164,4 +164,32 @@ the tail. The vendor's blocked `?gebrd` is at 15.6 ms on the same host and size.
 
 ## Campaign measurement
 
-(filled in below from `20261023T091426Z-blocked-bidiag` against the pin baseline.)
+Both arms are `svd_values,svd_thin` over `linalg-small,linalg-mid,linalg-tall`, four dtypes, 1T/4T/8T,
+MKL arm, three engines, paired against the pin baseline `20261023T012045Z-dqds-blast-baseline`
+(`50c2b98`); `scripts/candidate_compare.py --cells svd_values,svd_thin`, below 1 is faster.
+
+**This change alone** (`20261023T091426Z-blocked-bidiag`, at `555d84f`): `faer-upstream` control median
+1.0006 over 384 cells, 0 outside their own range; **172 cells faster, 0 slower beyond 5%**.
+`svd_values`, median ratio over dtypes and orders:
+
+| | 32 | 64 | 96 | 128 | 256 | 512 | 1024x64 | 4096x256 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1T | 0.912 | 0.882 | 0.877 | 0.788 | 0.806 | 0.829 | 0.980 | 0.970 |
+| 4T | 0.914 | 0.879 | 0.876 | 0.909 | 0.932 | 0.737 | 0.989 | 0.979 |
+| 8T | 0.915 | 0.879 | 0.877 | 0.898 | 0.929 | **0.688** | 0.996 | 0.975 |
+
+32 to 96 are the gated dqds run's numbers unchanged (the floor keeps them out), 128 and 256 move at 1T
+only through the row gather in the unblocked loop's neighbourhood of the floor, and 512 is the blocked
+phase: f64 F 48.5 -> 32.6 ms at 8T, 65.4 -> 52.8 at 1T. `svd_thin` moves the same way at 512
+(0.954 / 0.799 / 0.745 at 1T / 4T / 8T) and is flat elsewhere.
+
+**The predeclared gate** was `svd_values` at 512, 8T, under 20 ms. It is not met by this change alone
+(32.6 ms): the bidiagonalisation went to 19.1 ms and the values stage behind it was the threaded
+divide-and-conquer at 13.3 ms. With the dqds unit after it (`docs/worklogs/2026-10-23-dqds-shift.md`)
+the same cell is 25.8 ms, against the vendor's 22.3 on the same host. The 1T guard held: 512 improved
+and 64/128 did not move at this change (the gated run's 0.879/0.789).
+
+**The floor was re-scanned after the dqds unit** at 32, 64 and 128 on sizes 32 to 256 (probe, 1T and
+8T): a floor of 64 is flat and a floor of 32 makes 64 slower (0.17 -> 0.19 ms at 1T, 0.22 at 8T), so
+128 stays. The 64 cell's remaining distance to the vendor (0.296 vs 0.254 ms) is the unblocked loop's
+0.17 ms bidiagonalisation, not this unit.

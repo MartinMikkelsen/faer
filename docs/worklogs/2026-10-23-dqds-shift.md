@@ -81,6 +81,49 @@ the two are both low. At n = 64 the same choice gives 3.7 accepted and 0.3 rejec
   instead of `tau - |delta|`. This unit never accepts a non-positive factor.
 - lib: 218 passed / 2 ignored.
 
+## Route
+
+With the sweep count down, the values stage at 512 is 6.9 ms serial against 13.3 ms for the threaded
+divide-and-conquer it was gated behind above n = 256 (1.6 against 4.4 at 256, 25 against 43 at 1024,
+probe, 8T), so values-only takes dqds at every size and budget (`7eebfd4`), one rule again.
+
 ## Campaign measurement
 
-(filled in below.)
+Both arms are `svd_values,svd_thin` over `linalg-small,linalg-mid,linalg-tall`, four dtypes, 1T/4T/8T,
+MKL arm, three engines, paired against the pin baseline `20261023T012045Z-dqds-blast-baseline`
+(`50c2b98`); `scripts/candidate_compare.py --cells svd_values,svd_thin`, below 1 is faster.
+
+`20261023T100330Z-blocked-dqds`, at `7eebfd4` (the blocked bidiagonalisation, this unit and the
+route): `faer-upstream` control median 1.0022 over 384 cells, 0 outside their own range; **208 cells
+faster, 6 slower beyond 5%**. `svd_values`, median ratio over dtypes and orders:
+
+| | 32 | 64 | 96 | 128 | 256 | 512 | 1024x64 | 4096x256 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1T | 0.622 | **0.599** | 0.622 | 0.577 | 0.656 | 0.850 | 0.889 | 0.938 |
+| 4T | 0.619 | 0.599 | 0.620 | 0.664 | 0.709 | 0.616 | 0.896 | 0.938 |
+| 8T | 0.621 | 0.599 | 0.621 | 0.662 | 0.710 | **0.568** | 0.902 | 0.927 |
+
+f64 F absolute: 64 0.537 -> 0.296 ms, 128 2.62 -> 1.30, 512 65.4 -> 43.3 (1T) and 48.5 -> 25.8 (8T).
+
+**The six flagged cells** are all `svd_thin`, complex, 1T, at 256 and 512 (1.05-1.11). `svd_thin`
+computes vectors and never reaches this kernel or the route, and the blocked-bidiag run measured the
+same cells with the same bidiagonalisation code at 0.977-0.980; the candidate's absolute times agree
+between the two runs within 1% (c64 512: 205.7 and 207.3 ms). So the flag is the run-to-run drift of
+the normalised ratio on that pair, recorded here and not resolved by this unit.
+
+**Against the vendor in the same run** (`faer-fork` / `lapack-mkl`, F order, below 1 is faer faster):
+
+| `svd_values` | 32 | 64 | 96 | 128 | 256 | 512 | 1024x64 | 4096x256 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| f64 1T | 1.37 | 1.16 | 1.11 | 1.13 | 1.02 | **0.90** | **0.94** | **0.85** |
+| f64 8T | 1.37 | 1.14 | 1.12 | 1.16 | 1.18 | 1.15 | 1.86 | 1.31 |
+| c64 1T | **0.98** | **0.83** | **0.73** | **0.77** | **0.68** | **0.59** | **0.74** | **0.73** |
+| c64 8T | **0.98** | **0.82** | **0.72** | 1.10 | 1.33 | **0.91** | 1.00 | 1.33 |
+
+The predeclared target (`svd_values/64` approaching 0.275 ms) lands at **0.296 ms against the vendor's
+0.254**: the values stage is at parity (0.126 vs ~0.13 ms, probe), the remaining 0.04 ms is the
+unblocked bidiagonalisation at 64 (0.17 ms), which the floor scan says is not helped by blocking.
+Real 512 and the tall shapes are faster than the vendor at one thread; complex is faster at one thread
+everywhere and at eight threads for 512. What is left above one thread is the panel's sequential part
+(13.6 of 19.5 ms at 512) and the tall path's threaded overhead (1024x64 at 8T, 1.86), both outside
+this unit.
