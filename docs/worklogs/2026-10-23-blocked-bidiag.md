@@ -193,3 +193,72 @@ and 64/128 did not move at this change (the gated run's 0.879/0.789).
 8T): a floor of 64 is flat and a floor of 32 makes 64 slower (0.17 -> 0.19 ms at 1T, 0.22 at 8T), so
 128 stays. The 64 cell's remaining distance to the vendor (0.296 vs 0.254 ms) is the unblocked loop's
 0.17 ms bidiagonalisation, not this unit.
+
+## The 8T gap, located (`5b2b5f9`)
+
+With the dqds unit in, `svd_values` 512 at eight threads was 25.8 ms against the vendor's 22.3 while the
+values stages were at parity (6.6 vs 6.9), so the whole gap was this stage's 19.5 against the vendor's
+15.6. Three hypotheses, each with a probe (`probes/gemv-threads`, diagnostic):
+
+| hypothesis | probe | result |
+| --- | --- | --- |
+| the short recurrence products pay `matmul` call overhead | one 512x16 vector product, `Par::Seq` | 1.2-1.3 us at 50-57 GB/s: bandwidth-bound in L2, nothing to remove |
+| the regions pay synchronisation | one 8-job region, held group vs plain | 1.75 us vs 4.0 us; 768 regions are 1.3 ms |
+| the power-of-two leading dimension aliases L1 sets | bidiag at n = 500, 512, 520; 512 with lda 520 and 528 | **500: 14.6, 512: 18.6, 520: 15.8; 512 at lda 520: 15.3 ms (8T)**; 1T 36.1 -> 33.5; 256: 5.3 -> 4.8 |
+
+A column stride that is a multiple of 1 KiB maps a row's entries onto a few L1 sets (one set at 4 KiB,
+n = 512 `f64`), and this stage gathers and scatters a row at every step; every campaign shape is a power
+of two. The SVD driver now allocates its work copy with 64 more bytes per column whenever the stride
+would be a multiple of 1 KiB and works on the top `m` rows (`work_rows` in `svd/mod.rs`); nothing else
+changes. Probe, caller holding the worker group: `svd_values` 512 8T 25.6 -> 22.1 ms (vendor 22.3), 1T
+43.3 -> 40.0 (vendor 48.0); `svd_thin` 512 8T 43.0 -> 37.5 (vendor 47.6).
+
+## Who holds the worker group (`01e741c`, `1850d9e`)
+
+`555d84f` held the spindle group inside `bidiag_in_place`. The maintainer's call: the lock is the
+caller's, as upstream's own benchmark does (it wraps everything in `with_lock` and the library never
+takes it), and as R-performance-11/14 place parallelism policy and session fixed costs with the caller's
+context. So the library takes no lock; `faer::spindle` is re-exported and the crate docs (*parallelism*),
+`Par::Rayon` and the README say to hold it. Nesting is allowed by spindle (a lock inside a lock borrows
+the outer group's workers) and already happens on every threaded product (the native gemm kernel takes
+one); the accidental double lock measured the same 22.2 ms as a single one. Without the lock this stage
+is 25.5 ms at 512, 8T instead of 19.2, so a caller that does not hold it keeps about two thirds of the
+gain.
+
+The campaign follows: `fbench` holds the group around a faer row's timed loop when the budget is more than
+one thread (`faer-benchmark` `a605778`), both faer rows alike, and the pin baseline was re-recorded under
+it (`20261023T112343Z-caller-lock-baseline`). The first candidate under it (`20261023T120538Z`,
+`01e741c`) found the fork's own problem: the block-apply split adopted on 2026-10-18 used raw rayon
+`par_chunks_mut` iterators, which find the pool's threads occupied by the held workers and run starved
+(`svd_values` 4096x256 8T at 1.83 of the vendor, from 1.31 without the lock). `1850d9e` routes them
+through `spindle::for_each` like every other region.
+
+## Final campaign measurement (`20261023T125347Z-blocked-dqds-caller-lock-2`, at `1850d9e`)
+
+Against `20261023T112343Z-caller-lock-baseline` (the pin `50c2b98`, same harness): `faer-upstream`
+control median 1.0027 over 384 cells, 0 outside their own range; **266 cells faster, 0 slower beyond 5%**.
+`svd_values`, median ratio over dtypes and orders:
+
+| | 32 | 64 | 96 | 128 | 256 | 512 | 1024x64 | 4096x256 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1T | 0.627 | **0.604** | 0.629 | 0.568 | 0.599 | 0.674 | 0.895 | 0.918 |
+| 4T | 0.627 | 0.604 | 0.628 | 0.666 | 0.672 | 0.621 | 0.728 | 0.628 |
+| 8T | 0.627 | 0.605 | 0.630 | 0.667 | 0.673 | **0.611** | 0.698 | **0.570** |
+
+`svd_thin`: 0.91 / 0.82 / 0.79 at 512 (1T / 4T / 8T), 0.58 and 0.51 at 4096x256 (4T, 8T), flat at 32-96.
+
+Against the vendor in the same run (`faer-fork` / `lapack-mkl`, F order, below 1 is faer faster):
+
+| `svd_values` | 32 | 64 | 96 | 128 | 256 | 512 | 1024x64 | 4096x256 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| f64 1T | 1.39 | 1.17 | 1.12 | 1.07 | **0.94** | **0.85** | **0.95** | **0.83** |
+| f64 4T | 1.38 | 1.16 | 1.11 | 1.09 | 1.03 | **0.91** | 1.06 | **0.93** |
+| f64 8T | 1.39 | 1.15 | 1.12 | 1.10 | 1.06 | **0.97** | 1.24 | 1.11 |
+| c64 1T | **0.99** | **0.84** | **0.76** | **0.75** | **0.68** | **0.60** | **0.74** | **0.76** |
+| c64 8T | **0.99** | **0.84** | **0.75** | 1.05 | 1.23 | **0.80** | **0.76** | 1.25 |
+
+Real 512 is faster than the vendor at every budget and 4096x256 at one and four threads; complex is
+faster at one thread everywhere and at eight threads for 512 and both tall shapes. What is left: the
+`svd_values/64` target at 0.298 against 0.255 ms (the unblocked loop's 0.17 ms bidiagonalisation; blocking
+does not help it), 32-128 by the same unblocked loop, and 8T at 256 and the tall shapes (1.06-1.25),
+where the sequential part of the panel and the tall path's own regions set the time.

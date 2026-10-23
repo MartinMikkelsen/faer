@@ -127,3 +127,10 @@ Real 512 and the tall shapes are faster than the vendor at one thread; complex i
 everywhere and at eight threads for 512. What is left above one thread is the panel's sequential part
 (13.6 of 19.5 ms at 512) and the tall path's threaded overhead (1024x64 at 8T, 1.86), both outside
 this unit.
+
+## Follow-up
+
+The numbers above were taken before the leading-dimension padding and the caller-held worker group
+(`docs/worklogs/2026-10-23-blocked-bidiag.md`, its last three sections). The final campaign run
+(`20261023T125347Z-blocked-dqds-caller-lock-2`) has `svd_values` at 0.60 of the pin at 64 and 0.61 at
+512, 8T; the values stage itself is unchanged since `c88f886`.
