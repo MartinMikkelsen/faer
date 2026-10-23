@@ -31,7 +31,9 @@ whole remaining column, so the trailing block is updated by **correction matrice
    up to date against the *already accumulated* correction columns with the two short products
    (`A(i:m,i) -= A(i:m,1:i-1) Y(i,1:i-1)^T`, `-= X(i:m,1:i-1) A(1:i-1,i)^T`, and the row analogue), then
    generate the column reflector and the row reflector, and build the two correction columns
-   `Y(i+1:n, i)` and `X(i+1:m, i)` from the same short products scaled by the reflector's scalar.
+   `Y(i+1:n, i)` and `X(i+1:m, i)` from the same short products, scaled by **`tl.recip()` and
+   `tr.recip()`** - faer stores `H = I - v v^H / tau` (`householder.rs`) and the current loop already
+   multiplies by reciprocals (`bidiag.rs:106,160,189,206`), while `Hl`/`Hr` keep `tl`/`tr` themselves.
 2. **Trailing update, once per panel, level-3.** `A22 -= V Y^T + X U^T`, where `V = A(i+ib:m, i:i+ib)`
    and `U = A(i:i+ib, i+ib:n)` are the reflector tails already stored in `A`, through two
    `linalg::matmul::matmul` calls with the caller's `par`.
@@ -52,16 +54,24 @@ its output, and `par_threshold`'s role, with one correction the review demanded:
 **full remaining dimensions**, and a panel-local decision must not latch `Par::Seq` onto the trailing
 update - the update keeps the caller's `par` for as long as the full remaining area clears the floor.
 
-The last, shorter panel and any input with `min(m, n) <= 128` keep the current per-`k` path, decided
-**in this file and mirrored in the scratch query**, so the small sizes are not merely arithmetically
-unchanged but also allocate what they allocate today. The guard for this change is that `svd_values` at
-64 and 128 does not move.
+**The loop predicate, stated exactly** because the stopping rule decides both the size floor and the
+tests: block while the *remaining* size `min(m - p, n - p) > 128` (strict), then run the existing per-`k`
+loop on the tail from that point; any input with `min(m, n) <= 128` never enters the blocked loop at all.
+The floor is decided **in this file and mirrored in the scratch query**, so the small sizes are not
+merely arithmetically unchanged but also allocate what they allocate today. The guard is that
+`svd_values` at 64 and 128 does not move.
+
+**Entering the tail.** The panel's two products have already updated the trailing block, so the unblocked
+tail must start with **fresh local indexing and no pending `y`/`z` pair** - the existing loop's
+`k > 0` branch consumes the previous step's pending pair (`bidiag.rs:87-103,111-116`), which would apply
+a second deferred update to a block that is already current. After that the tail keeps the existing
+per-step arithmetic unchanged, and the output factors are upgraded once at the end.
 
 **Scratch.** `bidiag_in_place_scratch` gains the two correction matrices, `X` (`m x ib`) and `Y`
-(`n x ib`), which live through the panel and its update, so no `any_of` sharing between them is
-available; the two trailing products can share their result. Every caller's computed size changes, and
-production callers already propagate a query (`svd/mod.rs`'s `svd_imp_scratch` and the tall path's
-reduction), so the change has to reach those. The two `matmul` calls allocate nothing; do not claim this
+(`n x ib`), which live through the panel and its update. No `any_of` sharing between them is available, and the two
+trailing products both accumulate directly into `A22`, so they need no result buffer. The scratch query
+grows and the existing production queries propagate the larger requirement (`svd/mod.rs`'s
+`svd_imp_scratch` and the tall path's reduction) - no caller change is implied. The two `matmul` calls allocate nothing; do not claim this
 plan removes the helpers' own allocations, because it does not use them for the update.
 
 **Rejected.**
@@ -71,9 +81,9 @@ plan removes the helpers' own allocations, because it does not use them for the 
 - A public block-size knob in `BidiagParams`. Nothing outside this file needs to choose it, and the two
   probe tables say the choice is flat between 16 and 64 on the update side and monotone on the panel
   side, so it is one internal constant plus one measurement.
-- Building a second compact-WY subsystem for the right-side reflectors. `upgrade_householder_factor`
-  and both `apply_block_householder_*` helpers already exist; the work is in matching their storage
-  conventions, not in new machinery.
+- Building a second compact-WY subsystem for the right-side reflectors. The revised update does not use
+  those helpers at all - `A22 -= V Y^T + X U^T` is two plain `matmul` calls - so there is no convention
+  to match and no subsystem to build.
 - A separate small-`K` GEMM workstream. The rank-32 update already runs at 31 GFLOP/s one thread and 186
   at eight (`probes/rankk`), so the kernel is not the limit here; that concern only exists if this
   change lands and the update share turns out larger than measured.
@@ -86,13 +96,17 @@ plan removes the helpers' own allocations, because it does not use them for the 
 - **A focused test that crosses panels.** The existing bidiag tests use sizes 4 and 8 and the SVD tests
   reach 150 at `Par::Seq`, so with a floor of 128 and a width of 32 none of them exercises two
   consecutive blocked panels plus the unblocked tail. Add one reconstruction test (real and complex)
-  at a size that does - `min(m, n)` around 200 with a rectangular twin - using the queried scratch,
-  both at `Par::Seq` and threaded.
-- **Predeclared measurement.** `svd_values` and `svd_thin` over `linalg-small/mid/tall` and the
-  `1024x64` / `4096x256` shapes, four dtypes, 1T/4T/8T, MKL arm, paired in one stack against the pin.
-  Target: bidiagonalisation at n=512 under 20 ms at one thread (from 42.9). Guards: `svd_values` at 64
-  and 128 does not move, and `eigh`, `qr_factor` and `gemm` cells stay inside the recorded spread. The
-  unchanged `faer-upstream` row is the machine check.
+  at a size the loop predicate above actually blocks - `min(m, n)` at 300 and a rectangular twin, since
+  200 is only one panel - using the queried scratch, and for the threaded case **set
+  `par_threshold = 0`**: with the default `192 * 256`, a `199^2` trailing area stays under the floor and
+  the threaded call would test sequential work.
+- **Predeclared measurement, with the gate where the expectation is.** The expectation is an eight-thread
+  scaling gain, so the **primary gate is `svd_values` at 512, 8T: under 20 ms (from 49.1)**, and the
+  one-thread figure is a **guard, not a target**: it must stay within the recorded spread rather than
+  reach a number. Case list unchanged: `svd_values` and `svd_thin` over `linalg-small/mid/tall` plus the
+  `1024x64` and `4096x256` shapes, four dtypes, 1T/4T/8T, MKL arm, paired in one stack against the pin;
+  `svd_values` at 64 and 128 must not move; `eigh`, `qr_factor` and `gemm` are the collateral controls;
+  the unchanged `faer-upstream` row is the machine check.
 - **The block width and the size floor are measured, not chosen.** Both come from the first arm: if
   `ib = 32` and a floor of 128 leave the 64/128 guards unmoved and 512 improved, that is what the
   constant becomes; if the panel work turns out to dominate (the vendor's own blocked `?gebrd` suggests
