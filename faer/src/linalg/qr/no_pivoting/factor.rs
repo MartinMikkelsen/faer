@@ -5110,4 +5110,52 @@ mod tests {
 		let QR = A.qr().reconstruct();
 		assert!(QR ~ A);
 	}
+
+	/// A column block of exactly zero columns retains no reflectors, so it has no trailing update
+	/// to make. `A1.ncols() > 0` used to be the only condition there, so the block reached the
+	/// block Householder apply with an empty basis, whose row split took `N * K = 0` as its chunk
+	/// size and panicked in rayon -- [tensor4all/faer#51](https://github.com/tensor4all/faer/issues/51).
+	/// The threaded factorization must produce the sequential one.
+	#[test]
+	fn zero_column_block_does_not_panic_with_threads() {
+		let pool = rayon::ThreadPoolBuilder::new()
+			.num_threads(2)
+			.build()
+			.unwrap();
+		let (m, n, zero, block_size) = (256usize, 96usize, 32usize, 32usize);
+		let mut s = 12345u64;
+		let a = Mat::<f64>::from_fn(m, n, |_, j| {
+			s = s
+				.wrapping_mul(6364136223846793005)
+				.wrapping_add(1442695040888963407);
+			if j < zero {
+				0.0
+			} else {
+				(s >> 11) as f64 / (1u64 << 53) as f64 - 0.5
+			}
+		});
+		let factor = |par: Par| {
+			let mut qr = a.cloned();
+			let mut h = Mat::<f64>::zeros(block_size, n);
+			let info = qr_in_place(
+				qr.as_mut(),
+				h.as_mut(),
+				par,
+				MemStack::new(&mut MemBuffer::new(
+					qr_in_place_scratch::<f64>(m, n, block_size, par, default()),
+				)),
+				default(),
+			);
+			(info, qr)
+		};
+		let approx_eq = CwiseMat(ApproxEq {
+			abs_tol: 1e-10,
+			rel_tol: 1e-10,
+		});
+		let (info_seq, qr_seq) = factor(Par::Seq);
+		let (info_par, qr_par) = pool.install(|| factor(Par::rayon(2)));
+		assert!(info_seq.rank == n - zero);
+		assert!(info_par.rank == info_seq.rank);
+		assert!(qr_par.as_ref() ~ qr_seq.as_ref());
+	}
 }
