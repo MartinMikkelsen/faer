@@ -29,6 +29,8 @@ pub fn bidiag_in_place_scratch<T: ComplexField>(
 	let tail = StackReq::all_of(&[
 		temp_mat_scratch::<T>(nrows, 1),
 		temp_mat_scratch::<T>(ncols, 1),
+		temp_mat_scratch::<T>(ncols, 1),
+		temp_mat_scratch::<T>(ncols, 1),
 	]);
 	if Ord::min(nrows, ncols) > BLOCK_FLOOR {
 		// the correction matrices live through a panel and its trailing update, and are dead
@@ -470,6 +472,12 @@ fn bidiag_blocked_panel<T: ComplexField>(
 /// the unblocked bidiagonalization of `A`, one reflector pair per step with the trailing update
 /// deferred by one step and fused with the next step's product. `row_offset` is `A`'s row
 /// position in the matrix it is a tail of, used only as a SIMD alignment hint.
+///
+/// the row of each step lives in a contiguous buffer while it is worked on: a row of `A` has a
+/// stride of `m`, and the deferred update, the norm, the scaling, the right reflector and the
+/// inner product each walk it once. `w` holds the current row (columns `k + 1..`), `wp` the
+/// previous step's row reflector, which the deferred update and the fused product read; the row
+/// is gathered once at the start of the step and scattered back once at its end.
 fn bidiag_unblocked<T: ComplexField>(
 	A: MatMut<'_, T>,
 	Hl: RowMut<'_, T>,
@@ -485,15 +493,18 @@ fn bidiag_unblocked<T: ComplexField>(
 	alloca!('stack: {
 		let mut y = unsafe { row![uninit::<T>, n] };
 		let mut z = unsafe { col![uninit::<T>, m] };
+		let mut w0 = unsafe { row![uninit::<T>, n] };
+		let mut w1 = unsafe { row![uninit::<T>, n] };
 	});
 	let mut A = A;
 	let mut Hl = Hl;
 	let mut Hr = Hr;
 	let mut par = par;
+	let mut w = w0.rb_mut();
+	let mut wp = w1.rb_mut();
 	for k in 0..size {
 		let mut A = A.rb_mut();
-		let (_, A01, A10, A11) = A.rb_mut().split_at_mut(k, k);
-		let (_, A02) = A01.split_first_col().unwrap();
+		let (_, _, A10, A11) = A.rb_mut().split_at_mut(k, k);
 		let (A10, A20) = A10.split_first_row_mut().unwrap();
 		let (mut A11, A12, A21, mut A22) = A11.split_at_mut(1, 1);
 		let mut A12 = A12.row_mut(0);
@@ -501,18 +512,21 @@ fn bidiag_unblocked<T: ComplexField>(
 		let a11 = &mut A11[(0, 0)];
 		let (y1, mut y2) = y.rb_mut().split_at_col_mut(k).1.split_at_col_mut(1);
 		let (z1, mut z2) = z.rb_mut().split_at_row_mut(k).1.split_at_row_mut(1);
+		// the row of this step, contiguous, and the previous step's row reflector
+		let mut wk = w.rb_mut().split_at_col_mut(k + 1).1;
+		wk.copy_from(A12.rb());
+		let vp = wp.rb().split_at_col(k + 1).1;
 		if k > 0 {
 			let ref y1 = y1[0].copy();
 			let ref z1 = z1[0].copy();
 			let k1 = k - 1;
 			let ref up0 = A10[k1];
 			let up = A20.rb().col(k1);
-			let vp = A02.rb().row(k1);
 			*a11 -= up0 * y1 + z1;
 			z!(A21.rb_mut(), up.rb(), z2.rb()).for_each(
 				|uz!(a, u, z): Zip!(&mut T, &T, &T)| *a -= u * y1 + z,
 			);
-			z!(A12.rb_mut(), y2.rb(), vp.rb()).for_each(
+			z!(wk.rb_mut(), y2.rb(), vp).for_each(
 				|uz!(a, y, v): Zip!(&mut T, &T, &T)| {
 					*a -= up0 * y + z1 * v;
 				},
@@ -528,7 +542,6 @@ fn bidiag_unblocked<T: ComplexField>(
 		if k > 0 {
 			let k1 = k - 1;
 			let up = A20.rb().col(k1);
-			let vp = A02.row(k1);
 			match par {
 				Par::Seq => bidiag_fused_op(
 					A22.rb_mut(),
@@ -536,7 +549,7 @@ fn bidiag_unblocked<T: ComplexField>(
 					up.rb(),
 					z2.rb(),
 					y2.rb_mut(),
-					vp.rb(),
+					vp,
 					simd_align(row_offset + k + 1),
 				),
 				#[cfg(feature = "rayon")]
@@ -573,47 +586,49 @@ fn bidiag_unblocked<T: ComplexField>(
 				par,
 			);
 		}
-		z!(y2.rb_mut(), A12.rb_mut()).for_each(|uz!(y, a)| {
+		z!(y2.rb_mut(), wk.rb_mut()).for_each(|uz!(y, a)| {
 			*y = (&*y + &*a).mul_real(tl_inv);
 			*a -= &*y;
 		});
-		let norm = A12.rb().norm_l2();
+		// a row whose norm is below the smallest normal number is a zero row for the reflector
+		// (`make_householder_in_place` treats such a tail as zero): its reciprocal would overflow
+		// and scale the row to infinities and NaNs, so it is left unscaled with a norm of one
+		let norm = {
+			let norm = wk.rb().norm_l2();
+			if norm >= min_positive() { norm } else { one() }
+		};
 		let ref norm_inv = norm.recip();
-		if norm != zero() {
-			z!(A12.rb_mut()).for_each(|uz!(a)| *a = a.mul_real(norm_inv));
+		if norm != one() {
+			z!(wk.rb_mut()).for_each(|uz!(a)| *a = a.mul_real(norm_inv));
 		}
 		matmul(
 			z2.rb_mut(),
 			Accum::Replace,
 			A22.rb(),
-			A12.rb().adjoint(),
+			wk.rb().adjoint(),
 			one(),
 			par,
 		);
 		if k + 1 == size {
+			A12.copy_from(wk.rb());
 			break;
 		}
-		let (mut A12_a, mut A12_b) = A12.rb_mut().split_at_col_mut(1);
+		let (mut wk_a, mut wk_b) = wk.rb_mut().split_at_col_mut(1);
 		let A22_a = A22.rb().col(0);
 		let (y2_a, y2_b) = y2.rb().split_at_col(1);
 		let y2_a = &y2_a[0];
-		let a12_a = &mut A12_a[0];
+		let a12_a = &mut wk_a[0];
 		let HouseholderInfo {
 			tau: tr,
 			head_with_beta_inv: m,
 			..
-		} = make_householder_in_place(a12_a, A12_b.rb_mut().transpose_mut());
+		} = make_householder_in_place(a12_a, wk_b.rb_mut().transpose_mut());
 		let ref tr_inv = tr.recip();
 		Hr[k] = tr.to_cplx();
 		let beta = a12_a.copy();
 		*a12_a = a12_a.mul_real(norm);
 		let ref b = y2_a
-			+ dot::inner_prod(
-				y2_b,
-				Conj::No,
-				A12_b.rb().transpose(),
-				Conj::Yes,
-			);
+			+ dot::inner_prod(y2_b, Conj::No, wk_b.rb().transpose(), Conj::Yes);
 		if m != infinity() {
 			z!(z2.rb_mut(), A21.rb(), A22_a.rb()).for_each(
 				|uz!(z, u, a): Zip!(&mut T, &T, &T)| {
@@ -631,6 +646,10 @@ fn bidiag_unblocked<T: ComplexField>(
 				},
 			);
 		}
+		// the row goes back into `A`, where it is the stored right reflector; the next step reads
+		// it from `wp`
+		A12.copy_from(wk.rb());
+		core::mem::swap(&mut w, &mut wp);
 	}
 }
 fn bidiag_fused_op<T: ComplexField>(
