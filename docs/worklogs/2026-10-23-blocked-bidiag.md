@@ -113,3 +113,55 @@ plan removes the helpers' own allocations, because it does not use them for the 
   it can), the record says so and the change is dropped rather than tuned.
 - **Not claimed:** that this closes the 512 gap to the vendor. Two thirds of that gap is this stage's
   *scaling*, and the remaining third is the values kernel (`docs/worklogs/2026-10-23-dqds-values-only.md`).
+
+## Implementation and what the breakdown said (`555d84f`)
+
+Implemented as designed, plus two things a per-step breakdown (temporary timers in the panel,
+`probes/svd-phases`, n = 512, diagnostic) found that the design did not predict:
+
+| stage of one step | 1T, as designed | 8T, as designed | 8T, after the two fixes |
+| --- | --- | --- | --- |
+| `A^H u` product (threaded) | 10.3 | 6.5 | 2.7 |
+| `A r^H` product (threaded) | 10.6 | 7.5 | 3.7 |
+| row update + right reflector (sequential) | 10.8 | 11.1 | 6.2 |
+| short recurrence products (sequential) | 6.6 | 6.5 | 5.1 |
+| trailing update, per panel | 5.4 | 1.4 | 1.2 |
+| unblocked tail (128) | 1.4 | 1.4 | 1.4 |
+| **whole bidiagonalisation** | **45.8** | **35.2** | **21.6** (ib = 32); **19.5** (ib = 16) |
+
+1. **The row is strided.** A row of `A` has a stride of `m` elements (4 KiB at n = 512), and
+   `matmul`'s vector paths require a contiguous destination or vector, so the row update fell to the
+   general kernel and the right reflector's norm ran as a strided reduction: 15 ms at any budget. Each
+   row is now gathered once into a contiguous buffer, updated, reflected and used as the vector of the
+   `X` products there, and scattered back once (10.8 -> 6.2 ms).
+2. **The worker group was not held.** `faer` never calls `spindle::with_lock`, and without it
+   `spindle::for_each` is a plain rayon fork/join per region: workers are woken for each of the two
+   products per step and get an arbitrary chunk each time. The blocked phase now runs inside
+   `with_lock(nthreads)`: the workers spin between regions and thread `k` keeps column range `k` of the
+   trailing block across them, so the block stays in that core's L2. The two products went from
+   10.3/10.6 ms to 2.7/3.7 ms at eight threads. This is a threading-policy point for the maintainer:
+   it is the substrate's own API for exactly this pattern, and it is the first use of it in the fork.
+
+The block width and the floor were then scanned with both fixes in (min of 3, ms):
+
+| ib, floor | 256 1T | 512 1T | 1024 1T | 256 8T | 512 8T | 1024 8T |
+| --- | --- | --- | --- | --- | --- | --- |
+| unblocked (today) | 5.9 | 42.9 | 315 | 6.7 | 34.5 | - |
+| 32, 128 | 5.9 | 39.5 | 291 | 6.1 | 21.6 | 90 |
+| 16, 128 | **5.4** | **37.2** | **282** | **5.5** | **19.5** | **83** |
+| 8, 128 | 5.2 | 35.8 | 283 | 5.6 | 19.9 | 86 |
+| 48, 128 | 6.3 | 42.1 | 308 | 6.6 | 23.9 | 103 |
+| 16, 96 / 16, 64 | 5.3 | 37.0 | 283 | 5.5 | 19.2 | 83 |
+
+8-16 is flat, 32 and 48 lose on the recurrence side, and the floor does not matter between 64 and
+128; the constants are `BLOCK_SIZE = 16`, `BLOCK_FLOOR = 128` (the floor the guards were declared
+on). The 1T figure moved after all (42.9 -> 37.2), because the strided row cost was also in the
+unblocked loop's budget and the gather pays for itself.
+
+What remains sequential at eight threads is 13.6 of 19.5 ms: the short recurrence products (five
+to eight vector products of `n x i` per step, bandwidth-bound in L2), the row gather and scatter, and
+the tail. The vendor's blocked `?gebrd` is at 15.6 ms on the same host and size.
+
+## Campaign measurement
+
+(filled in below from `20261023T091426Z-blocked-bidiag` against the pin baseline.)
