@@ -15,6 +15,11 @@ blast-radius acceptance grid, the measure-once rule and the exact commands.
 Before performance work: [PERFORMANCE_TIPS.md](PERFORMANCE_TIPS.md) — the lessons that carry
 over between changes (strided rows, leading-dimension aliasing, the caller-held worker group, dqds).
 
+The optimisation workflow is the skill [skills/faer-optimization/SKILL.md](skills/faer-optimization/SKILL.md)
+(the one copy; `.claude/skills`, `.codex/skills`, `.opencode/skills`, `.pi/skills` and `.dsh/skills`
+link to it): breakdown first, hypothesis probes, one change per commit, the campaign arm, the
+provenance rule for proprietary yardsticks.
+
 
 ## Repository-specific rules
 
