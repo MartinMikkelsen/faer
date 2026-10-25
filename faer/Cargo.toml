@@ -23,7 +23,7 @@ libm = { version = "0.2.15", default-features = false }
 spindle = { version = "0.2.6", optional = true }
 rayon = { version = "1.11.0", optional = true }
 # experimental (exp/team-par): run the parallel regions on a threadteam team, see src/utils/team.rs
-threadteam = { git = "https://github.com/tensor4all/threadteam-rs", rev = "b99e91305102ac27f8d93cf0af0c10e66e39caf0", default-features = false, features = ["parallel"], optional = true }
+threadteam = { git = "https://github.com/tensor4all/threadteam-rs", rev = "292ac194a1b9bd45f368184c573d4c65264d0b4a", default-features = false, features = ["parallel"], optional = true }
 log = { version = "0.4.29", optional = true }
 rand = { version = "0.9.2", optional = true }
 rand_distr = { version = "0.5.1", optional = true }
