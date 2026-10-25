@@ -924,7 +924,14 @@ impl Conj {
 		}
 	}
 }
-/// determines the parallelization configuration
+/// determines the parallelization configuration, and carries the right to execute with it
+///
+/// `Par` is neither `Copy` nor `Clone`: a `Team` owns exclusive authority over reserved
+/// threads, so a duplicate could hand the same threads to two concurrent children. Every
+/// function that runs work takes `Par` by value; a caller that needs another phase lends the
+/// parallelism with [`Par::reborrow`], and concurrent children are created by splitting
+/// (see `utils::thread::split`), never by copying. Queries that only need the size (workspace
+/// requirements, thresholds) use [`ParShape`] or [`Par::degree`].
 #[derive(Debug)]
 pub enum Par<'team> {
 	/// sequential, non portable across different platforms
@@ -933,12 +940,12 @@ pub enum Par<'team> {
 	/// different platforms
 	#[cfg(feature = "rayon")]
 	Rayon(NonZeroUsize),
-	/// experimental: parallelized on the threadteam team installed on the calling
-	/// thread with [`utils::team::with_team`], using at most this many participants
-	/// (the leader included). Without an installed team, or with a width of one,
-	/// the operation runs sequentially.
+	/// experimental: parallelized on the reserved members of a threadteam team. The value is
+	/// the exclusive authority over them for as long as it lives; the number of participants is
+	/// the size of the team.
 	#[cfg(feature = "threadteam")]
-	Team(NonZeroUsize),
+	Team(threadteam::TeamExec<'team>),
+	#[cfg(not(feature = "threadteam"))]
 	#[doc(hidden)]
 	__Lifetime(core::convert::Infallible, core::marker::PhantomData<&'team ()>),
 }
@@ -1002,7 +1009,8 @@ impl Par<'_> {
 			#[cfg(feature = "rayon")]
 			Par::Rayon(n) => Par::Rayon(*n),
 			#[cfg(feature = "threadteam")]
-			Par::Team(n) => Par::Team(*n),
+			Par::Team(team) => Par::Team(team.reborrow()),
+			#[cfg(not(feature = "threadteam"))]
 			Par::__Lifetime(never, _) => match *never {},
 		}
 	}
@@ -1010,21 +1018,15 @@ impl Par<'_> {
 	/// the shape of this parallelism, without the right to execute with it
 	#[inline]
 	pub fn shape(&self) -> ParShape {
-		match *self {
+		match self {
 			Par::Seq => ParShape::Seq,
 			#[cfg(feature = "rayon")]
-			Par::Rayon(n) => ParShape::Rayon(n),
+			Par::Rayon(n) => ParShape::Rayon(*n),
 			#[cfg(feature = "threadteam")]
-			Par::Team(n) => ParShape::Team(n),
-			Par::__Lifetime(never, _) => match never {},
+			Par::Team(team) => ParShape::Team(team.size()),
+			#[cfg(not(feature = "threadteam"))]
+			Par::__Lifetime(never, _) => match *never {},
 		}
-	}
-
-	/// returns `Par::Team(nthreads)`, with zero treated as one
-	#[inline]
-	#[cfg(feature = "threadteam")]
-	pub fn team(nthreads: usize) -> Self {
-		Self::Team(NonZeroUsize::new(nthreads.max(1)).unwrap())
 	}
 
 	/// returns `Par::Rayon(nthreads)` if `nthreads` is non-zero, or
@@ -1201,8 +1203,6 @@ impl<T> Scale<T> {
 /// n >= 2: `Rayon(n - 2)`
 ///
 /// default: `Rayon(0)`
-#[cfg(feature = "threadteam")]
-const TEAM_GLOBAL: usize = 1 << (usize::BITS - 1);
 static GLOBAL_PARALLELISM: AtomicUsize = {
 	#[cfg(all(not(miri), feature = "rayon"))]
 	{
@@ -1218,14 +1218,20 @@ pub fn disable_global_parallelism() {
 	GLOBAL_PARALLELISM.store(0, core::sync::atomic::Ordering::Relaxed);
 }
 /// sets the global parallelism settings.
+///
+/// # panics
+/// panics for `Par::Team`: a team is exclusive authority over reserved threads and cannot be
+/// a process wide setting.
+#[track_caller]
 pub fn set_global_parallelism(par: Par) {
 	let value = match par {
 		Par::Seq => 1,
 		#[cfg(feature = "rayon")]
 		Par::Rayon(n) => n.get().saturating_add(2),
-		// the width is global, the team itself is the one installed on the calling thread
 		#[cfg(feature = "threadteam")]
-		Par::Team(n) => TEAM_GLOBAL | n.get(),
+		Par::Team(_) => panic!("a team cannot be the global parallelism"),
+		#[cfg(not(feature = "threadteam"))]
+		Par::__Lifetime(never, _) => match never {},
 	};
 	GLOBAL_PARALLELISM.store(value, core::sync::atomic::Ordering::Relaxed);
 }
@@ -1239,8 +1245,6 @@ pub fn get_global_parallelism() -> Par<'static> {
 	match value {
 		0 => panic!("Global parallelism is disabled."),
 		1 => Par::Seq,
-		#[cfg(feature = "threadteam")]
-		n if n & TEAM_GLOBAL != 0 => Par::team(n & !TEAM_GLOBAL),
 		#[cfg(feature = "rayon")]
 		n => Par::rayon(n - 2),
 		#[cfg(not(feature = "rayon"))]

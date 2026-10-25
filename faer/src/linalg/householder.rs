@@ -627,27 +627,6 @@ fn apply_block_householder_on_the_left_in_place_generic<
 		{
 			n_tasks = 1;
 		}
-		let inner_parallelism = match par {
-			Par::Seq => Par::Seq,
-			#[cfg(feature = "rayon")]
-			Par::Rayon(par) => {
-				let par = par.get();
-				if par >= 2 * n_tasks {
-					Par::rayon(par / n_tasks)
-				} else {
-					Par::Seq
-				}
-			},
-			#[cfg(feature = "threadteam")]
-			Par::Team(par) => {
-				let par = par.get();
-				if par >= 2 * n_tasks {
-					Par::team(par / n_tasks)
-				} else {
-					Par::Seq
-				}
-			},
-		};
 		// The reduction `tmp = V^H C` has an `N x K` output and reduces over every row of the
 		// target. The products below are good at that while the output is wide; with `N` small and
 		// the target long they are one serial reduction inside one task, so the column split cannot
@@ -807,7 +786,7 @@ fn apply_block_householder_on_the_left_in_place_generic<
 			);
 		};
 		if n_tasks <= 1 {
-			func((tmp.as_dyn_cols_mut(), matrix.as_dyn_cols_mut()), inner_parallelism);
+			func((tmp.as_dyn_cols_mut(), matrix.as_dyn_cols_mut()), par);
 			return;
 		} else {
 			#[cfg(feature = "rayon")]

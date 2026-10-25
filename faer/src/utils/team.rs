@@ -1,33 +1,21 @@
-//! Experimental route of the parallel regions onto a threadteam team
-//! (feature `threadteam`, `Par::Team(n)`).
+//! The route of the parallel regions onto a threadteam team (feature `threadteam`).
 //!
-//! # Design of the prototype
+//! A `Par::Team(TeamExec)` is the exclusive authority over the reserved members of a team. The
+//! functions here consume that authority (or lend it for the call), so the type system, not a
+//! thread local, decides who may dispatch to the members:
 //!
-//! `Par` is `Copy` and carries no lifetime, so a team token cannot travel inside it.
-//! The prototype keeps the authority on the calling thread instead: [`with_team`] turns an
-//! `Exec` minted from a `threadteam::Team` into a scoped [`TeamExec`] and installs a pointer to
-//! it in a thread local; `Par::Team(n)` asks for at most `n` participants of the team installed
-//! on the *current* thread.
-//!
-//! * Flat sections ([`run`]): every participant runs a closure at once. The installed pointer is
-//!   cleared on the leader for the duration, so a body that calls back into faer with
-//!   `Par::Team` runs sequentially instead of re-entering the team.
-//! * Splits ([`fork`], [`split`]): a child leader installs its own sub-team for the duration of
-//!   its callback, so nested `Par::Team(k)` regions (the halves of `join_raw`, the inner
-//!   products of a column split) run on the child's members.
-//! * No installed team, or a team of one: everything runs inline on the caller.
-//!
-//! The target design is a lifetime-carrying `Par<'team>`; this is the smallest change that puts
-//! the measured paths on the team without touching every signature of the crate.
+//! * flat sections ([`run`]): every participant runs a closure at once; the team is consumed;
+//! * splits and forks ([`fork`], [`for_each_child`]): each child is a `TeamExec` of its own,
+//!   handed to the callback that runs on its leader, concurrently with its siblings;
+//! * a team of one runs everything inline on the caller.
 //!
 //! Nothing here starts a Rayon job: the team members are threadteam members that spin while the
 //! reservation is held, and the section dispatch is a write to their slots.
 
-use core::cell::{Cell, UnsafeCell};
-use core::ptr::null_mut;
+use core::cell::UnsafeCell;
 use rayon::iter::plumbing::{Producer, ProducerCallback};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator};
-use threadteam::{Exec, TeamExec};
+use threadteam::TeamExec;
 
 /// Optional counters of how the team regions were dispatched, for probes that ask "did the
 /// parallel path engage at this size". Off by default (one relaxed load per region).
@@ -85,57 +73,9 @@ pub mod stats {
 	}
 }
 
-thread_local! {
-	static CURRENT: Cell<*mut TeamExec<'static>> = const { Cell::new(null_mut()) };
-}
-
-struct Restore(*mut TeamExec<'static>);
-impl Drop for Restore {
-	fn drop(&mut self) {
-		CURRENT.with(|c| c.set(self.0));
-	}
-}
-
-fn install(p: *mut TeamExec<'static>) -> Restore {
-	Restore(CURRENT.with(|c| c.replace(p)))
-}
-
-/// Runs `f` with the team of `exec` installed on the calling thread, so that `Par::Team(n)`
-/// regions started from `f` run on it. `exec` should come from `threadteam::Team::exec`
-/// (a token that carries members); with a serial or pool token the regions run inline.
-pub fn with_team<R>(exec: &mut Exec<'_>, f: impl FnOnce() -> R) -> R {
-	let mut f = Some(f);
-	let r = exec.team(|mut team| {
-		let _guard = install(
-			(&mut team as *mut TeamExec<'_>).cast::<TeamExec<'static>>(),
-		);
-		(f.take().unwrap())()
-	});
-	match r {
-		Ok(r) => r,
-		Err(_) => (f.take().unwrap())(),
-	}
-}
-
-/// Number of participants `Par::Team(n)` can use right now on this thread.
-pub fn available(n: usize) -> usize {
-	let p = CURRENT.with(|c| c.get());
-	if p.is_null() {
-		1
-	} else {
-		n.max(1).min(unsafe { (*p).size().get() })
-	}
-}
-
-/// Runs `f(i, m)` on `m = min(n, team size)` participants at once; inline `f(0, 1)` when the
-/// team is absent or `m == 1`.
-pub fn run(n: usize, f: &(dyn Fn(usize, usize) + Sync)) {
-	let p = CURRENT.with(|c| c.get());
-	if p.is_null() || n <= 1 {
-		stats::hist(&stats::RUN, 1);
-		return f(0, 1);
-	}
-	let team = unsafe { &mut *p };
+/// Runs `f(i, m)` on `m = min(n, team size)` participants at once; inline `f(0, 1)` when
+/// `m == 1`. The team is consumed; members the section does not use stay parked.
+pub(crate) fn run(team: TeamExec<'_>, n: usize, f: &(dyn Fn(usize, usize) + Sync)) {
 	let size = team.size().get();
 	let m = n.min(size);
 	if m <= 1 {
@@ -143,65 +83,13 @@ pub fn run(n: usize, f: &(dyn Fn(usize, usize) + Sync)) {
 		return f(0, 1);
 	}
 	stats::hist(&stats::RUN, m);
-	let _guard = install(null_mut());
 	if m == size {
-		team.reborrow().run(|i, k| f(i, k));
+		team.run(|i, k| f(i, k));
 	} else {
-		let _ = team.reborrow().split(&[m], |_c, child| {
+		let _ = team.split(&[m], |_c, child| {
 			child.run(|i, k| f(i, k));
 		});
 	}
-}
-
-/// Splits the installed team into `children = min(children, team size)` equal parts and runs
-/// `f(c, children, width)` on the leader of part `c`, with that part installed as the current
-/// team. Without a team the parts run one after the other on the caller with `width == 1`.
-pub fn fork(children: usize, f: &(dyn Fn(usize, usize, usize) + Sync)) {
-	if children == 0 {
-		return;
-	}
-	let p = CURRENT.with(|c| c.get());
-	if p.is_null() || children == 1 {
-		stats::hist(&stats::SPLIT, 1);
-		for c in 0..children {
-			f(c, children, 1);
-		}
-		return;
-	}
-	let team = unsafe { &mut *p };
-	let k = children.min(team.size().get());
-	stats::hist(&stats::SPLIT, k);
-	team.reborrow().fork(k, |c, mut child| {
-		let width = child.size().get();
-		let _guard = install(
-			(&mut child as *mut TeamExec<'_>).cast::<TeamExec<'static>>(),
-		);
-		f(c, k, width);
-	});
-}
-
-/// Splits the installed team into parts of the given widths (their sum must not exceed the team
-/// size) and runs `f(c, width)` on the leader of part `c`. Falls back to running the parts one
-/// after the other with `width == 1` when no team is installed or it is too small.
-pub fn split(sizes: &[usize], f: &(dyn Fn(usize, usize) + Sync)) {
-	let p = CURRENT.with(|c| c.get());
-	let total: usize = sizes.iter().sum();
-	if p.is_null() || unsafe { (*p).size().get() } < total || sizes.contains(&0) {
-		stats::hist(&stats::SPLIT, 1);
-		for c in 0..sizes.len() {
-			f(c, 1);
-		}
-		return;
-	}
-	stats::hist(&stats::SPLIT, sizes.len());
-	let team = unsafe { &mut *p };
-	let _ = team.reborrow().split(sizes, |c, mut child| {
-		let width = child.size().get();
-		let _guard = install(
-			(&mut child as *mut TeamExec<'_>).cast::<TeamExec<'static>>(),
-		);
-		f(c, width);
-	});
 }
 
 struct Slots<T>(Vec<UnsafeCell<Option<T>>>);
@@ -226,8 +114,25 @@ impl<T: Send> ProducerCallback<T> for Collect<'_, T> {
 /// The team version of `spindle::for_each`: the items of `iter` are dealt out in contiguous
 /// static blocks over `min(n_jobs, items, team size)` parts (the same static distribution the
 /// spindle region uses), each part processed by the leader of a sub-team.
-pub fn for_each<T: Send, I>(n_jobs: usize, iter: I, f: impl Sync + Fn(T))
-where
+pub(crate) fn for_each<T: Send, I>(
+	team: TeamExec<'_>,
+	n_jobs: usize,
+	iter: I,
+	f: impl Sync + Fn(T),
+) where
+	I: IntoParallelIterator<Item = T>,
+	I::Iter: IndexedParallelIterator,
+{
+	for_each_child(team, n_jobs, iter, |item, _child| f(item))
+}
+
+/// [`for_each`] whose closure also receives the sub-team of its block, lent for the call.
+pub(crate) fn for_each_child<T: Send, I>(
+	team: TeamExec<'_>,
+	n_jobs: usize,
+	iter: I,
+	f: impl Sync + for<'c> Fn(T, TeamExec<'c>),
+) where
 	I: IntoParallelIterator<Item = T>,
 	I::Iter: IndexedParallelIterator,
 {
@@ -239,13 +144,14 @@ where
 		return;
 	}
 	let slots = Slots(items.into_iter().map(|x| UnsafeCell::new(Some(x))).collect());
-	let jobs = n_jobs.max(1).min(len);
-	fork(jobs, &|c, count, _width| {
-		let (start, n) = super::thread::par_split_indices(len, c, count);
+	let jobs = n_jobs.max(1).min(len).min(team.size().get());
+	stats::hist(&stats::SPLIT, jobs);
+	team.fork(jobs, |c, mut child| {
+		let (start, n) = super::thread::par_split_indices(len, c, jobs);
 		for j in start..start + n {
 			// SAFETY: block `c` owns slots `start..start + n` alone.
 			let item = unsafe { slots.take(j) };
-			f(item);
+			f(item, child.reborrow());
 		}
 	});
 }
@@ -322,7 +228,7 @@ fn grain_range(len: usize, parts: usize, idx: usize, grain: usize) -> (usize, us
 /// As `gemm::gemm`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn gemm_tiled<E: 'static + Copy + Send + Sync>(
-	nt: usize,
+	team: TeamExec<'_>,
 	m: usize,
 	n: usize,
 	k: usize,
@@ -364,7 +270,7 @@ pub(crate) unsafe fn gemm_tiled<E: 'static + Copy + Send + Sync>(
 			gemm::Parallelism::None,
 		)
 	};
-	let nt = available(nt);
+	let nt = team.size().get();
 	let work = m.saturating_mul(n).saturating_mul(k);
 	if nt <= 1 || work < gemm::get_threading_threshold() {
 		stats::bump(&stats::GEMM_BELOW_FLOOR);
@@ -381,7 +287,7 @@ pub(crate) unsafe fn gemm_tiled<E: 'static + Copy + Send + Sync>(
 		SendPtr(lhs as *mut E),
 		SendPtr(rhs as *mut E),
 	);
-	run(pm * pn, &|i, parts| {
+	run(team, pm * pn, &|i, parts| {
 		// `parts == pm * pn` unless the team is narrower, then the tiles are dealt round robin
 		let mut t = i;
 		while t < pm * pn {
@@ -415,6 +321,13 @@ mod tests {
 			.unwrap()
 			.into_team(width)
 			.expect("an idle pool")
+	}
+
+	/// Runs `f` with the authority over a team of `width` participants.
+	fn with_par<R>(width: usize, f: impl FnOnce(Par<'_>) -> R) -> R {
+		let team = team_of(width);
+		let mut exec = team.exec(width);
+		exec.team(|team| f(Par::Team(team))).ok().expect("a team token")
 	}
 
 	fn rand_mat(m: usize, n: usize, seed: u64) -> Mat<f64> {
@@ -463,9 +376,7 @@ mod tests {
 
 	#[test]
 	fn gemm_on_the_team_matches_sequential() {
-		let team = team_of(6);
-		let mut exec = team.exec(6);
-		with_team(&mut exec, || {
+		with_par(6, |mut par| {
 			for &(m, n, k) in &[(512, 512, 512), (257, 301, 129), (4096, 64, 64), (64, 4096, 64), (1000, 33, 500)] {
 				let a = rand_mat(m, k, 1);
 				let b = rand_mat(k, n, 2);
@@ -473,7 +384,7 @@ mod tests {
 					let mut want = rand_mat(m, n, 3);
 					let mut got = want.clone();
 					matmul(want.as_mut(), beta, a.as_ref(), b.as_ref(), 1.5, Par::Seq);
-					matmul(got.as_mut(), beta, a.as_ref(), b.as_ref(), 1.5, Par::team(6));
+					matmul(got.as_mut(), beta, a.as_ref(), b.as_ref(), 1.5, par.reborrow());
 					assert!(max_diff(want.as_ref(), got.as_ref()) < 1e-10, "{m}x{n}x{k}");
 				}
 				// transposed and strided operands
@@ -481,7 +392,7 @@ mod tests {
 				let mut got = Mat::<f64>::zeros(m, n);
 				let at = a.transpose().to_owned();
 				matmul(want.as_mut(), Accum::Replace, at.transpose(), b.as_ref(), 1.0, Par::Seq);
-				matmul(got.as_mut(), Accum::Replace, at.transpose(), b.as_ref(), 1.0, Par::team(4));
+				matmul(got.as_mut(), Accum::Replace, at.transpose(), b.as_ref(), 1.0, par.reborrow());
 				assert!(max_diff(want.as_ref(), got.as_ref()) < 1e-10);
 			}
 			// complex
@@ -491,7 +402,7 @@ mod tests {
 			let mut want = Mat::<c64>::zeros(m, n);
 			let mut got = Mat::<c64>::zeros(m, n);
 			matmul(want.as_mut(), Accum::Replace, a.as_ref(), b.as_ref(), c64::new(1.0, 0.0), Par::Seq);
-			matmul(got.as_mut(), Accum::Replace, a.as_ref(), b.as_ref(), c64::new(1.0, 0.0), Par::team(6));
+			matmul(got.as_mut(), Accum::Replace, a.as_ref(), b.as_ref(), c64::new(1.0, 0.0), par.reborrow());
 			let mut d: f64 = 0.0;
 			for j in 0..n {
 				for i in 0..m {
@@ -503,29 +414,36 @@ mod tests {
 	}
 
 	#[test]
-	fn no_team_installed_runs_sequentially() {
-		let (m, n, k) = (200, 200, 200);
+	fn teams_of_odd_and_unit_width_match_sequential() {
+		let (m, n, k) = (300, 200, 250);
 		let a = rand_mat(m, k, 1);
 		let b = rand_mat(k, n, 2);
 		let mut want = Mat::<f64>::zeros(m, n);
-		let mut got = Mat::<f64>::zeros(m, n);
 		matmul(want.as_mut(), Accum::Replace, a.as_ref(), b.as_ref(), 1.0, Par::Seq);
-		matmul(got.as_mut(), Accum::Replace, a.as_ref(), b.as_ref(), 1.0, Par::team(6));
-		assert!(max_diff(want.as_ref(), got.as_ref()) < 1e-12);
+		for width in [1usize, 3, 5] {
+			let mut got = Mat::<f64>::zeros(m, n);
+			with_par(width, |par| {
+				matmul(got.as_mut(), Accum::Replace, a.as_ref(), b.as_ref(), 1.0, par)
+			});
+			assert!(max_diff(want.as_ref(), got.as_ref()) < 1e-12, "width = {width}");
+		}
 	}
 
 	#[test]
 	fn for_each_deals_every_item_once_and_nests() {
-		let team = team_of(6);
-		let mut exec = team.exec(6);
-		with_team(&mut exec, || {
+		with_par(6, |mut par| {
 			for jobs in [1usize, 2, 3, 6, 9] {
 				let hits: Vec<AtomicUsize> = (0..13).map(|_| AtomicUsize::new(0)).collect();
-				for_each(jobs, 0..13usize, |i| {
-					hits[i].fetch_add(1, Ordering::Relaxed);
-					// a nested region sees a sub-team no wider than its part
-					assert!(available(6) <= 6);
-				});
+				crate::utils::thread::for_each_with_par(
+					par.reborrow(),
+					jobs,
+					rayon::iter::IntoParallelIterator::into_par_iter(0..13usize),
+					|i, child| {
+						hits[i].fetch_add(1, Ordering::Relaxed);
+						// a job receives a share of the team no wider than the team
+						assert!(child.degree() <= 6);
+					},
+				);
 				assert!(hits.iter().all(|h| h.load(Ordering::Relaxed) == 1), "jobs = {jobs}");
 			}
 		});
@@ -533,31 +451,27 @@ mod tests {
 
 	#[test]
 	fn join_raw_leaves_match_the_width() {
-		let team = team_of(6);
-		let mut exec = team.exec(6);
-		with_team(&mut exec, || {
-			for n in [2usize, 3, 5, 6] {
-				let widths = std::sync::Mutex::new(Vec::new());
+		for n in [2usize, 3, 5, 6] {
+			let widths = std::sync::Mutex::new(Vec::new());
+			with_par(n, |par| {
 				crate::utils::thread::join_raw(
 					|p| widths.lock().unwrap().push(p.degree()),
 					|p| widths.lock().unwrap().push(p.degree()),
-					Par::team(n),
-				);
-				let mut w = widths.into_inner().unwrap();
-				w.sort_unstable();
-				let half = n / 2;
-				assert_eq!(w, vec![half, n - half], "n = {n}");
-			}
-		});
+					par,
+				)
+			});
+			let mut w = widths.into_inner().unwrap();
+			w.sort_unstable();
+			let half = n / 2;
+			assert_eq!(w, vec![half, n - half], "n = {n}");
+		}
 	}
 
 	#[test]
 	fn lu_qr_cholesky_on_the_team_match_sequential() {
 		use crate::linalg::solvers::{Llt, Qr};
 		use crate::Side;
-		let team = team_of(6);
-		let mut exec = team.exec(6);
-		with_team(&mut exec, || {
+		with_par(6, |mut par| {
 			for n in [200usize, 513] {
 				let a = rand_mat(n, n, 7);
 				let b = rand_mat(n, 5, 8);
@@ -580,7 +494,7 @@ mod tests {
 					f
 				};
 				let want = lu(Par::Seq);
-				let got = lu(Par::team(6));
+				let got = lu(par.reborrow());
 				assert!(max_diff(want.as_ref(), got.as_ref()) < 1e-8, "lu n = {n}");
 				// QR
 				let mut r_want = a.clone();
@@ -600,7 +514,7 @@ mod tests {
 					);
 				};
 				qr(&mut r_want, Par::Seq);
-				qr(&mut r_got, Par::team(6));
+				qr(&mut r_got, par.reborrow());
 				assert!(max_diff(r_want.as_ref(), r_got.as_ref()) < 1e-8, "qr n = {n}");
 				let _ = (&b, Side::Lower);
 				let _: Option<(Llt<f64>, Qr<f64>)> = None;
@@ -629,7 +543,7 @@ mod tests {
 					f
 				};
 				let want = ch(Par::Seq);
-				let got = ch(Par::team(6));
+				let got = ch(par.reborrow());
 				// compare the lower triangles
 				let mut d: f64 = 0.0;
 				for j in 0..n {

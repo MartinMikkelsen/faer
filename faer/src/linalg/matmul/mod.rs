@@ -1358,11 +1358,12 @@ fn matmul_imp<'M, 'N, 'K, T: ComplexField>(
 						return;
 					} else {
 						#[cfg(feature = "threadteam")]
-						if let Par::Team(nt) = par {
+						let par = match par {
+							Par::Team(team) => {
 							// the team path replaces the Rayon calls of both kernels below: one
 							// sequential gemm per team member on its own tile of the output
 							crate::utils::team::gemm_tiled::<$ty>(
-								nt.get(),
+								team,
 								M.unbound(),
 								N.unbound(),
 								K.unbound(),
@@ -1387,7 +1388,9 @@ fn matmul_imp<'M, 'N, 'K, T: ComplexField>(
 								conj_rhs == Conj::Yes,
 							);
 							return;
-						}
+							},
+							other => other,
+						};
 						#[cfg(all(target_arch = "x86_64", feature = "std"))]
 						{
 							use private_gemm_x86::*;

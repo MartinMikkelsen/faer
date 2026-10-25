@@ -44,22 +44,20 @@ pub mod thread {
 					}
 				},
 				#[cfg(feature = "threadteam")]
-				Par::Team(n_threads) => {
-					let n_threads = super::team::available(n_threads.get());
+				Par::Team(team) => {
+					let n_threads = team.size().get();
 					if n_threads == 1 {
-						(op_a(Par::Seq), op_b(Par::Seq));
+						(op_a(Par::Team(team)), op_b(Par::Seq));
 					} else {
 						// same split as the Rayon route; each half runs on the leader of
-						// a sub-team of its width
+						// a sub-team of its width and owns that sub-team
 						let half = n_threads / 2;
 						let ops = [
 							std::sync::Mutex::new(op_a),
 							std::sync::Mutex::new(op_b),
 						];
-						super::team::split(&[n_threads - half, half], &|c, width| {
-							(ops[c].lock().unwrap())(Par::Team(
-								core::num::NonZeroUsize::new(width).unwrap(),
-							))
+						let _ = team.split(&[n_threads - half, half], |c, child| {
+							(ops[c].lock().unwrap())(Par::Team(child))
 						});
 					}
 				},
@@ -88,18 +86,19 @@ pub mod thread {
 	/// given parallelism
 	#[inline]
 	pub fn parallelism_degree(parallelism: &Par) -> usize {
-		match *parallelism {
-			Par::__Lifetime(never, _) => match never {},
+		match parallelism {
 			Par::Seq => 1,
 			#[cfg(feature = "rayon")]
 			Par::Rayon(n_threads) => n_threads.get(),
 			#[cfg(feature = "threadteam")]
-			Par::Team(n_threads) => n_threads.get(),
+			Par::Team(team) => team.size().get(),
+			#[cfg(not(feature = "threadteam"))]
+			Par::__Lifetime(never, _) => match *never {},
 		}
 	}
 
 	/// the raw Rayon `iter.for_each(f)` of the regions that never used spindle, with `Team`
-	/// routed to the installed team instead (items dealt in static blocks, one part per member)
+	/// consuming the team of a `Team` (items dealt in static blocks, one part per member)
 	#[cfg(feature = "rayon")]
 	pub fn par_for_each<
 		T: Send,
@@ -113,7 +112,10 @@ pub mod thread {
 	{
 		match par {
 			#[cfg(feature = "threadteam")]
-			Par::Team(n) => super::team::for_each(n.get(), iter, f),
+			Par::Team(team) => {
+				let width = team.size().get();
+				super::team::for_each(team, width, iter, f)
+			},
 			_ => {
 				use rayon::iter::ParallelIterator;
 				iter.into_par_iter().for_each(f)
@@ -121,8 +123,8 @@ pub mod thread {
 		}
 	}
 
-	/// `spindle::for_each` on the backend of `par`: the spindle group for `Rayon`, the installed
-	/// team for `Team`, the caller for `Seq`
+	/// `spindle::for_each` on the backend of `par`: the spindle group for `Rayon`, the team
+	/// itself for `Team`, the caller for `Seq`
 	#[cfg(feature = "rayon")]
 	pub fn for_each<
 		T: Send,
@@ -152,7 +154,7 @@ pub mod thread {
 			},
 			Par::Rayon(_) => spindle::for_each(n_jobs, iter, f),
 			#[cfg(feature = "threadteam")]
-			Par::Team(_) => super::team::for_each(n_jobs, iter, f),
+			Par::Team(team) => super::team::for_each(team, n_jobs, iter, f),
 		}
 	}
 	/// `for_each` whose closure also receives the parallelism of its job: the share of `par`
@@ -178,11 +180,12 @@ pub mod thread {
 				})
 			},
 			#[cfg(feature = "threadteam")]
-			Par::Team(_) => super::team::for_each(n_jobs, iter, |item| {
-				// the item runs on the leader of its own sub-team
-				let width = super::team::available(usize::MAX);
-				f(item, if width >= 2 { Par::team(width) } else { Par::Seq })
-			}),
+			Par::Team(team) => {
+				// the item runs on the leader of its own sub-team and receives it
+				super::team::for_each_child(team, n_jobs, iter, |item, child| {
+					f(item, Par::Team(child))
+				})
+			},
 		}
 	}
 
@@ -219,18 +222,6 @@ pub mod thread {
 	#[cfg(feature = "rayon")]
 	pub fn split(par: Par, sizes: &[usize], f: &(dyn Sync + Fn(usize, Par))) {
 		core::assert!(sizes.iter().all(|&s| s > 0));
-		let part = |width: usize| {
-			if width >= 2 {
-				match par {
-					Par::Seq => Par::Seq,
-					Par::Rayon(_) => Par::rayon(width),
-					#[cfg(feature = "threadteam")]
-					Par::Team(_) => Par::team(width),
-				}
-			} else {
-				Par::Seq
-			}
-		};
 		match par {
 			Par::Seq => {
 				for c in 0..sizes.len() {
@@ -241,11 +232,20 @@ pub mod thread {
 				core::assert!(sizes.iter().sum::<usize>() <= n.get());
 				use rayon::iter::IntoParallelIterator;
 				spindle::for_each(sizes.len(), (0..sizes.len()).into_par_iter(), |c| {
-					f(c, part(sizes[c]))
+					f(c, if sizes[c] >= 2 { Par::rayon(sizes[c]) } else { Par::Seq })
 				})
 			},
 			#[cfg(feature = "threadteam")]
-			Par::Team(_) => super::team::split(sizes, &|c, width| f(c, part(width))),
+			Par::Team(team) => {
+				if sizes.iter().sum::<usize>() <= team.size().get() {
+					let _ = team.split(sizes, |c, child| f(c, Par::Team(child)));
+				} else {
+					// the team is too small for the requested widths: run the parts in turn
+					for c in 0..sizes.len() {
+						f(c, Par::Seq);
+					}
+				}
+			},
 		}
 	}
 
