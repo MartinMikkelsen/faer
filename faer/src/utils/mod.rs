@@ -56,6 +56,7 @@ pub mod thread {
 							std::sync::Mutex::new(op_a),
 							std::sync::Mutex::new(op_b),
 						];
+						super::team::note_split(2);
 						let _ = team.split(&[n_threads - half, half], |c, child| {
 							(ops[c].lock().unwrap())(Par::Team(child))
 						});
@@ -238,6 +239,7 @@ pub mod thread {
 			#[cfg(feature = "threadteam")]
 			Par::Team(team) => {
 				if sizes.iter().sum::<usize>() <= team.size().get() {
+					super::team::note_split(sizes.len());
 					let _ = team.split(sizes, |c, child| f(c, Par::Team(child)));
 				} else {
 					// the team is too small for the requested widths: run the parts in turn

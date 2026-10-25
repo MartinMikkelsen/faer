@@ -73,6 +73,11 @@ pub mod stats {
 	}
 }
 
+/// Records a split of the team into `parts` concurrent children (probes only).
+pub(crate) fn note_split(parts: usize) {
+	stats::hist(&stats::SPLIT, parts);
+}
+
 /// Runs `f(i, m)` on `m = min(n, team size)` participants at once; inline `f(0, 1)` when
 /// `m == 1`. The team is consumed; members the section does not use stay parked.
 pub(crate) fn run(team: TeamExec<'_>, n: usize, f: &(dyn Fn(usize, usize) + Sync)) {
@@ -323,8 +328,12 @@ mod tests {
 			.expect("an idle pool")
 	}
 
+	/// Team tests take turns: one pool at a time, and the dispatch counters are not shared.
+	static TEAM_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 	/// Runs `f` with the authority over a team of `width` participants.
 	fn with_par<R>(width: usize, f: impl FnOnce(Par<'_>) -> R) -> R {
+		let _turn = TEAM_TESTS.lock().unwrap_or_else(|e| e.into_inner());
 		let team = team_of(width);
 		let mut exec = team.exec(width);
 		exec.team(|team| f(Par::Team(team))).ok().expect("a team token")
@@ -554,5 +563,97 @@ mod tests {
 				assert!(d < 1e-8, "cholesky n = {n}: {d}");
 			}
 		});
+	}
+
+	/// Dispatch counters of `f`, which runs on a team of `width`.
+	fn counted<R>(width: usize, f: impl FnOnce(Par<'_>) -> R) -> (R, stats::Stats) {
+		with_par(width, |par| {
+			stats::enable(true);
+			let _ = stats::take();
+			let r = f(par);
+			let st = stats::take();
+			stats::enable(false);
+			(r, st)
+		})
+	}
+
+	#[test]
+	fn sparse_matmul_on_a_team_runs_on_the_team() {
+		use crate::sparse::{SparseColMat, Triplet};
+		let n = 3000;
+		let triplets: Vec<_> = (0..n)
+			.flat_map(|j| {
+				(0..4).map(move |t| {
+					let i = (j * 7 + t * 131) % n;
+					Triplet::new(i, j, ((i + 2 * j) as f64).sin())
+				})
+			})
+			.collect();
+		let a = SparseColMat::<usize, f64>::try_new_from_triplets(n, n, &triplets).unwrap();
+		let want = crate::sparse::linalg::matmul::sparse_sparse_matmul(
+			a.as_ref(), a.as_ref(), 1.0, Par::Seq,
+		)
+		.unwrap();
+		let (got, st) = counted(4, |par| {
+			crate::sparse::linalg::matmul::sparse_sparse_matmul(a.as_ref(), a.as_ref(), 1.0, par).unwrap()
+		});
+		// the numeric phase forked the team into its four jobs; raw Rayon would record nothing
+		assert!(st.split.get(4).copied().unwrap_or(0) >= 1, "{:?}", st.split);
+		assert!(max_diff(want.to_dense().as_ref(), got.to_dense().as_ref()) < 1e-12);
+	}
+
+	#[test]
+	fn lu_swap_stage_splits_the_team_it_is_handed() {
+		let n = 513;
+		let a = rand_mat(n, n, 11);
+		let lu = |par: Par| {
+			let mut f = a.clone();
+			let mut perm = vec![0usize; n];
+			let mut perm_inv = vec![0usize; n];
+			let mut mem = dyn_stack::MemBuffer::new(
+				crate::linalg::lu::partial_pivoting::factor::lu_in_place_scratch::<usize, f64>(
+					n, n, par.shape(), Default::default(),
+				),
+			);
+			crate::linalg::lu::partial_pivoting::factor::lu_in_place(
+				f.as_mut(), &mut perm, &mut perm_inv, par,
+				dyn_stack::MemStack::new(&mut mem), Default::default(),
+			);
+			f
+		};
+		let want = lu(Par::Seq);
+		let (got, st) = counted(6, lu);
+		// a swap stage with columns on both sides runs its two sides on a split of the team
+		assert!(st.split.get(2).copied().unwrap_or(0) >= 1, "{:?}", st.split);
+		assert!(max_diff(want.as_ref(), got.as_ref()) < 1e-8);
+	}
+
+	#[test]
+	fn join_sized_on_a_team_hands_out_exactly_the_team() {
+		use rayon::iter::IntoParallelIterator;
+		for left in 0..=7usize {
+			let active = AtomicUsize::new(0);
+			let peak = AtomicUsize::new(0);
+			let widths = [AtomicUsize::new(0), AtomicUsize::new(0)];
+			with_par(6, |par| {
+				let side = |which: usize, par: Par<'_>| {
+					let jobs = par.degree();
+					widths[which].store(jobs, Ordering::Relaxed);
+					crate::utils::thread::for_each_with_par(par, jobs, (0..jobs).into_par_iter(), |_, _| {
+						let now = active.fetch_add(1, Ordering::AcqRel) + 1;
+						peak.fetch_max(now, Ordering::AcqRel);
+						std::thread::sleep(std::time::Duration::from_millis(3));
+						active.fetch_sub(1, Ordering::AcqRel);
+					});
+				};
+				crate::utils::thread::join_sized(par, left, |p| side(0, p), |p| side(1, p));
+			});
+			assert_eq!(
+				widths[0].load(Ordering::Relaxed) + widths[1].load(Ordering::Relaxed),
+				6,
+				"left = {left}"
+			);
+			assert!(peak.load(Ordering::Relaxed) <= 6, "left = {left}");
+		}
 	}
 }

@@ -932,6 +932,49 @@ impl Conj {
 /// parallelism with [`Par::reborrow`], and concurrent children are created by splitting
 /// (see `utils::thread::split`), never by copying. Queries that only need the size (workspace
 /// requirements, thresholds) use [`ParShape`] or [`Par::degree`].
+///
+/// ```
+/// use faer::{Par, ParShape};
+/// // sizes are plain values
+/// fn is_copy<T: Copy>() {}
+/// is_copy::<ParShape>();
+/// // phases lend, they do not copy
+/// fn phase(_: Par<'_>) {}
+/// let mut par = Par::Seq;
+/// phase(par.reborrow());
+/// phase(par);
+/// ```
+///
+/// Not `Copy`:
+///
+/// ```compile_fail
+/// fn is_copy<T: Copy>() {}
+/// is_copy::<faer::Par<'static>>();
+/// ```
+///
+/// Not `Clone`:
+///
+/// ```compile_fail
+/// fn is_clone<T: Clone>() {}
+/// is_clone::<faer::Par<'static>>();
+/// ```
+///
+/// A phase that takes the parallelism consumes it:
+///
+/// ```compile_fail
+/// fn phase(_: faer::Par<'_>) {}
+/// let par = faer::Par::Seq;
+/// phase(par);
+/// phase(par);
+/// ```
+///
+/// Concurrent children cannot both use the parent:
+///
+/// ```compile_fail
+/// fn phase(_: faer::Par<'_>) {}
+/// let par = faer::Par::Seq;
+/// faer::utils::thread::join_raw(|_| phase(par), |_| phase(par), faer::Par::Seq);
+/// ```
 #[derive(Debug)]
 pub enum Par<'team> {
 	/// sequential, non portable across different platforms
