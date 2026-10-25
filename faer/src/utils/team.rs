@@ -29,6 +29,62 @@ use rayon::iter::plumbing::{Producer, ProducerCallback};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator};
 use threadteam::{Exec, TeamExec};
 
+/// Optional counters of how the team regions were dispatched, for probes that ask "did the
+/// parallel path engage at this size". Off by default (one relaxed load per region).
+pub mod stats {
+	use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
+	pub(super) static ON: AtomicBool = AtomicBool::new(false);
+	const W: usize = 17;
+	#[allow(clippy::declare_interior_mutable_const)]
+	const Z: AtomicUsize = AtomicUsize::new(0);
+	/// flat sections by participant count (index 1 = ran inline on the caller)
+	pub(super) static RUN: [AtomicUsize; W] = [Z; W];
+	/// splits and forks by number of parts (index 1 = ran inline on the caller)
+	pub(super) static SPLIT: [AtomicUsize; W] = [Z; W];
+	pub(super) static GEMM_BELOW_FLOOR: AtomicUsize = AtomicUsize::new(0);
+	pub(super) static GEMM_ONE_TILE: AtomicUsize = AtomicUsize::new(0);
+	pub(super) static GEMM_TILED: AtomicUsize = AtomicUsize::new(0);
+	pub(super) fn hist(h: &[AtomicUsize; W], n: usize) {
+		if ON.load(Relaxed) {
+			h[n.min(W - 1)].fetch_add(1, Relaxed);
+		}
+	}
+	pub(super) fn bump(c: &AtomicUsize) {
+		if ON.load(Relaxed) {
+			c.fetch_add(1, Relaxed);
+		}
+	}
+	/// Counters since the last `take`.
+	#[derive(Debug, Clone, Default)]
+	pub struct Stats {
+		/// `run` sections, index = participants
+		pub run: Vec<usize>,
+		/// splits and forks, index = parts
+		pub split: Vec<usize>,
+		/// GEMM calls decided sequential by the work floor
+		pub gemm_below_floor: usize,
+		/// GEMM calls whose tile grid had a single tile
+		pub gemm_one_tile: usize,
+		/// GEMM calls cut into tiles and run on the team
+		pub gemm_tiled: usize,
+	}
+	/// Enables or disables counting.
+	pub fn enable(on: bool) {
+		ON.store(on, Relaxed);
+	}
+	/// Returns and resets the counters.
+	pub fn take() -> Stats {
+		let t = |h: &[AtomicUsize; W]| h.iter().map(|c| c.swap(0, Relaxed)).collect();
+		Stats {
+			run: t(&RUN),
+			split: t(&SPLIT),
+			gemm_below_floor: GEMM_BELOW_FLOOR.swap(0, Relaxed),
+			gemm_one_tile: GEMM_ONE_TILE.swap(0, Relaxed),
+			gemm_tiled: GEMM_TILED.swap(0, Relaxed),
+		}
+	}
+}
+
 thread_local! {
 	static CURRENT: Cell<*mut TeamExec<'static>> = const { Cell::new(null_mut()) };
 }
@@ -76,14 +132,17 @@ pub fn available(n: usize) -> usize {
 pub fn run(n: usize, f: &(dyn Fn(usize, usize) + Sync)) {
 	let p = CURRENT.with(|c| c.get());
 	if p.is_null() || n <= 1 {
+		stats::hist(&stats::RUN, 1);
 		return f(0, 1);
 	}
 	let team = unsafe { &mut *p };
 	let size = team.size().get();
 	let m = n.min(size);
 	if m <= 1 {
+		stats::hist(&stats::RUN, 1);
 		return f(0, 1);
 	}
+	stats::hist(&stats::RUN, m);
 	let _guard = install(null_mut());
 	if m == size {
 		team.reborrow().run(|i, k| f(i, k));
@@ -103,6 +162,7 @@ pub fn fork(children: usize, f: &(dyn Fn(usize, usize, usize) + Sync)) {
 	}
 	let p = CURRENT.with(|c| c.get());
 	if p.is_null() || children == 1 {
+		stats::hist(&stats::SPLIT, 1);
 		for c in 0..children {
 			f(c, children, 1);
 		}
@@ -110,6 +170,7 @@ pub fn fork(children: usize, f: &(dyn Fn(usize, usize, usize) + Sync)) {
 	}
 	let team = unsafe { &mut *p };
 	let k = children.min(team.size().get());
+	stats::hist(&stats::SPLIT, k);
 	team.reborrow().fork(k, |c, mut child| {
 		let width = child.size().get();
 		let _guard = install(
@@ -126,11 +187,13 @@ pub fn split(sizes: &[usize], f: &(dyn Fn(usize, usize) + Sync)) {
 	let p = CURRENT.with(|c| c.get());
 	let total: usize = sizes.iter().sum();
 	if p.is_null() || unsafe { (*p).size().get() } < total || sizes.contains(&0) {
+		stats::hist(&stats::SPLIT, 1);
 		for c in 0..sizes.len() {
 			f(c, 1);
 		}
 		return;
 	}
+	stats::hist(&stats::SPLIT, sizes.len());
 	let team = unsafe { &mut *p };
 	let _ = team.reborrow().split(sizes, |c, mut child| {
 		let width = child.size().get();
@@ -304,12 +367,15 @@ pub(crate) unsafe fn gemm_tiled<E: 'static + Copy + Send + Sync>(
 	let nt = available(nt);
 	let work = m.saturating_mul(n).saturating_mul(k);
 	if nt <= 1 || work < gemm::get_threading_threshold() {
+		stats::bump(&stats::GEMM_BELOW_FLOOR);
 		return seq(dst, lhs, rhs, m, n);
 	}
 	let (pm, pn) = tile_grid(m, n, nt);
 	if pm * pn <= 1 {
+		stats::bump(&stats::GEMM_ONE_TILE);
 		return seq(dst, lhs, rhs, m, n);
 	}
+	stats::bump(&stats::GEMM_TILED);
 	let (dst, lhs, rhs) = (
 		SendPtr(dst),
 		SendPtr(lhs as *mut E),
