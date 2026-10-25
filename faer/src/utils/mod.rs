@@ -154,6 +154,99 @@ pub mod thread {
 			Par::Team(_) => super::team::for_each(n_jobs, iter, f),
 		}
 	}
+	/// `for_each` whose closure also receives the parallelism of its job: the share of `par`
+	/// that one of `n_jobs` concurrent jobs may use (sequential below two threads)
+	#[cfg(feature = "rayon")]
+	pub fn for_each_with_par<
+		T: Send,
+		I: rayon::iter::IntoParallelIterator<Item = T>,
+	>(
+		par: Par,
+		n_jobs: usize,
+		iter: I,
+		f: impl Sync + Fn(T, Par),
+	) where
+		I::Iter: rayon::iter::IndexedParallelIterator,
+	{
+		match par {
+			Par::Seq => for_each(Par::Seq, n_jobs, iter, |item| f(item, Par::Seq)),
+			Par::Rayon(n) => {
+				let width = n.get() / n_jobs.max(1);
+				let child = if width >= 2 { Par::rayon(width) } else { Par::Seq };
+				spindle::for_each(n_jobs, iter, |item| f(item, child))
+			},
+			#[cfg(feature = "threadteam")]
+			Par::Team(_) => super::team::for_each(n_jobs, iter, |item| {
+				// the item runs on the leader of its own sub-team
+				let width = super::team::available(usize::MAX);
+				f(item, if width >= 2 { Par::team(width) } else { Par::Seq })
+			}),
+		}
+	}
+
+	/// runs the two operations concurrently on a split of `par` in which the first receives
+	/// `size_a` threads (clamped so that both get at least one) and the second the rest
+	#[cfg(feature = "rayon")]
+	pub fn join_sized(
+		par: Par,
+		size_a: usize,
+		op_a: impl Send + FnOnce(Par),
+		op_b: impl Send + FnOnce(Par),
+	) {
+		let degree = par.degree();
+		if degree < 2 {
+			op_a(Par::Seq);
+			op_b(Par::Seq);
+			return;
+		}
+		let size_a = size_a.clamp(1, degree - 1);
+		let op_a = std::sync::Mutex::new(Some(op_a));
+		let op_b = std::sync::Mutex::new(Some(op_b));
+		split(par, &[size_a, degree - size_a], &|c, child| {
+			if c == 0 {
+				(op_a.lock().unwrap().take().unwrap())(child)
+			} else {
+				(op_b.lock().unwrap().take().unwrap())(child)
+			}
+		});
+	}
+
+	/// runs `f(c, child)` for every `c < sizes.len()` concurrently, where `child` is the part of
+	/// `par` of width `sizes[c]` (sequential for a width of one). The widths must be non-zero and
+	/// add up to at most the degree of `par`; the children never use more than they are handed.
+	#[cfg(feature = "rayon")]
+	pub fn split(par: Par, sizes: &[usize], f: &(dyn Sync + Fn(usize, Par))) {
+		core::assert!(sizes.iter().all(|&s| s > 0));
+		let part = |width: usize| {
+			if width >= 2 {
+				match par {
+					Par::Seq => Par::Seq,
+					Par::Rayon(_) => Par::rayon(width),
+					#[cfg(feature = "threadteam")]
+					Par::Team(_) => Par::team(width),
+				}
+			} else {
+				Par::Seq
+			}
+		};
+		match par {
+			Par::Seq => {
+				for c in 0..sizes.len() {
+					f(c, Par::Seq);
+				}
+			},
+			Par::Rayon(n) => {
+				core::assert!(sizes.iter().sum::<usize>() <= n.get());
+				use rayon::iter::IntoParallelIterator;
+				spindle::for_each(sizes.len(), (0..sizes.len()).into_par_iter(), |c| {
+					f(c, part(sizes[c]))
+				})
+			},
+			#[cfg(feature = "threadteam")]
+			Par::Team(_) => super::team::split(sizes, &|c, width| f(c, part(width))),
+		}
+	}
+
 	/// returns the start and length of a subsegment of `0..n`, split between
 	/// `chunk_count` consumers, for the consumer at index `idx`
 	///
@@ -181,7 +274,7 @@ pub mod thread {
 
 	#[cfg(all(test, feature = "rayon"))]
 	mod tests {
-		use super::{join_raw, parallelism_degree};
+		use super::{for_each_with_par, join_raw, join_sized, parallelism_degree};
 		use crate::Par;
 		use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -234,6 +327,49 @@ pub mod thread {
 					leaves.peak.into_inner() <= n,
 					"concurrent leaves exceed n = {n}"
 				);
+			}
+		}
+
+		// the two halves of a sized join run on the widths they are handed: their children
+		// never overlap beyond the budget, and each half sees the width it asked for
+		#[test]
+		fn join_sized_children_stay_within_their_share() {
+			use rayon::prelude::*;
+			let pool = rayon::ThreadPoolBuilder::new()
+				.num_threads(16)
+				.build()
+				.unwrap();
+			for n in [2usize, 3, 5, 8] {
+				for left in 0..=n + 1 {
+					let active = AtomicUsize::new(0);
+					let peak = AtomicUsize::new(0);
+					let widths = [AtomicUsize::new(0), AtomicUsize::new(0)];
+					let side = |which: usize, par: Par| {
+						widths[which].store(parallelism_degree(par), Ordering::Relaxed);
+						let jobs = parallelism_degree(par);
+						for_each_with_par(par, jobs, (0..jobs).into_par_iter(), |_, _| {
+							let now = active.fetch_add(1, Ordering::AcqRel) + 1;
+							peak.fetch_max(now, Ordering::AcqRel);
+							std::thread::sleep(std::time::Duration::from_millis(3));
+							active.fetch_sub(1, Ordering::AcqRel);
+						});
+					};
+					pool.install(|| {
+						join_sized(
+							Par::Rayon(core::num::NonZeroUsize::new(n).unwrap()),
+							left,
+							|par| side(0, par),
+							|par| side(1, par),
+						)
+					});
+					let total = widths[0].load(Ordering::Relaxed)
+						+ widths[1].load(Ordering::Relaxed);
+					assert_eq!(total, n, "n = {n}, left = {left}");
+					assert!(
+						peak.load(Ordering::Relaxed) <= n,
+						"concurrent jobs exceed n = {n} with left = {left}"
+					);
+				}
 			}
 		}
 	}

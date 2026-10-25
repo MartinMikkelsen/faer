@@ -738,7 +738,8 @@ fn apply_block_householder_on_the_left_in_place_generic<
 		let func = |(mut tmp, mut matrix): (
 			MatMut<'_, T, Dim<'N>>,
 			MatMut<'_, T, Dim<'M>>,
-		)| {
+		),
+		            inner_parallelism: Par| {
 			let (mut top, mut bot) =
 				matrix.rb_mut().split_rows_with_mut(midpoint);
 			if !row_split {
@@ -806,13 +807,13 @@ fn apply_block_householder_on_the_left_in_place_generic<
 			);
 		};
 		if n_tasks <= 1 {
-			func((tmp.as_dyn_cols_mut(), matrix.as_dyn_cols_mut()));
+			func((tmp.as_dyn_cols_mut(), matrix.as_dyn_cols_mut()), inner_parallelism);
 			return;
 		} else {
 			#[cfg(feature = "rayon")]
 			{
 				use rayon::prelude::*;
-				crate::utils::thread::for_each(par, 
+				crate::utils::thread::for_each_with_par(par,
 					n_tasks,
 					tmp.rb_mut()
 						.par_col_partition_mut(n_tasks)

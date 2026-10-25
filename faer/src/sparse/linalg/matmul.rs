@@ -170,9 +170,12 @@ pub fn sparse_sparse_matmul_numeric<
 		_ => {
 		let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 			use rayon::prelude::*;
-			(0..nthreads.get()).into_par_iter().for_each(|tid| {
-				job(tid);
-			});
+			crate::utils::thread::for_each(
+				par,
+				nthreads.get(),
+				(0..nthreads.get()).into_par_iter(),
+				|tid| job(tid),
+			);
 		},
 	}
 }

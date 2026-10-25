@@ -1010,18 +1010,6 @@ impl Par {
 		Self::Team(NonZeroUsize::new(nthreads.max(1)).unwrap())
 	}
 
-	/// the same kind of parallelism with `nthreads` threads (`Seq` stays `Seq`)
-	#[inline]
-	pub fn with_degree(&self, nthreads: usize) -> Self {
-		match *self {
-			Par::Seq => Par::Seq,
-			#[cfg(feature = "rayon")]
-			Par::Rayon(_) => Par::Rayon(NonZeroUsize::new(nthreads.max(1)).unwrap()),
-			#[cfg(feature = "threadteam")]
-			Par::Team(_) => Par::Team(NonZeroUsize::new(nthreads.max(1)).unwrap()),
-		}
-	}
-
 	/// returns `Par::Rayon(nthreads)` if `nthreads` is non-zero, or
 	/// `Par::Rayon(rayon::current_num_threads())` otherwise
 	#[inline]

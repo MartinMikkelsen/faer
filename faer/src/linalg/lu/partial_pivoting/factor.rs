@@ -199,28 +199,42 @@ pub(crate) fn lu_in_place_recursion<I: Index, T: ComplexField>(
 				(nthreads as f64 * (A_left.ncols() as f64 / len)) as usize,
 				nthreads,
 			);
-			let right_threads = nthreads - left_threads;
-			crate::utils::thread::join_raw(
-				|_| {
-					if A_left.ncols() > 0 {
-						crate::utils::thread::for_each(par, 
-							left_threads,
-							A_left.par_col_partition_mut(left_threads),
+			let (left_cols, right_cols) = (A_left.ncols(), A_right.ncols());
+			if left_cols == 0 || right_cols == 0 {
+				// one side holds every column: it takes the whole budget
+				let (A, _) = if left_cols == 0 { (A_right, A_left) } else { (A_left, A_right) };
+				crate::utils::thread::for_each(
+					par,
+					nthreads,
+					A.par_col_partition_mut(nthreads),
+					|A| swap(A),
+				);
+			} else {
+				// the two sides run on the two halves of the split, each on the
+				// parallelism it is handed
+				crate::utils::thread::join_sized(
+					par,
+					left_threads,
+					|par| {
+						let n = par.degree();
+						crate::utils::thread::for_each(
+							par,
+							n,
+							A_left.par_col_partition_mut(n),
 							|A| swap(A),
 						)
-					}
-				},
-				|_| {
-					if A_right.ncols() > 0 {
-						crate::utils::thread::for_each(par, 
-							right_threads,
-							A_right.par_col_partition_mut(right_threads),
+					},
+					|par| {
+						let n = par.degree();
+						crate::utils::thread::for_each(
+							par,
+							n,
+							A_right.par_col_partition_mut(n),
 							|A| swap(A),
 						)
-					}
-				},
-				par,
-			);
+					},
+				);
+			}
 		},
 	}
 	n_trans
