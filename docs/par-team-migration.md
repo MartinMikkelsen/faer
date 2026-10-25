@@ -98,6 +98,22 @@ path dispatches to the global Rayon pool with a `Team` in hand.
 | `Par::Team(TeamExec<'team>)` | `exec.team(\|team\| faer_fn(.., Par::Team(team)))`; the width is the team size |
 | `set_global_parallelism` takes `GlobalPar`, `get_global_parallelism()` returns it | callers pass `GlobalPar::Seq` / `GlobalPar::rayon(n)` instead of `Par`; read the setting as a `Par` with `.par()`; none for the high level `Mat::svd()` family |
 
+## Global parallelism
+
+The planned end state lands in the same breaking release as `Par<'team>`. The process-wide
+parallelism setting is removed entirely:
+
+* `set_global_parallelism`, `get_global_parallelism`, `GlobalPar`, `disable_global_parallelism`
+  and the faer-ffi get and set functions are removed.
+* High-level methods and solvers that read the global setting take an explicit `par: Par`
+  argument instead, for example `mat.llt(par)`. There are 97 call sites: 65 in
+  `linalg/solvers.rs`, 17 in `sparse/solvers.rs`, 14 in `linalg/mat_ops.rs` and 1 in
+  `linalg/reductions/determinant.rs`.
+* Operator overloads (`&a * &b`, `&a + &b` in `linalg/mat_ops.rs`) cannot take a `par`, so they
+  always run sequentially as a convenience. Parallel callers use the explicit functions, for
+  example `matmul(.., par)`.
+* `GlobalPar` is the interim state until the explicit `par` arguments land.
+
 ## Verification
 
 * Library tests under `--features threadteam` (release): everything passes except the three
