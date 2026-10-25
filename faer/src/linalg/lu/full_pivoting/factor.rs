@@ -1,4 +1,5 @@
 use crate::internal_prelude::*;
+use crate::utils::cost::{ParThreshold, rate};
 use crate::perm::{swap_cols_idx, swap_rows_idx};
 use crate::utils::thread::par_split_indices;
 use faer_traits::{Real, RealReg};
@@ -369,7 +370,14 @@ fn lu_in_place_unblocked<T: ComplexField>(
 		if k + 1 == Ord::min(m, n) {
 			break;
 		}
-		if (m - k - 1) * (n - k - 1) < params.par_threshold {
+		// One section per step (the fused rank-one update and pivot search over column
+		// blocks); the unit is an element of the trailing block.
+		if !params.par_threshold.region_pays::<T>(
+			par.shape(),
+			(m - k - 1) * (n - k - 1),
+			rate::LU_FULL_PIVOT,
+			1,
+		) {
 			par = Par::Seq;
 		}
 		let (_, A01, A10, mut A11) = A.rb_mut().split_at_mut(k + 1, k + 1);
@@ -434,8 +442,10 @@ fn lu_in_place_unblocked<T: ComplexField>(
 /// $LU$ factorization tuning parameters
 #[derive(Copy, Clone, Debug)]
 pub struct FullPivLuParams {
-	/// threshold at which size parallelism should be disabled
-	pub par_threshold: usize,
+	/// floor of the parallel regions: [`ParThreshold::Derived`] (the default) runs a step in
+	/// parallel when its serial time pays for one section; [`ParThreshold::Fixed`] counts
+	/// elements of the trailing block `(m-k-1)*(n-k-1)`
+	pub par_threshold: ParThreshold,
 	#[doc(hidden)]
 	pub non_exhaustive: NonExhaustive,
 }
@@ -443,7 +453,7 @@ impl<T: ComplexField> Auto<T> for FullPivLuParams {
 	#[inline]
 	fn auto() -> Self {
 		Self {
-			par_threshold: 256 * 512,
+			par_threshold: ParThreshold::Derived,
 			non_exhaustive: NonExhaustive(()),
 		}
 	}

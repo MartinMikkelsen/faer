@@ -153,11 +153,21 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 	// size the recursion halves every level, so a `128 x 128` QR pays the fork-join cost of
 	// `n`-wide reductions ~50 times for work the floor itself calls too small to split. The
 	// decision here is the floor, asked once: no region at all when the products below would not
-	// split either.
+	// split either. Two of the three conditions are shapes, not costs, and stay as such: the
+	// reduction must be deep against its `n x n` output (`2 * n`, else the partials are not
+	// small against the basis) and give every thread at least four rows (`4 * threads`). The
+	// third is the cost rule: `deep_rows * n * n` multiply-adds at the GEMM rate must pay for one
+	// section.
 	let threads = crate::utils::thread::parallelism_degree(&par);
 	let deep_rows = essentials.nrows().unbound().saturating_sub(n);
-	let above_floor =
-		deep_rows >= 2 * n && deep_rows >= 4 * threads && deep_rows * n * n >= 8 * 1024;
+	let above_floor = deep_rows >= 2 * n
+		&& deep_rows >= 4 * threads
+		&& crate::utils::cost::par_pays::<T>(
+			&par,
+			deep_rows.saturating_mul(n).saturating_mul(n),
+			crate::utils::cost::rate::GEMM_MAC,
+			1,
+		);
 	let mut par = if above_floor { par } else { Par::Seq };
 	let mut householder_factor = householder_factor;
 	let essentials = essentials;
@@ -217,11 +227,17 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 		// (the diagonal is the caller's `tau`), so the split costs almost nothing.
 		let threads = crate::utils::thread::parallelism_degree(&par);
 		let rows = basis_bot.nrows().unbound();
+		// shape conditions (`2 * n`, `4 * threads`) as above, then the cost rule
 		let deep = cfg!(feature = "rayon")
 			&& threads > 1
 			&& rows >= 2 * n
 			&& rows >= 4 * threads
-			&& rows * n * n >= 8 * 1024;
+			&& crate::utils::cost::par_pays::<T>(
+				&par,
+				rows.saturating_mul(n).saturating_mul(n),
+				crate::utils::cost::rate::GEMM_MAC,
+				1,
+			);
 		if deep {
 			#[cfg(feature = "rayon")]
 			{
@@ -473,9 +489,17 @@ fn apply_block_householder_on_the_left_in_place_generic<
 	// tall blocked QR is made almost entirely of those. When the caller asks for parallelism and
 	// there is enough work to pay for its temporaries, the generic path below is the better one: it
 	// partitions the target's columns and threads its two matrix products, which this one cannot.
-	let big_rank_one = householder_basis.nrows().unbound()
-		* matrix.ncols().unbound()
-		>= 8 * 1024;
+	// "Enough work" is the cost rule: one section (the column split of the generic path), the
+	// unit an element of the target.
+	let big_rank_one = crate::utils::cost::par_pays::<T>(
+		&par,
+		householder_basis
+			.nrows()
+			.unbound()
+			.saturating_mul(matrix.ncols().unbound()),
+		crate::utils::cost::rate::HOUSEHOLDER_RANK_ONE,
+		1,
+	);
 	let use_simd = N.unbound() == 1
 		&& T::SIMD_CAPABILITIES.is_simd()
 		&& !(crate::utils::thread::parallelism_degree(&par) > 1 && big_rank_one);
@@ -602,12 +626,23 @@ fn apply_block_householder_on_the_left_in_place_generic<
 		// triangular kernel cannot express the trapezoid that leaves. So the split is taken
 		// only while one chunk swallows the whole top block. Below that the products further
 		// down stay exactly as they were.
+		// `2 * K` (depth against width), `4 * threads` (rows per task) and the chunk covering the
+		// unit block (`div_ceil(threads) >= N`) are shape conditions; the work floor is the
+		// cost rule: the reduction `V^H C`, `M * N * K` multiply-adds at the GEMM rate, one
+		// section.
 		let row_split = cfg!(feature = "rayon")
 			&& threads > 1
 			&& M.unbound() >= 2 * K.unbound()
 			&& M.unbound() >= 4 * threads
-			&& M.unbound() * K.unbound() >= 8 * 1024
-			&& M.unbound().div_ceil(threads) >= N.unbound();
+			&& M.unbound().div_ceil(threads) >= N.unbound()
+			&& crate::utils::cost::par_pays::<T>(
+				&par,
+				M.unbound()
+					.saturating_mul(N.unbound())
+					.saturating_mul(K.unbound()),
+				crate::utils::cost::rate::GEMM_MAC,
+				1,
+			);
 		// The column split is the only parallelism when the rows are not split, so it takes
 		// the whole budget and leaves `inner_parallelism` at one thread: the block apply a
 		// blocked QR performs is short and wide (`N` columns of basis against the whole
@@ -622,10 +657,26 @@ fn apply_block_householder_on_the_left_in_place_generic<
 			Ord::min(threads, K.unbound()),
 			if row_split { 4 } else { threads },
 		);
-		if (M.unbound() * K.unbound()).saturating_mul(4 * M.unbound())
-			< gemm::get_threading_threshold()
-		{
-			n_tasks = 1;
+		// The column split is one section over `n_tasks` participants; its work is the two
+		// products of the update, `2 * M * N * K` multiply-adds at the GEMM rate (one of them
+		// when the row split already did the reduction).
+		if n_tasks > 1 {
+			let macs = M
+				.unbound()
+				.saturating_mul(N.unbound())
+				.saturating_mul(K.unbound())
+				.saturating_mul(if row_split { 1 } else { 2 });
+			let width = core::num::NonZeroUsize::new(n_tasks).unwrap();
+			if !par.shape().pays(
+				crate::utils::cost::serial_time(
+					macs,
+					crate::utils::cost::rate::GEMM_MAC.of::<T>(),
+				),
+				1,
+				width,
+			) {
+				n_tasks = 1;
+			}
 		}
 		// The reduction `tmp = V^H C` has an `N x K` output and reduces over every row of the
 		// target. The products below are good at that while the output is wide; with `N` small and
@@ -1356,6 +1407,198 @@ mod tests {
 				.map(|i| (out[(i, 0)] + a[(i, 0)]).abs())
 				.fold(0.0, f64::max);
 			assert!(err < 1e-12, "{err}");
+		}
+	}
+}
+#[cfg(all(test, feature = "rayon"))]
+mod gate_tests {
+	//! The parallel routes behind the cost gates (`utils::cost`) agree with the serial ones, at
+	//! sizes where the derived floors of a plain token from outside the pool (`Par::rayon(4)`,
+	//! 18 us of dispatch, 54 us of serial work per section) are exceeded, and the decision itself
+	//! is what `utils::cost` tests.
+	use super::*;
+	use crate::c64;
+	use crate::linalg::matmul::triangular::{BlockStructure, matmul as tmatmul};
+
+	fn fill<T: ComplexField<Real = f64>>(m: usize, n: usize, seed: usize) -> Mat<T> {
+		Mat::from_fn(m, n, |i, j| {
+			let h = (i * 2654435761usize)
+				.wrapping_add(j * 40503)
+				.wrapping_add(seed * 977)
+				% 1000;
+			from_f64::<T>(h as f64 / 500.0 - 1.0)
+		})
+	}
+	fn close<T: ComplexField<Real = f64>>(a: MatRef<'_, T>, b: MatRef<'_, T>) {
+		let mut err = 0.0f64;
+		let mut scale = 1.0f64;
+		for j in 0..a.ncols() {
+			for i in 0..a.nrows() {
+				err = err.max((a[(i, j)].clone() - b[(i, j)].clone()).abs());
+				scale = scale.max(a[(i, j)].abs());
+			}
+		}
+		core::assert!(err <= 1e-9 * scale, "error {err}, scale {scale}");
+	}
+
+	fn apply<T: ComplexField<Real = f64>>(m: usize, n: usize, k: usize, par: Par) -> Mat<T> {
+		let basis = fill::<T>(m, n, 1);
+		let mut factor = fill::<T>(n, n, 2);
+		for i in 0..n {
+			factor[(i, i)] = from_f64::<T>(2.0 + i as f64 * 0.01);
+		}
+		let mut target = fill::<T>(m, k, 3);
+		let mut mem = dyn_stack::MemBuffer::new(
+			apply_block_householder_on_the_left_in_place_scratch::<T>(m, n, k),
+		);
+		apply_block_householder_on_the_left_in_place_with_conj(
+			basis.as_ref(),
+			factor.as_ref(),
+			Conj::No,
+			target.as_mut(),
+			par,
+			MemStack::new(&mut mem),
+		);
+		target
+	}
+
+	fn check_apply<T: ComplexField<Real = f64>>() {
+		// row split: tall, `M >= 2 K`, 3.1 million multiply-adds
+		// rank one: `N == 1`, 0.5 million target elements
+		// column split: wide target
+		for (m, n, k) in
+			[(2048, 16, 96), (2048, 1, 256), (512, 16, 1024), (4096, 32, 64)]
+		{
+			let seq = apply::<T>(m, n, k, Par::Seq);
+			let par = apply::<T>(m, n, k, Par::rayon(4));
+			close(seq.as_ref(), par.as_ref());
+		}
+	}
+
+	#[test]
+	fn block_apply_gates_agree_with_serial() {
+		check_apply::<f64>();
+		check_apply::<c64>();
+	}
+
+	fn upgrade<T: ComplexField<Real = f64>>(m: usize, n: usize, par: Par) -> Mat<T> {
+		let essentials = fill::<T>(m, n, 4);
+		let mut factor = Mat::<T>::zeros(n, n);
+		for i in 0..n {
+			factor[(i, i)] = from_f64::<T>(1.5);
+		}
+		upgrade_householder_factor(factor.as_mut(), essentials.as_ref(), n, 1, par);
+		factor
+	}
+
+	#[test]
+	fn upgrade_factor_gate_agrees_with_serial() {
+		for (m, n) in [(4096, 8), (4096, 32), (1024, 64)] {
+			close(
+				upgrade::<f64>(m, n, Par::Seq).as_ref(),
+				upgrade::<f64>(m, n, Par::rayon(4)).as_ref(),
+			);
+			close(
+				upgrade::<c64>(m, n, Par::Seq).as_ref(),
+				upgrade::<c64>(m, n, Par::rayon(4)).as_ref(),
+			);
+		}
+	}
+
+	fn matvec<T: ComplexField<Real = f64>>(n: usize, row_major: bool, par: Par) -> Mat<T> {
+		let a = fill::<T>(n, n, 5);
+		let x = fill::<T>(n, 1, 6);
+		let mut y = Mat::<T>::zeros(n, 1);
+		let lhs = if row_major { a.as_ref().transpose() } else { a.as_ref() };
+		crate::linalg::matmul::matmul(
+			y.as_mut(),
+			Accum::Replace,
+			lhs,
+			x.as_ref(),
+			one::<T>(),
+			par,
+		);
+		y
+	}
+
+	#[test]
+	fn matvec_gate_agrees_with_serial() {
+		for n in [128, 512, 1024] {
+			for row_major in [false, true] {
+				close(
+					matvec::<f64>(n, row_major, Par::Seq).as_ref(),
+					matvec::<f64>(n, row_major, Par::rayon(4)).as_ref(),
+				);
+				close(
+					matvec::<c64>(n, row_major, Par::Seq).as_ref(),
+					matvec::<c64>(n, row_major, Par::rayon(4)).as_ref(),
+				);
+			}
+		}
+	}
+
+	fn tri_products(n: usize, mut par: Par) -> (Mat<f64>, Mat<f64>) {
+		let lhs = fill::<f64>(n, n, 7);
+		let rhs = fill::<f64>(n, n, 8);
+		let mut a = Mat::<f64>::zeros(n, n);
+		let mut b = Mat::<f64>::zeros(n, n);
+		// product with a triangular right-hand side (`mat_x_lower`, `m n^2 / 2` multiply-adds)
+		tmatmul(
+			a.as_mut(),
+			BlockStructure::Rectangular,
+			Accum::Replace,
+			lhs.as_ref(),
+			BlockStructure::Rectangular,
+			rhs.as_ref(),
+			BlockStructure::TriangularLower,
+			1.0,
+			par.reborrow(),
+		);
+		// product into one triangle of the destination (`n^2 k / 2`)
+		tmatmul(
+			b.as_mut(),
+			BlockStructure::TriangularLower,
+			Accum::Replace,
+			lhs.as_ref(),
+			BlockStructure::Rectangular,
+			rhs.as_ref(),
+			BlockStructure::Rectangular,
+			1.0,
+			par,
+		);
+		(a, b)
+	}
+
+	#[test]
+	fn triangular_gates_agree_with_serial() {
+		let (a0, b0) = tri_products(384, Par::Seq);
+		let (a, b) = tri_products(384, Par::rayon(4));
+		close(a0.as_ref(), a.as_ref());
+		close(b0.as_ref(), b.as_ref());
+	}
+
+	#[test]
+	fn triangular_solve_split_gate_agrees_with_serial() {
+		// short triangle, many right hand sides: the split of `triangular_solve.rs`
+		for (n, k) in [(64, 4096), (128, 2048), (16, 200)] {
+			let mut tri = fill::<f64>(n, n, 9);
+			for i in 0..n {
+				tri[(i, i)] = n as f64;
+			}
+			let rhs0 = fill::<f64>(n, k, 10);
+			let mut seq = rhs0.clone();
+			let mut par = rhs0.clone();
+			crate::linalg::triangular_solve::solve_lower_triangular_in_place(
+				tri.as_ref(),
+				seq.as_mut(),
+				Par::Seq,
+			);
+			crate::linalg::triangular_solve::solve_lower_triangular_in_place(
+				tri.as_ref(),
+				par.as_mut(),
+				Par::rayon(4),
+			);
+			close(seq.as_ref(), par.as_ref());
 		}
 	}
 }

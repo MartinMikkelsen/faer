@@ -1,20 +1,23 @@
 use crate::assert;
 use crate::internal_prelude::*;
+use crate::utils::cost::{ParThreshold, rate};
 use linalg::householder;
 use linalg::matmul::triangular::BlockStructure;
 use linalg::matmul::{self, dot};
 /// tridiagonalization tuning parameters
 #[derive(Copy, Clone, Debug)]
 pub struct TridiagParams {
-	/// threshold at which parallelism should be disabled
-	pub par_threshold: usize,
+	/// floor of the parallel regions: [`ParThreshold::Derived`] (the default) runs a step in
+	/// parallel when its serial time pays for one section; [`ParThreshold::Fixed`] counts
+	/// elements `rem*rem/2` of the triangle
+	pub par_threshold: ParThreshold,
 	#[doc(hidden)]
 	pub non_exhaustive: NonExhaustive,
 }
 impl<T: ComplexField> Auto<T> for TridiagParams {
 	fn auto() -> Self {
 		Self {
-			par_threshold: 192 * 256,
+			par_threshold: ParThreshold::Derived,
 			non_exhaustive: NonExhaustive(()),
 		}
 	}
@@ -319,7 +322,14 @@ pub fn tridiag_in_place<T: ComplexField>(
 				break;
 			}
 			let rem = n - k - 1;
-			if rem * rem / 2 < params.par_threshold {
+			// One section per step: the symmetric fused update over column blocks; the unit is
+			// an element of the triangle.
+			if !params.par_threshold.region_pays::<T>(
+				par.shape(),
+				rem * rem / 2,
+				rate::TRIDIAG,
+				1,
+			) {
 				par = Par::Seq;
 			}
 			let k1 = k + 1;

@@ -93,48 +93,7 @@ const TRAILING_UPDATE_SECTIONS: u32 = 2;
 const SWAP_STAGE_SECTIONS: u32 = 4;
 use crate::utils::cost::{NS_PER_SWAP, gemm_ns_per_mac, serial_time};
 
-/// Floor of the parallel regions of the blocked $LU$ factorization.
-///
-/// The default is [`ParThreshold::Derived`]: each region is decided by its serial time
-/// against the dispatch cost of the parallelism it would use ([`ParShape::dispatch_cost`]),
-/// the trailing update of a recursion level counting 2 sections and the swap stage 4.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
-pub enum ParThreshold {
-	/// Derive the floor of every region from its serial time and the dispatch cost.
-	#[default]
-	Derived,
-	/// A fixed floor, counted in `f64` elements of the submatrix that would be threaded (a
-	/// complex element is four real MACs, so it reaches the same floor at a quarter of the
-	/// area). `Fixed(0)` and `Fixed(1)` make every region parallel that has any work.
-	Fixed(usize),
-	/// Never run a region in parallel.
-	Never,
-}
-
-/// The integer form used by the C API: `0` is [`Derived`](ParThreshold::Derived),
-/// `usize::MAX` is [`Never`](ParThreshold::Never), any other value is
-/// [`Fixed`](ParThreshold::Fixed).
-impl From<usize> for ParThreshold {
-	fn from(value: usize) -> Self {
-		match value {
-			0 => ParThreshold::Derived,
-			usize::MAX => ParThreshold::Never,
-			n => ParThreshold::Fixed(n),
-		}
-	}
-}
-
-/// See [`From<usize>`](ParThreshold#impl-From<usize>-for-ParThreshold); `Fixed(0)` is
-/// written as `1`, the same behaviour, because `0` means derived.
-impl From<ParThreshold> for usize {
-	fn from(value: ParThreshold) -> Self {
-		match value {
-			ParThreshold::Derived => 0,
-			ParThreshold::Fixed(n) => n.max(1),
-			ParThreshold::Never => usize::MAX,
-		}
-	}
-}
+pub use crate::utils::cost::ParThreshold;
 
 /// Whether the trailing update (`b x cols` solve, `rows x cols x b` product) of a level runs
 /// parallel. [`ParThreshold::Derived`] derives the answer from the serial time and the

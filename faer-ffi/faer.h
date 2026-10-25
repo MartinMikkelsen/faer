@@ -181,7 +181,6 @@ typedef struct FaerV0_24_PivLltParams {
 
 typedef struct FaerV0_24_QrParams {
   size_t blocking_threshold;
-  size_t par_threshold;
 } FaerV0_24_QrParams;
 
 typedef struct FaerV0_24_TridiagParams {

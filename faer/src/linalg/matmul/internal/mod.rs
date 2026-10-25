@@ -69,9 +69,13 @@ pub fn spicy_matmul<I: Index, T: ComplexField>(
 	if nrows == 0 || ncols == 0 {
 		return;
 	}
-	let mut par = if (nrows * ncols).saturating_mul(depth)
-		> 32usize * 32usize * 32usize
-	{
+	// One section; the unit is a multiply-add at the GEMM rate of the dtype.
+	let mut par = if crate::utils::cost::par_pays::<T>(
+		&par,
+		(nrows * ncols).saturating_mul(depth),
+		crate::utils::cost::rate::GEMM_MAC,
+		1,
+	) {
 		par
 	} else {
 		Par::Seq

@@ -770,8 +770,19 @@ mod matvec_rowmajor {
 		par: Par,
 	) {
 		core::assert!(const { T::SIMD_CAPABILITIES.is_simd() });
+		// One section (a split of the rows or columns); the unit is a matrix element. The
+		// product reads each element once, so the rate is the streaming one.
 		let size = *lhs.nrows() * *lhs.ncols();
-		let par = if size < 256 * 256usize { Par::Seq } else { par };
+		let par = if crate::utils::cost::par_pays::<T>(
+			&par,
+			size,
+			crate::utils::cost::rate::MATVEC,
+			1,
+		) {
+			par
+		} else {
+			Par::Seq
+		};
 		match par {
 			Par::Seq => {
 				pub struct Impl<'a, 'M, 'K, T: ComplexField> {
@@ -890,8 +901,19 @@ mod matvec_colmajor {
 		par: Par,
 	) {
 		core::assert!(const { T::SIMD_CAPABILITIES.is_simd() });
+		// One section (a split of the rows or columns); the unit is a matrix element. The
+		// product reads each element once, so the rate is the streaming one.
 		let size = *lhs.nrows() * *lhs.ncols();
-		let par = if size < 256 * 256usize { Par::Seq } else { par };
+		let par = if crate::utils::cost::par_pays::<T>(
+			&par,
+			size,
+			crate::utils::cost::rate::MATVEC,
+			1,
+		) {
+			par
+		} else {
+			Par::Seq
+		};
 		match par {
 			Par::Seq => {
 				pub struct Impl<'a, 'M, 'K, T: ComplexField> {

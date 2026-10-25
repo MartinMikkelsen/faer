@@ -1,4 +1,5 @@
 use crate::internal_prelude::*;
+use crate::utils::cost::{ParThreshold, rate};
 use crate::{assert, perm};
 use linalg::matmul::triangular::BlockStructure;
 const TOP_BIT: usize = 1 << (usize::BITS - 1);
@@ -29,8 +30,11 @@ pub struct LbltParams {
 	pub pivoting: PivotingStrategy,
 	/// block size of the algorithm
 	pub block_size: usize,
-	/// threshold at which size parallelism should be disabled
-	pub par_threshold: usize,
+	/// floor of the parallel regions of the full-pivoting variant:
+	/// [`ParThreshold::Derived`] (the default) runs a step in parallel when its serial time
+	/// pays for one section; [`ParThreshold::Fixed`] counts elements `rem*rem` of the trailing
+	/// block
+	pub par_threshold: ParThreshold,
 	#[doc(hidden)]
 	pub non_exhaustive: NonExhaustive,
 }
@@ -325,7 +329,14 @@ fn lblt_full_piv<T: ComplexField>(
 			i1 = max_i;
 		}
 		let rem = n - npiv;
-		if rem * rem < params.par_threshold {
+		// One section per step (the rank-1 or rank-2 update fused with the pivot search);
+		// the unit is an element of the trailing block.
+		if !params.par_threshold.region_pays::<T>(
+			par.shape(),
+			rem * rem,
+			rate::BUNCH_KAUFMAN,
+			1,
+		) {
 			par = Par::Seq;
 		}
 		if i0 != 0 {
@@ -347,7 +358,6 @@ fn lblt_full_piv<T: ComplexField>(
 			for i in 0..n {
 				A[(i, i)] = (A[(i, i)].real() - &diag * L[i].abs2()).to_cplx();
 			}
-			if n < params.par_threshold {}
 			if n != 0 {
 				(max_i, max_j, max_offdiag) =
 					rank_1_update_and_argmax(A.rb_mut(), L.rb(), diag, par.reborrow());
@@ -908,7 +918,7 @@ impl<T: ComplexField> Auto<T> for LbltParams {
 		Self {
 			pivoting: PivotingStrategy::PartialDiag,
 			block_size: 64,
-			par_threshold: 128 * 128,
+			par_threshold: ParThreshold::Derived,
 			non_exhaustive: NonExhaustive(()),
 		}
 	}

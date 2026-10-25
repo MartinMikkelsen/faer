@@ -1,5 +1,6 @@
 use crate::assert;
 use crate::internal_prelude::*;
+use crate::utils::cost::{ParThreshold, rate};
 use linalg::householder::{self, HouseholderInfo};
 use linalg::matmul::triangular::BlockStructure;
 use linalg::matmul::{self, dot, matmul};
@@ -7,8 +8,10 @@ use linalg::triangular_solve;
 /// hessenberg factorization tuning parameters
 #[derive(Copy, Clone, Debug)]
 pub struct HessenbergParams {
-	/// threshold at which parallelism should be disabled
-	pub par_threshold: usize,
+	/// floor of the parallel regions of the unblocked reduction: [`ParThreshold::Derived`] (the
+	/// default) runs a step in parallel when its serial time pays for its two sections;
+	/// [`ParThreshold::Fixed`] counts elements `n*n` of the trailing block
+	pub par_threshold: ParThreshold,
 	/// threshold at which blocking should be disabled
 	pub blocking_threshold: usize,
 	#[doc(hidden)]
@@ -17,7 +20,7 @@ pub struct HessenbergParams {
 impl<T: ComplexField> Auto<T> for HessenbergParams {
 	fn auto() -> Self {
 		Self {
-			par_threshold: 192 * 256,
+			par_threshold: ParThreshold::Derived,
 			blocking_threshold: 256 * 256,
 			non_exhaustive: NonExhaustive(()),
 		}
@@ -287,8 +290,16 @@ fn hessenberg_rearranged_unblocked<T: ComplexField>(
 				);
 			}
 			{
+				// Two sections per step: the two matrix-vector products (`w0` and the rank-one
+				// update of `A02`, or `z2` and `y2` on the first step); the unit is an element
+				// of the trailing block.
 				let n = n - k - 1;
-				if n * n < params.par_threshold {
+				if !params.par_threshold.region_pays::<T>(
+					par.shape(),
+					n * n,
+					rate::HESSENBERG,
+					2,
+				) {
 					par = Par::Seq;
 				}
 			}
@@ -815,7 +826,7 @@ mod tests {
 					par,
 					MemStack::new(&mut [MaybeUninit::uninit(); 8 * 1024]),
 					HessenbergParams {
-						par_threshold: 0,
+						par_threshold: ParThreshold::Fixed(1),
 						..auto!(c64)
 					}
 					.into(),
@@ -879,7 +890,7 @@ mod tests {
 					par,
 					MemStack::new(&mut [MaybeUninit::uninit(); 16 * 1024]),
 					HessenbergParams {
-						par_threshold: 0,
+						par_threshold: ParThreshold::Fixed(1),
 						..auto!(c64)
 					}
 					.into(),

@@ -671,7 +671,6 @@ pub mod linalg {
 		#[repr(faer::linalg::qr::no_pivoting::factor::QrParams)]
 		pub struct QrParams {
 			blocking_threshold: usize,
-			par_threshold: usize,
 		}
 		#[repr(faer::linalg::qr::col_pivoting::factor::ColPivQrParams)]
 		pub struct ColPivQrParams {

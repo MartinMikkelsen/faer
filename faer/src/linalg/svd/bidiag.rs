@@ -1,6 +1,7 @@
 use crate::assert;
 use crate::internal_prelude::*;
 use linalg::householder::*;
+use crate::utils::cost::{ParThreshold, rate};
 use linalg::matmul::{dot, matmul};
 /// computes the layout of the workspace required to compute a matrix's
 /// bidiagonalization
@@ -20,15 +21,17 @@ pub fn bidiag_in_place_scratch<T: ComplexField>(
 /// bidiagonalization tuning parameters.
 #[derive(Debug, Copy, Clone)]
 pub struct BidiagParams {
-	/// threshold at which parallelism should be disabled
-	pub par_threshold: usize,
+	/// floor of the parallel regions: [`ParThreshold::Derived`] (the default) runs a step in
+	/// parallel when its serial time pays for its two sections; [`ParThreshold::Fixed`] counts
+	/// elements of the trailing block `(m-k-1)*(n-k-1)`
+	pub par_threshold: ParThreshold,
 	#[doc(hidden)]
 	pub non_exhaustive: NonExhaustive,
 }
 impl<T: ComplexField> Auto<T> for BidiagParams {
 	fn auto() -> Self {
 		Self {
-			par_threshold: 192 * 256,
+			par_threshold: ParThreshold::Derived,
 			non_exhaustive: NonExhaustive(()),
 		}
 	}
@@ -105,7 +108,14 @@ pub fn bidiag_in_place<T: ComplexField>(
 				make_householder_in_place(a11, A21.rb_mut());
 			let ref tl_inv = tl.recip();
 			Hl[k] = tl.to_cplx();
-			if (m - k - 1) * (n - k - 1) < params.par_threshold {
+			// Two sections per step: the fused two-sided update (the first step: the product
+			// `y2`) and the product `z2`; the unit is an element of the trailing block.
+			if !params.par_threshold.region_pays::<T>(
+				par.shape(),
+				(m - k - 1) * (n - k - 1),
+				rate::BIDIAG,
+				2,
+			) {
 				par = Par::Seq;
 			}
 			if k > 0 {

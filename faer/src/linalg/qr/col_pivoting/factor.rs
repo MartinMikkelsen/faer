@@ -1,6 +1,7 @@
 pub use super::super::no_pivoting::factor::recommended_block_size;
 use crate::assert;
 use crate::internal_prelude::*;
+use crate::utils::cost::{ParThreshold, rate};
 use crate::perm::swap_cols_idx;
 use linalg::householder::{self, HouseholderInfo};
 use pulp::Simd;
@@ -93,8 +94,10 @@ fn update_mat_and_dot_simd<T: ComplexField>(
 pub struct ColPivQrParams {
 	/// threshold at which blocking algorithms should be disabled
 	pub blocking_threshold: usize,
-	/// threshold at which the parallelism should be disabled
-	pub par_threshold: usize,
+	/// floor of the parallel regions: [`ParThreshold::Derived`] (the default) runs a step in
+	/// parallel when its serial time pays for one section; [`ParThreshold::Fixed`] counts
+	/// elements of the trailing block `(m-k-1)*(n-k-1)`
+	pub par_threshold: ParThreshold,
 	#[doc(hidden)]
 	pub non_exhaustive: NonExhaustive,
 }
@@ -103,7 +106,7 @@ impl<T: ComplexField> Auto<T> for ColPivQrParams {
 	fn auto() -> Self {
 		Self {
 			blocking_threshold: 48 * 48,
-			par_threshold: 192 * 256,
+			par_threshold: ParThreshold::Derived,
 			non_exhaustive: NonExhaustive(()),
 		}
 	}
@@ -241,7 +244,15 @@ fn qr_in_place_unblocked<'out, I: Index, T: ComplexField>(
 					}
 					break 'unscale;
 				}
-				if (m - k - 1) * (n - k - 1) < params.par_threshold {
+				// One section per step: the fused update of the trailing block and the
+				// norms (or, without the delayed update, the product, which the same
+				// decision covers); the unit is an element of the trailing block.
+				if !params.par_threshold.region_pays::<T>(
+					par.shape(),
+					(m - k - 1) * (n - k - 1),
+					rate::QR_COL_PIVOT,
+					1,
+				) {
 					par = Par::Seq;
 				}
 				if delayed_update {

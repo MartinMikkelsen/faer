@@ -437,6 +437,19 @@ fn solve_unit_lower_triangular_in_place_imp<'N, 'K, T: ComplexField>(
 	let n = N.unbound();
 	let k = K.unbound();
 	if k > 64 && n <= 128 {
+		// A split of the right hand sides, taken for every `par` (it is a shape rule, short
+		// triangles against many columns); only the join is a cost: one section, the unit a
+		// multiply-add of the solve, `n*n*k/2`, at the GEMM rate.
+		let par = if crate::utils::cost::par_pays::<T>(
+			&par,
+			n.saturating_mul(n).saturating_mul(k) / 2,
+			crate::utils::cost::rate::GEMM_MAC,
+			1,
+		) {
+			par
+		} else {
+			Par::Seq
+		};
 		make_guard!(LEFT);
 		make_guard!(RIGHT);
 		let mid = K.partition(IdxInc::new_checked(k / 2, K), LEFT, RIGHT);
@@ -518,6 +531,19 @@ fn solve_lower_triangular_in_place_imp<'N, 'K, T: ComplexField>(
 	let n = N.unbound();
 	let k = K.unbound();
 	if k > 64 && n <= 128 {
+		// A split of the right hand sides, taken for every `par` (it is a shape rule, short
+		// triangles against many columns); only the join is a cost: one section, the unit a
+		// multiply-add of the solve, `n*n*k/2`, at the GEMM rate.
+		let par = if crate::utils::cost::par_pays::<T>(
+			&par,
+			n.saturating_mul(n).saturating_mul(k) / 2,
+			crate::utils::cost::rate::GEMM_MAC,
+			1,
+		) {
+			par
+		} else {
+			Par::Seq
+		};
 		make_guard!(LEFT);
 		make_guard!(RIGHT);
 		let mid = K.partition(IdxInc::new_checked(k / 2, K), LEFT, RIGHT);
