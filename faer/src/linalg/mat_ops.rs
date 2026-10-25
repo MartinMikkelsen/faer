@@ -886,7 +886,7 @@ mod matmul {
 						lhs,
 						rhs,
 						T::one_impl(),
-						get_global_parallelism(),
+						get_global_parallelism().par(),
 					);
 					out
 				}
@@ -932,7 +932,7 @@ mod matmul {
 						lhs,
 						rhs,
 						T::one_impl(),
-						get_global_parallelism(),
+						get_global_parallelism().par(),
 					);
 					out
 				}
@@ -981,7 +981,7 @@ mod matmul {
 						lhs,
 						rhs,
 						T::one_impl(),
-						get_global_parallelism(),
+						get_global_parallelism().par(),
 					);
 					out
 				}
@@ -1025,7 +1025,7 @@ mod matmul {
 						lhs.as_mat(),
 						rhs.as_mat(),
 						T::one_impl(),
-						get_global_parallelism(),
+						get_global_parallelism().par(),
 					);
 					let [[out]] = out;
 					out
@@ -1070,7 +1070,7 @@ mod matmul {
 						lhs,
 						rhs,
 						T::one_impl(),
-						get_global_parallelism(),
+						get_global_parallelism().par(),
 					);
 					out
 				}
@@ -3352,7 +3352,7 @@ mod sparse {
 						lhs,
 						rhs,
 						one::<T>(),
-						crate::get_global_parallelism(),
+						crate::get_global_parallelism().par(),
 					)
 					.unwrap()
 					.into_shape(nrows, ncols)
@@ -3439,7 +3439,7 @@ mod sparse {
 						lhs,
 						rhs,
 						T::one_impl(),
-						crate::get_global_parallelism(),
+						crate::get_global_parallelism().par(),
 					);
 					out
 				}
@@ -3490,7 +3490,7 @@ mod sparse {
 						rhs.transpose(),
 						lhs.transpose(),
 						T::one_impl(),
-						crate::get_global_parallelism(),
+						crate::get_global_parallelism().par(),
 					);
 					out
 				}
@@ -3537,7 +3537,7 @@ mod sparse {
 						lhs,
 						rhs.as_mat(),
 						T::one_impl(),
-						crate::get_global_parallelism(),
+						crate::get_global_parallelism().par(),
 					);
 					out
 				}
@@ -3581,7 +3581,7 @@ mod sparse {
 						rhs.transpose().as_mat(),
 						lhs.transpose(),
 						T::one_impl(),
-						crate::get_global_parallelism(),
+						crate::get_global_parallelism().par(),
 					);
 					out
 				}
@@ -4009,7 +4009,7 @@ mod sparse {
 						lhs,
 						rhs,
 						T::one_impl(),
-						crate::get_global_parallelism(),
+						crate::get_global_parallelism().par(),
 					);
 					out
 				}
@@ -4060,7 +4060,7 @@ mod sparse {
 						rhs.transpose(),
 						lhs.transpose(),
 						T::one_impl(),
-						crate::get_global_parallelism(),
+						crate::get_global_parallelism().par(),
 					);
 					out
 				}
@@ -4107,7 +4107,7 @@ mod sparse {
 						lhs.as_mat(),
 						rhs,
 						T::one_impl(),
-						crate::get_global_parallelism(),
+						crate::get_global_parallelism().par(),
 					);
 					out
 				}
@@ -4151,7 +4151,7 @@ mod sparse {
 						rhs.transpose(),
 						lhs.transpose().as_mat(),
 						T::one_impl(),
-						crate::get_global_parallelism(),
+						crate::get_global_parallelism().par(),
 					);
 					out
 				}

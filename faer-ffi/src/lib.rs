@@ -2523,11 +2523,11 @@ pub mod linalg {
 #[unsafe(no_mangle)]
 pub extern "C" fn libfaer_v0_23_get_global_par() -> Par {
 	match faer::get_global_parallelism() {
-		faer::Par::Seq => Par {
+		faer::GlobalPar::Seq => Par {
 			tag: ParTag::Seq,
 			nthreads: 1,
 		},
-		faer::Par::Rayon(nthreads) => Par {
+		faer::GlobalPar::Rayon(nthreads) => Par {
 			tag: ParTag::Rayon,
 			nthreads: nthreads.get(),
 		},
@@ -2536,8 +2536,8 @@ pub extern "C" fn libfaer_v0_23_get_global_par() -> Par {
 #[unsafe(no_mangle)]
 pub extern "C" fn libfaer_v0_23_set_global_par(par: Par) {
 	faer::set_global_parallelism(match par.tag {
-		ParTag::Seq => faer::Par::Seq,
-		ParTag::Rayon => faer::Par::rayon(par.nthreads),
+		ParTag::Seq => faer::GlobalPar::Seq,
+		ParTag::Rayon => faer::GlobalPar::rayon(par.nthreads),
 	})
 }
 #[unsafe(no_mangle)]

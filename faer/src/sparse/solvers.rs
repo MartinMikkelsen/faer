@@ -103,7 +103,7 @@ impl<I: Index, T: ComplexField> Llt<I, T> {
 			.try_reserve_exact(len_val)
 			.map_err(|_| FaerError::OutOfMemory)?;
 		numeric.resize(len_val, zero::<T>());
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		symbolic.inner.factorize_numeric_llt::<T>(
 			&mut numeric,
@@ -132,7 +132,7 @@ impl<I: Index, T: ComplexField> Lu<I, T> {
 		mat: SparseColMatRef<'_, I, T>,
 	) -> Result<Self, LuError> {
 		let mut numeric = linalg_sp::lu::NumericLu::new();
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		symbolic.inner.factorize_numeric_lu::<T>(
 			&mut numeric,
@@ -169,7 +169,7 @@ impl<I: Index, T: ComplexField> Qr<I, T> {
 			.try_reserve_exact(len_idx)
 			.map_err(|_| FaerError::OutOfMemory)?;
 		indices.resize(len_idx, I::truncate(0));
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		symbolic.inner.factorize_numeric_qr::<T>(
 			&mut indices,
@@ -226,7 +226,7 @@ impl<I: Index, T: ComplexField> ShapeCore for Lu<I, T> {
 impl<I: Index, T: ComplexField> SolveCore<T> for Llt<I, T> {
 	#[track_caller]
 	fn solve_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		let rhs_ncols = rhs.ncols();
 		linalg_sp::cholesky::LltRef::<'_, I, T>::new(
@@ -251,7 +251,7 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Llt<I, T> {
 		conj: Conj,
 		rhs: MatMut<'_, T>,
 	) {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		let rhs_ncols = rhs.ncols();
 		linalg_sp::cholesky::LltRef::<'_, I, T>::new(
@@ -273,7 +273,7 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Llt<I, T> {
 impl<I: Index, T: ComplexField> SolveCore<T> for Qr<I, T> {
 	#[track_caller]
 	fn solve_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		let rhs_ncols = rhs.ncols();
 		unsafe {
@@ -313,7 +313,7 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Qr<I, T> {
 impl<I: Index, T: ComplexField> SolveLstsqCore<T> for Qr<I, T> {
 	#[track_caller]
 	fn solve_lstsq_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		let rhs_ncols = rhs.ncols();
 		unsafe {
@@ -338,7 +338,7 @@ impl<I: Index, T: ComplexField> SolveLstsqCore<T> for Qr<I, T> {
 impl<I: Index, T: ComplexField> SolveCore<T> for Lu<I, T> {
 	#[track_caller]
 	fn solve_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		let rhs_ncols = rhs.ncols();
 
@@ -364,7 +364,7 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Lu<I, T> {
 		conj: Conj,
 		rhs: MatMut<'_, T>,
 	) {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		let rhs_ncols = rhs.ncols();
 
@@ -408,7 +408,7 @@ impl<
 			this,
 			conj,
 			rhs.as_mat_mut().as_dyn_cols_mut(),
-			get_global_parallelism(),
+			get_global_parallelism().par(),
 		);
 	}
 
@@ -430,7 +430,7 @@ impl<
 			this,
 			conj,
 			rhs.as_mat_mut().as_dyn_cols_mut(),
-			get_global_parallelism(),
+			get_global_parallelism().par(),
 		);
 	}
 
@@ -452,7 +452,7 @@ impl<
 			this,
 			conj,
 			rhs.as_mat_mut().as_dyn_cols_mut(),
-			get_global_parallelism(),
+			get_global_parallelism().par(),
 		);
 	}
 
@@ -474,7 +474,7 @@ impl<
 			this,
 			conj,
 			rhs.as_mat_mut().as_dyn_cols_mut(),
-			get_global_parallelism(),
+			get_global_parallelism().par(),
 		);
 	}
 }
@@ -534,7 +534,7 @@ impl<
 			self.rb().transpose(),
 			Conj::No,
 			rhs.as_mat_mut().as_dyn_cols_mut(),
-			get_global_parallelism(),
+			get_global_parallelism().par(),
 		);
 	}
 
@@ -554,7 +554,7 @@ impl<
 			self.rb().transpose(),
 			Conj::No,
 			rhs.as_mat_mut().as_dyn_cols_mut(),
-			get_global_parallelism(),
+			get_global_parallelism().par(),
 		);
 	}
 
@@ -574,7 +574,7 @@ impl<
 			self.rb().transpose(),
 			Conj::No,
 			rhs.as_mat_mut().as_dyn_cols_mut(),
-			get_global_parallelism(),
+			get_global_parallelism().par(),
 		);
 	}
 
@@ -594,7 +594,7 @@ impl<
 			self.rb().transpose(),
 			Conj::No,
 			rhs.as_mat_mut().as_dyn_cols_mut(),
-			get_global_parallelism(),
+			get_global_parallelism().par(),
 		);
 	}
 

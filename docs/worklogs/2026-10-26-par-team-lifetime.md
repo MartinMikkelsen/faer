@@ -14,8 +14,9 @@
   itself. `join_raw`, `join_sized`, `split`, `for_each_with_par` and the GEMM tiling hand each
   concurrent part its own sub-team as a `Par` or consume the team, so no `TeamExec<'static>`
   pointer cast or installed pointer remains.
-- **A team cannot be global.** `set_global_parallelism(Par::Team(_))` panics and
-  `get_global_parallelism()` returns `Par<'static>` of `Seq` or `Rayon`.
+- **A team cannot be global.** the global setting is the `Copy` type
+  `GlobalPar { Seq, Rayon }`, so `set_global_parallelism` rejects a team at compile time (no
+  run time panic); `get_global_parallelism()` returns it and `.par()` gives `Par<'static>`.
 - **Every `match par` names all variants.** The `_ =>` arms that treated a `Team` as Rayon are
   explicit; no path starts a Rayon job with a `Team` in hand.
 - **Signatures keep `par: Par`.** The lifetime is elided (edition 2021), so about 470 signatures

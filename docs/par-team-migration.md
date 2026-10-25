@@ -34,9 +34,13 @@ pub enum ParShape { Seq, Rayon(NonZeroUsize), Team(NonZeroUsize) } // Copy, no a
 * Concurrent children are handed out by splitting, never copied. The two halves of `join_raw`,
   the two sides of the LU swap stage and the jobs of a `for_each` receive sub-teams as `Par<'c>`
   values owned by the child.
-* The global parallelism (`set_global_parallelism`, `get_global_parallelism`) can only be `Seq`
-  or `Rayon`: `get_global_parallelism()` returns `Par<'static>`, and setting a `Team` panics,
-  since a team is exclusive authority over reserved threads and cannot be a process wide setting.
+* The global parallelism is a separate `Copy` type, `GlobalPar { Seq, Rayon(NonZeroUsize) }`,
+  with no `Team` variant: `set_global_parallelism(GlobalPar)` cannot be given a `Par`, so a team
+  as a process wide setting is a compile error (compile-fail doctest on `GlobalPar`), since a
+  team is exclusive authority over reserved threads. `get_global_parallelism()` returns
+  `GlobalPar`; `GlobalPar::par()` (or `Par::from`) gives the owned `Par<'static>` that the high
+  level `Mat::svd()` family runs with, and `ParShape::from` the shape. `ParShape` is not reused
+  because it has a `Team` variant.
 
 ## Queries without authority
 
@@ -92,8 +96,7 @@ path dispatches to the global Rayon pool with a `Team` in hand.
 | `*_scratch(.., par)` take `ParShape` | every caller of a scratch function: pass `par.shape()` or `ParShape::{Seq, rayon(n), team(n)}` |
 | `LinOp`, `BiLinOp`, `Precond`, `BiPrecond` | implementors keep `par: Par` in `apply` and friends (lifetime elided) and take `ParShape` in the scratch methods; an `apply` that uses `par` twice adds `reborrow()` |
 | `Par::Team(TeamExec<'team>)` | `exec.team(\|team\| faer_fn(.., Par::Team(team)))`; the width is the team size |
-| `get_global_parallelism()` returns `Par<'static>` | none for the high level `Mat::svd()` family |
-| `set_global_parallelism(Par::Team(_))` | panics |
+| `set_global_parallelism` takes `GlobalPar`, `get_global_parallelism()` returns it | callers pass `GlobalPar::Seq` / `GlobalPar::rayon(n)` instead of `Par`; read the setting as a `Par` with `.par()`; none for the high level `Mat::svd()` family |
 
 ## Verification
 
@@ -101,7 +104,8 @@ path dispatches to the global Rayon pool with a `Team` in hand.
   `linalg::matmul::internal::tests::*strict_triangle*` cases recorded in `PATCHSET.md`, which are
   in files this work does not touch. The five integration test targets and the 55 doctests pass.
 * Compile-fail doctests on `Par` reject `Copy`, `Clone`, a second use of a consumed `par`, and a
-  `join_raw` whose two children both use the parent.
+  `join_raw` whose two children both use the parent; one on `GlobalPar` rejects a `Par`
+  (so a team) in `set_global_parallelism`.
 * `utils::team` tests: GEMM, LU, QR, Cholesky on a team of six match the sequential result;
   teams of one, three and five; `join_raw` widths; `for_each_with_par` deals every item once;
   `join_sized` on a team of six hands out exactly six threads and never overlaps beyond six;

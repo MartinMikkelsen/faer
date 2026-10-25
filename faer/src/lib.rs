@@ -1260,36 +1260,88 @@ static GLOBAL_PARALLELISM: AtomicUsize = {
 pub fn disable_global_parallelism() {
 	GLOBAL_PARALLELISM.store(0, core::sync::atomic::Ordering::Relaxed);
 }
-/// sets the global parallelism settings.
+/// the process wide parallelism setting: sequential or the global rayon threadpool. `Copy`,
+/// and it has no team variant, so a [`Par::Team`] cannot be stored as the global setting; the
+/// type checker rejects it instead of a run time panic.
 ///
-/// # panics
-/// panics for `Par::Team`: a team is exclusive authority over reserved threads and cannot be
-/// a process wide setting.
-#[track_caller]
-pub fn set_global_parallelism(par: Par) {
+/// ```
+/// use faer::{GlobalPar, Par};
+/// faer::set_global_parallelism(GlobalPar::Seq);
+/// assert!(matches!(faer::get_global_parallelism().par(), Par::Seq));
+/// ```
+///
+/// A [`Par`] is not accepted, so a team cannot be set globally:
+///
+/// ```compile_fail
+/// faer::set_global_parallelism(faer::Par::Seq);
+/// ```
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum GlobalPar {
+	/// sequential
+	Seq,
+	/// the global rayon threadpool with this many threads
+	#[cfg(feature = "rayon")]
+	Rayon(NonZeroUsize),
+}
+impl GlobalPar {
+	/// `Rayon(nthreads)`, or `Rayon(rayon::current_num_threads())` when `nthreads` is zero
+	#[inline]
+	#[cfg(feature = "rayon")]
+	pub fn rayon(nthreads: usize) -> Self {
+		match Par::rayon(nthreads) {
+			Par::Rayon(n) => Self::Rayon(n),
+			_ => unreachable!(),
+		}
+	}
+
+	/// the parallelism this setting stands for, as an owned `Par<'static>`
+	#[inline]
+	pub fn par(self) -> Par<'static> {
+		match self {
+			Self::Seq => Par::Seq,
+			#[cfg(feature = "rayon")]
+			Self::Rayon(n) => Par::Rayon(n),
+		}
+	}
+}
+impl From<GlobalPar> for Par<'static> {
+	#[inline]
+	fn from(value: GlobalPar) -> Self {
+		value.par()
+	}
+}
+impl From<GlobalPar> for ParShape {
+	#[inline]
+	fn from(value: GlobalPar) -> Self {
+		match value {
+			GlobalPar::Seq => ParShape::Seq,
+			#[cfg(feature = "rayon")]
+			GlobalPar::Rayon(n) => ParShape::Rayon(n),
+		}
+	}
+}
+/// sets the global parallelism settings.
+#[inline]
+pub fn set_global_parallelism(par: GlobalPar) {
 	let value = match par {
-		Par::Seq => 1,
+		GlobalPar::Seq => 1,
 		#[cfg(feature = "rayon")]
-		Par::Rayon(n) => n.get().saturating_add(2),
-		#[cfg(feature = "threadteam")]
-		Par::Team(_) => panic!("a team cannot be the global parallelism"),
-		#[cfg(not(feature = "threadteam"))]
-		Par::__Lifetime(never, _) => match never {},
+		GlobalPar::Rayon(n) => n.get().saturating_add(2),
 	};
 	GLOBAL_PARALLELISM.store(value, core::sync::atomic::Ordering::Relaxed);
 }
-/// gets the global parallelism settings.
+/// gets the global parallelism settings. Use [`GlobalPar::par`] to run work with it.
 ///
 /// # panics
 /// panics if global parallelism is disabled.
 #[track_caller]
-pub fn get_global_parallelism() -> Par<'static> {
+pub fn get_global_parallelism() -> GlobalPar {
 	let value = GLOBAL_PARALLELISM.load(core::sync::atomic::Ordering::Relaxed);
 	match value {
 		0 => panic!("Global parallelism is disabled."),
-		1 => Par::Seq,
+		1 => GlobalPar::Seq,
 		#[cfg(feature = "rayon")]
-		n => Par::rayon(n - 2),
+		n => GlobalPar::rayon(n - 2),
 		#[cfg(not(feature = "rayon"))]
 		_ => unreachable!(),
 	}

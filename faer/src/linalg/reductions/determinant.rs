@@ -4,7 +4,7 @@ use alloc::vec;
 use dyn_stack::MemBuffer;
 pub fn determinant<T: ComplexField>(mat: MatRef<'_, T>) -> T::Canonical {
 	assert!(mat.nrows() == mat.ncols());
-	let mut par = get_global_parallelism();
+	let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 	let (m, n) = mat.shape();
 	let mut row_perm_fwd = vec![0usize; m];

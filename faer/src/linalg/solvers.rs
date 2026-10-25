@@ -295,7 +295,7 @@ impl<
 		linalg::triangular_solve::solve_lower_triangular_in_place(
 			self.rb(),
 			rhs.as_mat_mut().as_dyn_cols_mut(),
-			get_global_parallelism(),
+			get_global_parallelism().par(),
 		);
 	}
 
@@ -309,7 +309,7 @@ impl<
 		linalg::triangular_solve::solve_upper_triangular_in_place(
 			self.rb(),
 			rhs.as_mat_mut().as_dyn_cols_mut(),
-			get_global_parallelism(),
+			get_global_parallelism().par(),
 		);
 	}
 
@@ -323,7 +323,7 @@ impl<
 		linalg::triangular_solve::solve_unit_lower_triangular_in_place(
 			self.rb(),
 			rhs.as_mat_mut().as_dyn_cols_mut(),
-			get_global_parallelism(),
+			get_global_parallelism().par(),
 		);
 	}
 
@@ -337,7 +337,7 @@ impl<
 		linalg::triangular_solve::solve_unit_upper_triangular_in_place(
 			self.rb(),
 			rhs.as_mat_mut().as_dyn_cols_mut(),
-			get_global_parallelism(),
+			get_global_parallelism().par(),
 		);
 	}
 
@@ -427,7 +427,7 @@ impl<
 			if side == Side::Upper {
 				A = A.transpose();
 			}
-			let mut par = get_global_parallelism();
+			let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 			let n = A.nrows();
 			let mut s = Diag::<T>::zeros(n);
@@ -459,7 +459,7 @@ impl<
 		pub fn imp<T: ComplexField>(
 			A: MatRef<'_, T>,
 		) -> Result<Vec<T::Real>, SvdError> {
-			let mut par = get_global_parallelism();
+			let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 			let m = A.nrows();
 			let n = A.ncols();
@@ -544,7 +544,7 @@ impl<C: Conjugate> MatRef<'_, C> {
 
 	#[track_caller]
 	fn eigenvalues_imp(&self) -> Result<Vec<Complex<Real<C>>>, EvdError> {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		if const { C::Canonical::IS_REAL } {
 			let A = unsafe {
@@ -789,7 +789,7 @@ impl<T: ComplexField> Llt<T> {
 
 	#[track_caller]
 	fn new_imp(mut L: Mat<T>) -> Result<Self, LltError> {
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		let n = L.nrows();
 		let mut mem = MemBuffer::new(
 			linalg::cholesky::llt::factor::cholesky_in_place_scratch::<T>(
@@ -837,7 +837,7 @@ impl<T: ComplexField> Ldlt<T> {
 
 	#[track_caller]
 	fn new_imp(mut L: Mat<T>) -> Result<Self, LdltError> {
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		let n = L.nrows();
 		let mut D = Diag::zeros(n);
 		let mut mem = MemBuffer::new(
@@ -893,7 +893,7 @@ impl<T: ComplexField> Lblt<T> {
 
 	#[track_caller]
 	fn new_imp(mut L: Mat<T>) -> Self {
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		let n = L.nrows();
 		let mut diag = Diag::zeros(n);
 		let mut subdiag = Diag::zeros(n);
@@ -991,7 +991,7 @@ impl<T: ComplexField> PartialPivLu<T> {
 
 	#[track_caller]
 	fn new_imp(mut LU: Mat<T>) -> Self {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		let (m, n) = LU.shape();
 		let mut row_perm_fwd = vec![0usize; m];
@@ -1047,7 +1047,7 @@ impl<T: ComplexField> FullPivLu<T> {
 
 	#[track_caller]
 	fn new_imp(mut LU: Mat<T>) -> Self {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		let (m, n) = LU.shape();
 		let mut row_perm_fwd = vec![0usize; m];
@@ -1118,7 +1118,7 @@ impl<T: ComplexField> Qr<T> {
 
 	#[track_caller]
 	fn new_imp(mut QR: Mat<T>) -> Self {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		let (m, n) = QR.shape();
 		let size = Ord::min(m, n);
@@ -1172,7 +1172,7 @@ impl<T: ComplexField> Qr<T> {
 	/// computes the factor $Q$
 	pub fn compute_Q(&self) -> Mat<T> {
 		let mut Q = Mat::identity(self.nrows(), self.nrows());
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		linalg::householder::apply_block_householder_sequence_on_the_left_in_place_with_conj(
 			self.Q_basis(),
 			self.Q_coeff(),
@@ -1195,7 +1195,7 @@ impl<T: ComplexField> Qr<T> {
 	pub fn compute_thin_Q(&self) -> Mat<T> {
 		let size = Ord::min(self.nrows(), self.ncols());
 		let mut Q = Mat::identity(self.nrows(), size);
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		linalg::householder::apply_block_householder_sequence_on_the_left_in_place_with_conj(
 			self.Q_basis(),
 			self.Q_coeff(),
@@ -1219,7 +1219,7 @@ impl<T: ComplexField> ColPivQr<T> {
 
 	#[track_caller]
 	fn new_imp(mut QR: Mat<T>) -> Self {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		let (m, n) = QR.shape();
 		let size = Ord::min(m, n);
@@ -1283,7 +1283,7 @@ impl<T: ComplexField> ColPivQr<T> {
 	/// computes the factor $Q$
 	pub fn compute_Q(&self) -> Mat<T> {
 		let mut Q = Mat::identity(self.nrows(), self.nrows());
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		linalg::householder::apply_block_householder_sequence_on_the_left_in_place_with_conj(
 			self.Q_basis(),
 			self.Q_coeff(),
@@ -1306,7 +1306,7 @@ impl<T: ComplexField> ColPivQr<T> {
 	pub fn compute_thin_Q(&self) -> Mat<T> {
 		let size = Ord::min(self.nrows(), self.ncols());
 		let mut Q = Mat::identity(self.nrows(), size);
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		linalg::householder::apply_block_householder_sequence_on_the_left_in_place_with_conj(
 			self.Q_basis(),
 			self.Q_coeff(),
@@ -1348,7 +1348,7 @@ impl<T: ComplexField> Svd<T> {
 		conj: Conj,
 		thin: bool,
 	) -> Result<Self, SvdError> {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		let (m, n) = A.shape();
 		let size = Ord::min(m, n);
@@ -1411,7 +1411,7 @@ impl<T: ComplexField> Svd<T> {
 		let U = self.U();
 		let V = self.V();
 		let S = self.S();
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		let stack = &mut MemBuffer::new(
 			linalg::svd::pseudoinverse_from_svd_scratch::<T>(
 				self.nrows(),
@@ -1449,7 +1449,7 @@ impl<T: ComplexField> SelfAdjointEigen<T> {
 
 	#[track_caller]
 	fn new_imp(A: MatRef<'_, T>, conj: Conj) -> Result<Self, EvdError> {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		let n = A.nrows();
 		let mut U = Mat::zeros(n, n);
@@ -1493,7 +1493,7 @@ impl<T: ComplexField> SelfAdjointEigen<T> {
 	pub fn pseudoinverse(&self) -> Mat<T> {
 		let U = self.U();
 		let S = self.S();
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		let stack = &mut MemBuffer::new(
 			linalg::evd::pseudoinverse_from_self_adjoint_evd_scratch::<T>(
 				self.nrows(),
@@ -1558,7 +1558,7 @@ impl<T: RealField> Eigen<T> {
 	#[track_caller]
 	pub fn new_from_real(A: MatRef<'_, T>) -> Result<Self, EvdError> {
 		assert!(A.nrows() == A.ncols());
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		let n = A.nrows();
 		let mut U_real = Mat::zeros(n, n);
@@ -1596,7 +1596,7 @@ impl<T: RealField> Eigen<T> {
 		A: MatRef<'_, Complex<T>>,
 		conj: Conj,
 	) -> Result<Self, EvdError> {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		let n = A.nrows();
 		let mut U = Mat::zeros(n, n);
@@ -1665,7 +1665,7 @@ impl<T: RealField> GeneralizedEigen<T> {
 			B.nrows() == n,
 			B.ncols() == n
 		));
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		let mut U_real = Mat::zeros(n, n);
 		let mut S_re = Diag::zeros(n);
@@ -1711,7 +1711,7 @@ impl<T: RealField> GeneralizedEigen<T> {
 		B: MatRef<'_, Complex<T>>,
 		conj: Conj,
 	) -> Result<Self, GevdError> {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		let n = A.nrows();
 		let mut U = Mat::zeros(n, n);
@@ -1874,7 +1874,7 @@ impl<T: RealField> ShapeCore for Eigen<T> {
 impl<T: ComplexField> SolveCore<T> for Llt<T> {
 	#[track_caller]
 	fn solve_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		let mut mem = MemBuffer::new(
 			linalg::cholesky::llt::solve::solve_in_place_scratch::<T>(
 				self.L.nrows(),
@@ -1898,7 +1898,7 @@ impl<T: ComplexField> SolveCore<T> for Llt<T> {
 		conj: Conj,
 		rhs: MatMut<'_, T>,
 	) {
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		let mut mem = MemBuffer::new(
 			linalg::cholesky::llt::solve::solve_in_place_scratch::<T>(
 				self.L.nrows(),
@@ -1929,7 +1929,7 @@ fn make_self_adjoint<T: ComplexField>(mut A: MatMut<'_, T>) {
 impl<T: ComplexField> DenseSolveCore<T> for Llt<T> {
 	#[track_caller]
 	fn reconstruct(&self) -> Mat<T> {
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		let n = self.L.nrows();
 		let mut out = Mat::zeros(n, n);
 		let mut mem = MemBuffer::new(
@@ -1950,7 +1950,7 @@ impl<T: ComplexField> DenseSolveCore<T> for Llt<T> {
 
 	#[track_caller]
 	fn inverse(&self) -> Mat<T> {
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		let n = self.L.nrows();
 		let mut out = Mat::zeros(n, n);
 		let mut mem = MemBuffer::new(
@@ -1970,7 +1970,7 @@ impl<T: ComplexField> DenseSolveCore<T> for Llt<T> {
 impl<T: ComplexField> SolveCore<T> for Ldlt<T> {
 	#[track_caller]
 	fn solve_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		let mut mem = MemBuffer::new(
 			linalg::cholesky::ldlt::solve::solve_in_place_scratch::<T>(
 				self.L.nrows(),
@@ -1995,7 +1995,7 @@ impl<T: ComplexField> SolveCore<T> for Ldlt<T> {
 		conj: Conj,
 		rhs: MatMut<'_, T>,
 	) {
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		let mut mem = MemBuffer::new(
 			linalg::cholesky::ldlt::solve::solve_in_place_scratch::<T>(
 				self.L.nrows(),
@@ -2017,7 +2017,7 @@ impl<T: ComplexField> SolveCore<T> for Ldlt<T> {
 impl<T: ComplexField> DenseSolveCore<T> for Ldlt<T> {
 	#[track_caller]
 	fn reconstruct(&self) -> Mat<T> {
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		let n = self.L.nrows();
 		let mut out = Mat::zeros(n, n);
 		let mut mem = MemBuffer::new(
@@ -2039,7 +2039,7 @@ impl<T: ComplexField> DenseSolveCore<T> for Ldlt<T> {
 
 	#[track_caller]
 	fn inverse(&self) -> Mat<T> {
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		let n = self.L.nrows();
 		let mut out = Mat::zeros(n, n);
 		let mut mem = MemBuffer::new(
@@ -2060,7 +2060,7 @@ impl<T: ComplexField> DenseSolveCore<T> for Ldlt<T> {
 impl<T: ComplexField> SolveCore<T> for Lblt<T> {
 	#[track_caller]
 	fn solve_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		let mut mem = MemBuffer::new(
 			linalg::cholesky::lblt::solve::solve_in_place_scratch::<usize, T>(
 				self.L.nrows(),
@@ -2087,7 +2087,7 @@ impl<T: ComplexField> SolveCore<T> for Lblt<T> {
 		conj: Conj,
 		rhs: MatMut<'_, T>,
 	) {
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		let mut mem = MemBuffer::new(
 			linalg::cholesky::lblt::solve::solve_in_place_scratch::<usize, T>(
 				self.L.nrows(),
@@ -2111,7 +2111,7 @@ impl<T: ComplexField> SolveCore<T> for Lblt<T> {
 impl<T: ComplexField> DenseSolveCore<T> for Lblt<T> {
 	#[track_caller]
 	fn reconstruct(&self) -> Mat<T> {
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		let n = self.L.nrows();
 		let mut out = Mat::zeros(n, n);
 		let mut mem = MemBuffer::new(
@@ -2135,7 +2135,7 @@ impl<T: ComplexField> DenseSolveCore<T> for Lblt<T> {
 
 	#[track_caller]
 	fn inverse(&self) -> Mat<T> {
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		let n = self.L.nrows();
 		let mut out = Mat::zeros(n, n);
 		let mut mem =
@@ -2160,7 +2160,7 @@ impl<T: ComplexField> DenseSolveCore<T> for Lblt<T> {
 impl<T: ComplexField> SolveCore<T> for PartialPivLu<T> {
 	#[track_caller]
 	fn solve_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		assert!(all(
 			self.nrows() == self.ncols(),
@@ -2189,7 +2189,7 @@ impl<T: ComplexField> SolveCore<T> for PartialPivLu<T> {
 		conj: Conj,
 		rhs: MatMut<'_, T>,
 	) {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		assert!(all(
 			self.nrows() == self.ncols(),
@@ -2211,7 +2211,7 @@ impl<T: ComplexField> SolveCore<T> for PartialPivLu<T> {
 }
 impl<T: ComplexField> DenseSolveCore<T> for PartialPivLu<T> {
 	fn reconstruct(&self) -> Mat<T> {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		let m = self.nrows();
 		let n = self.ncols();
@@ -2234,7 +2234,7 @@ impl<T: ComplexField> DenseSolveCore<T> for PartialPivLu<T> {
 
 	#[track_caller]
 	fn inverse(&self) -> Mat<T> {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		assert!(self.nrows() == self.ncols());
 		let n = self.ncols();
@@ -2258,7 +2258,7 @@ impl<T: ComplexField> DenseSolveCore<T> for PartialPivLu<T> {
 impl<T: ComplexField> SolveCore<T> for FullPivLu<T> {
 	#[track_caller]
 	fn solve_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		assert!(all(
 			self.nrows() == self.ncols(),
@@ -2288,7 +2288,7 @@ impl<T: ComplexField> SolveCore<T> for FullPivLu<T> {
 		conj: Conj,
 		rhs: MatMut<'_, T>,
 	) {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		assert!(all(
 			self.nrows() == self.ncols(),
@@ -2312,7 +2312,7 @@ impl<T: ComplexField> SolveCore<T> for FullPivLu<T> {
 }
 impl<T: ComplexField> DenseSolveCore<T> for FullPivLu<T> {
 	fn reconstruct(&self) -> Mat<T> {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		let m = self.nrows();
 		let n = self.ncols();
@@ -2336,7 +2336,7 @@ impl<T: ComplexField> DenseSolveCore<T> for FullPivLu<T> {
 
 	#[track_caller]
 	fn inverse(&self) -> Mat<T> {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		assert!(self.nrows() == self.ncols());
 		let n = self.ncols();
@@ -2360,7 +2360,7 @@ impl<T: ComplexField> DenseSolveCore<T> for FullPivLu<T> {
 impl<T: ComplexField> SolveCore<T> for Qr<T> {
 	#[track_caller]
 	fn solve_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		assert!(all(
 			self.nrows() == self.ncols(),
@@ -2390,7 +2390,7 @@ impl<T: ComplexField> SolveCore<T> for Qr<T> {
 		conj: Conj,
 		rhs: MatMut<'_, T>,
 	) {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		assert!(all(
 			self.nrows() == self.ncols(),
@@ -2415,7 +2415,7 @@ impl<T: ComplexField> SolveCore<T> for Qr<T> {
 impl<T: ComplexField> SolveLstsqCore<T> for Qr<T> {
 	#[track_caller]
 	fn solve_lstsq_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		assert!(all(
 			self.nrows() == rhs.nrows(),
@@ -2442,7 +2442,7 @@ impl<T: ComplexField> SolveLstsqCore<T> for Qr<T> {
 }
 impl<T: ComplexField> DenseSolveCore<T> for Qr<T> {
 	fn reconstruct(&self) -> Mat<T> {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		let m = self.nrows();
 		let n = self.ncols();
@@ -2464,7 +2464,7 @@ impl<T: ComplexField> DenseSolveCore<T> for Qr<T> {
 	}
 
 	fn inverse(&self) -> Mat<T> {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		assert!(self.nrows() == self.ncols());
 		let n = self.ncols();
@@ -2488,7 +2488,7 @@ impl<T: ComplexField> DenseSolveCore<T> for Qr<T> {
 impl<T: ComplexField> SolveCore<T> for ColPivQr<T> {
 	#[track_caller]
 	fn solve_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		assert!(all(
 			self.nrows() == self.ncols(),
@@ -2520,7 +2520,7 @@ impl<T: ComplexField> SolveCore<T> for ColPivQr<T> {
 		conj: Conj,
 		rhs: MatMut<'_, T>,
 	) {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		assert!(all(
 			self.nrows() == self.ncols(),
@@ -2547,7 +2547,7 @@ impl<T: ComplexField> SolveCore<T> for ColPivQr<T> {
 impl<T: ComplexField> SolveLstsqCore<T> for ColPivQr<T> {
 	#[track_caller]
 	fn solve_lstsq_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		assert!(all(
 			self.nrows() == rhs.nrows(),
@@ -2576,7 +2576,7 @@ impl<T: ComplexField> SolveLstsqCore<T> for ColPivQr<T> {
 }
 impl<T: ComplexField> DenseSolveCore<T> for ColPivQr<T> {
 	fn reconstruct(&self) -> Mat<T> {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		let m = self.nrows();
 		let n = self.ncols();
@@ -2600,7 +2600,7 @@ impl<T: ComplexField> DenseSolveCore<T> for ColPivQr<T> {
 	}
 
 	fn inverse(&self) -> Mat<T> {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		let par_shape = par.shape();
 		assert!(self.nrows() == self.ncols());
 		let n = self.ncols();
@@ -2625,7 +2625,7 @@ impl<T: ComplexField> DenseSolveCore<T> for ColPivQr<T> {
 impl<T: ComplexField> SolveCore<T> for Svd<T> {
 	#[track_caller]
 	fn solve_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		assert!(all(
 			self.nrows() == self.ncols(),
 			self.nrows() == rhs.nrows(),
@@ -2668,7 +2668,7 @@ impl<T: ComplexField> SolveCore<T> for Svd<T> {
 		conj: Conj,
 		rhs: MatMut<'_, T>,
 	) {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		assert!(all(
 			self.nrows() == self.ncols(),
 			self.ncols() == rhs.nrows(),
@@ -2708,7 +2708,7 @@ impl<T: ComplexField> SolveCore<T> for Svd<T> {
 impl<T: ComplexField> SolveLstsqCore<T> for Svd<T> {
 	#[track_caller]
 	fn solve_lstsq_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		assert!(all(
 			self.nrows() == rhs.nrows(),
 			self.nrows() >= self.ncols(),
@@ -2756,7 +2756,7 @@ impl<T: ComplexField> SolveLstsqCore<T> for Svd<T> {
 }
 impl<T: ComplexField> DenseSolveCore<T> for Svd<T> {
 	fn reconstruct(&self) -> Mat<T> {
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		let m = self.nrows();
 		let n = self.ncols();
 		let size = Ord::min(m, n);
@@ -2784,7 +2784,7 @@ impl<T: ComplexField> DenseSolveCore<T> for Svd<T> {
 
 	#[track_caller]
 	fn inverse(&self) -> Mat<T> {
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		assert!(self.nrows() == self.ncols());
 		let n = self.nrows();
 		let U = self.U();
@@ -2812,7 +2812,7 @@ impl<T: ComplexField> DenseSolveCore<T> for Svd<T> {
 impl<T: ComplexField> SolveCore<T> for SelfAdjointEigen<T> {
 	#[track_caller]
 	fn solve_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		assert!(all(
 			self.nrows() == self.ncols(),
 			self.nrows() == rhs.nrows(),
@@ -2855,7 +2855,7 @@ impl<T: ComplexField> SolveCore<T> for SelfAdjointEigen<T> {
 		conj: Conj,
 		rhs: MatMut<'_, T>,
 	) {
-		let mut par = get_global_parallelism();
+		let mut par = get_global_parallelism().par();
 		assert!(all(
 			self.nrows() == self.ncols(),
 			self.ncols() == rhs.nrows(),
@@ -2894,7 +2894,7 @@ impl<T: ComplexField> SolveCore<T> for SelfAdjointEigen<T> {
 }
 impl<T: ComplexField> DenseSolveCore<T> for SelfAdjointEigen<T> {
 	fn reconstruct(&self) -> Mat<T> {
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		let m = self.nrows();
 		let n = self.ncols();
 		let size = Ord::min(m, n);
@@ -2921,7 +2921,7 @@ impl<T: ComplexField> DenseSolveCore<T> for SelfAdjointEigen<T> {
 	}
 
 	fn inverse(&self) -> Mat<T> {
-		let par = get_global_parallelism();
+		let par = get_global_parallelism().par();
 		assert!(self.nrows() == self.ncols());
 		let n = self.nrows();
 		let U = self.U();
