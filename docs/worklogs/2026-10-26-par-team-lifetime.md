@@ -24,7 +24,7 @@
   three closures that captured `par` take it as an argument, `par.shape()` and
   `parallelism_degree(&par)` are evaluated before a lend in the same call, the examples build a
   `Par` per use.
-- **threadteam stays a pinned dependency** (`b7d094d` while the park work lands on `feat/team`);
+- **threadteam stays a pinned dependency** (`6e87862` on `feat/team`, with no API change from the previous pin);
   nothing in threadteam was edited.
 
 ## Verification conclusions and constraints
