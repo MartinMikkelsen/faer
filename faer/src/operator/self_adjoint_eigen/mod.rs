@@ -323,7 +323,7 @@ mod tests {
 			crate::matrix_free::eigen::partial_eigen_scratch(
 				&A,
 				n_eigval,
-				par,
+				par.shape(),
 				default(),
 			),
 		);

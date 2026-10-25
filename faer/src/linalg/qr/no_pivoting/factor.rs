@@ -333,7 +333,7 @@ pub fn qr_in_place_scratch<T: ComplexField>(
 	nrows: usize,
 	ncols: usize,
 	block_size: usize,
-	par: Par,
+	par: ParShape,
 	params: Spec<QrParams, T>,
 ) -> StackReq {
 	let _ = par;
@@ -395,7 +395,7 @@ mod tests {
 								n,
 								n,
 								1,
-								Par::Seq,
+								ParShape::Seq,
 								params,
 							),
 						)),
@@ -462,7 +462,7 @@ mod tests {
 								n,
 								n,
 								bs,
-								par,
+								par.shape(),
 								default(),
 							),
 						)),
@@ -531,7 +531,7 @@ mod tests {
 								m,
 								n,
 								bs,
-								par,
+								par.shape(),
 								default(),
 							),
 						)),
@@ -636,7 +636,7 @@ mod tests {
 			let size = Ord::min(m, n);
 			let block_size = recommended_block_size::<T>(m, n);
 			let qr_scratch =
-				qr_in_place_scratch::<T>(m, n, block_size, par, default());
+				qr_in_place_scratch::<T>(m, n, block_size, par.shape(), default());
 			// The same matrix, flat in each order. The row-major side is read
 			// back through the same view, so it is compared at the storage row
 			// the view puts there.
@@ -785,7 +785,7 @@ mod tests {
 				m,
 				n,
 				block_size,
-				Par::Seq,
+				ParShape::Seq,
 				default(),
 			))),
 			default(),
@@ -5077,7 +5077,7 @@ mod tests {
 				A.nrows(),
 				A.ncols(),
 				20,
-				Par::Seq,
+				ParShape::Seq,
 				default(),
 			))),
 			default(),
@@ -5142,7 +5142,7 @@ mod tests {
 				h.as_mut(),
 				par,
 				MemStack::new(&mut MemBuffer::new(
-					qr_in_place_scratch::<f64>(m, n, block_size, par, default()),
+					qr_in_place_scratch::<f64>(m, n, block_size, par.shape(), default()),
 				)),
 				default(),
 			);

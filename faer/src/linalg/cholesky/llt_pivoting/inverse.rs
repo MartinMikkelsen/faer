@@ -3,7 +3,7 @@ use crate::internal_prelude::*;
 use linalg::matmul::triangular::BlockStructure;
 pub fn inverse_scratch<I: Index, T: ComplexField>(
 	dim: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	_ = par;
 	temp_mat_scratch::<T>(dim, dim)
@@ -82,7 +82,7 @@ mod tests {
 			MemStack::new(&mut {
 				MemBuffer::new(factor::cholesky_in_place_scratch::<usize, c64>(
 					n,
-					Par::Seq,
+					ParShape::Seq,
 					default(),
 				))
 			}),
@@ -99,7 +99,7 @@ mod tests {
 			MemStack::new(&mut MemBuffer::new(inverse::inverse_scratch::<
 				usize,
 				c64,
-			>(n, Par::Seq))),
+			>(n, ParShape::Seq))),
 		);
 		for j in 0..n {
 			for i in 0..j {

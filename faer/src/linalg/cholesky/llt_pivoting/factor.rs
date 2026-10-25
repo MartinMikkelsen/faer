@@ -36,7 +36,7 @@ pub struct PivLltInfo {
 #[inline]
 pub fn cholesky_in_place_scratch<I: Index, T: ComplexField>(
 	dim: usize,
-	par: Par,
+	par: ParShape,
 	params: Spec<PivLltParams, T>,
 ) -> StackReq {
 	_ = par;

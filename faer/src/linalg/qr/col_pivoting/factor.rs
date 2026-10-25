@@ -328,7 +328,7 @@ pub fn qr_in_place_scratch<I: Index, T: ComplexField>(
 	nrows: usize,
 	ncols: usize,
 	block_size: usize,
-	par: Par,
+	par: ParShape,
 	params: Spec<ColPivQrParams, T>,
 ) -> StackReq {
 	let _ = nrows;
@@ -465,7 +465,7 @@ mod tests {
 						n,
 						n,
 						bs,
-						par,
+						par.shape(),
 						default(),
 					))),
 					default(),
@@ -528,7 +528,7 @@ mod tests {
 						m,
 						n,
 						bs,
-						par,
+						par.shape(),
 						default(),
 					))),
 					default(),
@@ -592,7 +592,7 @@ mod tests {
 			col_perm_inv,
 			par,
 			MemStack::new(&mut MemBuffer::new(
-				qr_in_place_scratch::<usize, T>(m, n, bs, par, default()),
+				qr_in_place_scratch::<usize, T>(m, n, bs, par.shape(), default()),
 			)),
 			default(),
 		)

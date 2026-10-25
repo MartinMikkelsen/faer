@@ -3,7 +3,7 @@ use crate::internal_prelude::*;
 pub fn inverse_scratch<T: ComplexField>(
 	dim: usize,
 	block_size: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	_ = par;
 	linalg::householder::apply_block_householder_sequence_transpose_on_the_right_in_place_scratch::<T>(dim, block_size, dim)
@@ -70,7 +70,7 @@ mod tests {
 					n,
 					n,
 					4,
-					Par::Seq,
+					ParShape::Seq,
 					default(),
 				))
 			}),
@@ -85,7 +85,7 @@ mod tests {
 			QR.as_ref(),
 			Par::Seq,
 			MemStack::new(&mut MemBuffer::new(
-				inverse::inverse_scratch::<c64>(n, 4, Par::Seq),
+				inverse::inverse_scratch::<c64>(n, 4, ParShape::Seq),
 			)),
 		);
 		assert!(A_inv * A ~ Mat::identity(n, n));

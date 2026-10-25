@@ -39,7 +39,7 @@ pub fn multishift_qr_scratch<T: ComplexField>(
 	nh: usize,
 	want_t: bool,
 	want_z: bool,
-	parallelism: Par,
+	parallelism: ParShape,
 	params: SchurParams,
 ) -> StackReq {
 	let nsr = (params.recommended_shift_count)(n, nh);

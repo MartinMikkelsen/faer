@@ -266,7 +266,7 @@ impl<T: ComplexField> Auto<T> for PartialPivLuParams {
 pub fn lu_in_place_scratch<I: Index, T: ComplexField>(
 	nrows: usize,
 	ncols: usize,
-	par: Par,
+	par: ParShape,
 	params: Spec<PartialPivLuParams, T>,
 ) -> StackReq {
 	_ = par;
@@ -405,7 +405,7 @@ mod tests {
 				>(
 					n,
 					n,
-					Par::Seq,
+					ParShape::Seq,
 					params.into(),
 				))),
 				params.into(),
@@ -449,7 +449,7 @@ mod tests {
 					usize,
 					f64,
 				>(
-					n, n, Par::Seq, default()
+					n, n, ParShape::Seq, default()
 				))),
 				default(),
 			)
@@ -480,7 +480,7 @@ mod tests {
 		let perm_inv = &mut *vec![0usize; n];
 		let params: Spec<PartialPivLuParams, f64> = default();
 		let stack =
-			&mut MemBuffer::new(lu_in_place_scratch::<usize, f64>(n, n, par, params));
+			&mut MemBuffer::new(lu_in_place_scratch::<usize, f64>(n, n, par.shape(), params));
 		let stack = MemStack::new(stack);
 		let (info, _) = lu_in_place(LU.as_mut(), perm, perm_inv, par, stack, params);
 		(LU, perm.to_vec(), info.transposition_count)
@@ -492,7 +492,7 @@ mod tests {
 		let perm_inv = &mut *vec![0usize; n];
 		let params: Spec<PartialPivLuParams, c64> = default();
 		let stack =
-			&mut MemBuffer::new(lu_in_place_scratch::<usize, c64>(n, n, par, params));
+			&mut MemBuffer::new(lu_in_place_scratch::<usize, c64>(n, n, par.shape(), params));
 		let stack = MemStack::new(stack);
 		let (info, _) = lu_in_place(LU.as_mut(), perm, perm_inv, par, stack, params);
 		(LU, perm.to_vec(), info.transposition_count)
@@ -634,7 +634,7 @@ mod tests {
 					usize,
 					T,
 				>(
-					n, n, par, params.into()
+					n, n, par.shape(), params.into()
 				))),
 				params.into(),
 			)

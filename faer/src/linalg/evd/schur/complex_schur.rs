@@ -1828,7 +1828,7 @@ mod tests {
 								n,
 								true,
 								true,
-								Par::Seq,
+								ParShape::Seq,
 								auto!(c64),
 							),
 						)),

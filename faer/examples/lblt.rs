@@ -74,7 +74,7 @@ fn faer(bencher: Bencher, PlotArg(n): PlotArg) {
 	let par = Par::Seq;
 	let params = default();
 	let scratch =
-		lblt::factor::cholesky_in_place_scratch::<usize, f64>(n, par, params);
+		lblt::factor::cholesky_in_place_scratch::<usize, f64>(n, par.shape(), params);
 	let mut mem = MemBuffer::new(scratch);
 	let stack = MemStack::new(&mut mem);
 	bencher.bench(|| {

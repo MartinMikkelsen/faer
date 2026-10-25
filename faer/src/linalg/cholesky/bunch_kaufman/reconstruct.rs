@@ -3,7 +3,7 @@ use crate::internal_prelude::*;
 use linalg::matmul::triangular::BlockStructure;
 pub fn reconstruct_scratch<I: Index, T: ComplexField>(
 	dim: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	_ = par;
 	temp_mat_scratch::<T>(dim, dim)
@@ -117,7 +117,7 @@ mod tests {
 			MemStack::new(&mut {
 				MemBuffer::new(factor::cholesky_in_place_scratch::<usize, c64>(
 					n,
-					Par::Seq,
+					ParShape::Seq,
 					default(),
 				))
 			}),
@@ -133,7 +133,7 @@ mod tests {
 			perm,
 			Par::Seq,
 			MemStack::new(&mut MemBuffer::new(
-				reconstruct::reconstruct_scratch::<usize, c64>(n, Par::Seq),
+				reconstruct::reconstruct_scratch::<usize, c64>(n, ParShape::Seq),
 			)),
 		);
 		for j in 0..n {
@@ -188,7 +188,7 @@ mod tests {
 					MemStack::new(&mut MemBuffer::new(reconstruct_scratch::<
 						usize,
 						T,
-					>(n, Par::Seq))),
+					>(n, ParShape::Seq))),
 				);
 				// reconstruct fills the lower triangle only
 				for j in 0..n {

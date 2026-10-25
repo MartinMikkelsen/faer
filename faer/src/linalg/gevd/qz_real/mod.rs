@@ -1436,14 +1436,14 @@ fn single_shift_sweep<T: RealField>(
 /// hessenberg form.
 pub fn hessenberg_to_qz_scratch<T: RealField>(
 	n: usize,
-	par: Par,
+	par: ParShape,
 	params: GeneralizedSchurParams,
 ) -> StackReq {
 	hessenberg_to_qz_blocked_scratch::<T>(n, par, params)
 }
 fn hessenberg_to_qz_blocked_scratch<T: RealField>(
 	n: usize,
-	par: Par,
+	par: ParShape,
 	params: GeneralizedSchurParams,
 ) -> StackReq {
 	let nmin = Ord::max(15, params.blocking_threshold);
@@ -1479,7 +1479,7 @@ fn multishift_sweep_scratch<T: RealField>(n: usize, ns: usize) -> StackReq {
 fn aed_scratch<T: RealField>(
 	n: usize,
 	nw: usize,
-	par: Par,
+	par: ParShape,
 	params: GeneralizedSchurParams,
 ) -> StackReq {
 	StackReq::any_of(&[
@@ -1494,11 +1494,11 @@ fn aed_scratch<T: RealField>(
 				linalg::lu::full_pivoting::factor::lu_in_place_scratch::<
 					usize,
 					T,
-				>(8, 8, Par::Seq, Default::default()),
+				>(8, 8, ParShape::Seq, Default::default()),
 				linalg::lu::full_pivoting::solve::solve_in_place_scratch::<
 					usize,
 					T,
-				>(n, 1, Par::Seq),
+				>(n, 1, ParShape::Seq),
 			]),
 		]),
 		linalg::temp_mat_scratch::<T>(nw, n),
@@ -3737,7 +3737,7 @@ mod tests {
 					MemStack::new(&mut MemBuffer::new(
 						hessenberg_to_qz_scratch::<f64>(
 							n,
-							Par::Seq,
+							ParShape::Seq,
 							auto!(f64),
 						),
 					)),

@@ -4,7 +4,7 @@ use linalg::householder::apply_block_householder_sequence_transpose_on_the_right
 pub fn inverse_scratch<I: Index, T: ComplexField>(
 	dim: usize,
 	block_size: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	_ = par;
 	StackReq::or(
@@ -81,7 +81,7 @@ mod tests {
 					n,
 					n,
 					4,
-					Par::Seq,
+					ParShape::Seq,
 					default(),
 				))
 			}),
@@ -99,7 +99,7 @@ mod tests {
 			MemStack::new(&mut MemBuffer::new(inverse::inverse_scratch::<
 				usize,
 				c64,
-			>(n, 4, Par::Seq))),
+			>(n, 4, ParShape::Seq))),
 		);
 		assert!(A_inv * A ~ Mat::identity(n, n));
 	}

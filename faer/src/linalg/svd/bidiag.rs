@@ -7,7 +7,7 @@ use linalg::matmul::{dot, matmul};
 pub fn bidiag_in_place_scratch<T: ComplexField>(
 	nrows: usize,
 	ncols: usize,
-	par: Par,
+	par: ParShape,
 	params: Spec<BidiagParams, T>,
 ) -> StackReq {
 	_ = par;

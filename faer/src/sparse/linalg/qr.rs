@@ -406,7 +406,7 @@ pub mod supernodal {
 		pub fn apply_Q_transpose_in_place_scratch<T>(
 			&self,
 			rhs_ncols: usize,
-			par: Par,
+			par: ParShape,
 		) -> StackReq
 		where
 			T: ComplexField,
@@ -423,7 +423,7 @@ pub mod supernodal {
 		pub fn solve_in_place_scratch<T: ComplexField>(
 			&self,
 			rhs_ncols: usize,
-			par: Par,
+			par: ParShape,
 		) -> StackReq {
 			self.apply_Q_transpose_in_place_scratch::<T>(rhs_ncols, par)
 		}
@@ -891,7 +891,7 @@ pub mod supernodal {
 		T: ComplexField,
 	>(
 		symbolic: &SymbolicSupernodalQr<I>,
-		par: Par,
+		par: ParShape,
 		params: Spec<QrParams, T>,
 	) -> StackReq {
 		let n_supernodes = symbolic.L.n_supernodes();
@@ -1431,7 +1431,7 @@ pub mod simplicial {
 		pub fn apply_Q_transpose_in_place_scratch<T>(
 			&self,
 			rhs_ncols: usize,
-			par: Par,
+			par: ParShape,
 		) -> StackReq
 		where
 			T: ComplexField,
@@ -1445,7 +1445,7 @@ pub mod simplicial {
 		pub fn solve_in_place_scratch<T>(
 			&self,
 			rhs_ncols: usize,
-			par: Par,
+			par: ParShape,
 		) -> StackReq
 		where
 			T: ComplexField,
@@ -2193,7 +2193,7 @@ impl<I: Index> SymbolicQr<I> {
 	pub fn solve_in_place_scratch<T>(
 		&self,
 		rhs_ncols: usize,
-		par: Par,
+		par: ParShape,
 	) -> StackReq
 	where
 		T: ComplexField,
@@ -2212,7 +2212,7 @@ impl<I: Index> SymbolicQr<I> {
 	/// factorization
 	pub fn factorize_numeric_qr_scratch<T>(
 		&self,
-		par: Par,
+		par: ParShape,
 		params: Spec<QrParams, T>,
 	) -> StackReq
 	where
@@ -2680,7 +2680,7 @@ mod tests {
 			MemStack::new(&mut MemBuffer::new(
 				supernodal::factorize_supernodal_numeric_qr_scratch::<usize, f64>(
 					&symbolic,
-					Par::Seq,
+					ParShape::Seq,
 					Default::default(),
 				),
 			)),
@@ -2815,7 +2815,7 @@ mod tests {
 			MemStack::new(&mut MemBuffer::new(
 				supernodal::factorize_supernodal_numeric_qr_scratch::<usize, T>(
 					&symbolic,
-					Par::Seq,
+					ParShape::Seq,
 					Default::default(),
 				),
 			)),
@@ -2831,7 +2831,7 @@ mod tests {
 			x.as_mut(),
 			Par::Seq,
 			MemStack::new(&mut MemBuffer::new(
-				symbolic.solve_in_place_scratch::<T>(2, Par::Seq),
+				symbolic.solve_in_place_scratch::<T>(2, ParShape::Seq),
 			)),
 		);
 		let x = x.as_ref().subrows(0, n);
@@ -2955,7 +2955,7 @@ mod tests {
 				Par::Seq,
 				MemStack::new(&mut MemBuffer::new(
 					qr.symbolic()
-						.solve_in_place_scratch::<T>(rhs.ncols(), Par::Seq),
+						.solve_in_place_scratch::<T>(rhs.ncols(), ParShape::Seq),
 				)),
 			);
 			let mut y = rhs.clone();
@@ -2975,7 +2975,7 @@ mod tests {
 				Par::Seq,
 				MemStack::new(&mut MemBuffer::new(
 					qr.symbolic()
-						.solve_in_place_scratch::<T>(rhs.ncols(), Par::Seq),
+						.solve_in_place_scratch::<T>(rhs.ncols(), ParShape::Seq),
 				)),
 			);
 			let x = x.as_ref().subrows(0, n);
@@ -3056,7 +3056,7 @@ mod tests {
 				Par::Seq,
 				MemStack::new(&mut MemBuffer::new(
 					symbolic.factorize_numeric_qr_scratch::<T>(
-						Par::Seq,
+						ParShape::Seq,
 						Default::default(),
 					),
 				)),
@@ -3069,7 +3069,7 @@ mod tests {
 					x.as_mut(),
 					Par::Seq,
 					MemStack::new(&mut MemBuffer::new(
-						symbolic.solve_in_place_scratch::<T>(2, Par::Seq),
+						symbolic.solve_in_place_scratch::<T>(2, ParShape::Seq),
 					)),
 				);
 				let x = x.as_ref().subrows(0, n);
@@ -3083,7 +3083,7 @@ mod tests {
 					x.as_mut(),
 					Par::Seq,
 					MemStack::new(&mut MemBuffer::new(
-						symbolic.solve_in_place_scratch::<T>(2, Par::Seq),
+						symbolic.solve_in_place_scratch::<T>(2, ParShape::Seq),
 					)),
 				);
 				let x = x.as_ref().subrows(0, n);
@@ -3156,7 +3156,7 @@ mod tests {
 					Par::Seq,
 					MemStack::new(&mut MemBuffer::new(
 						symbolic.factorize_numeric_qr_scratch::<T>(
-							Par::Seq,
+							ParShape::Seq,
 							Default::default(),
 						),
 					)),

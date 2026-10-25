@@ -439,7 +439,7 @@ impl<
 					linalg::evd::self_adjoint_evd_scratch::<T>(
 						n,
 						linalg::evd::ComputeEigenvectors::No,
-						par,
+						par.shape(),
 						default(),
 					),
 				)),
@@ -474,7 +474,7 @@ impl<
 						n,
 						linalg::svd::ComputeSvdVectors::No,
 						linalg::svd::ComputeSvdVectors::No,
-						par,
+						par.shape(),
 						default(),
 					),
 				)),
@@ -564,7 +564,7 @@ impl<C: Conjugate> MatRef<'_, C> {
 					n,
 					linalg::evd::ComputeEigenvectors::No,
 					linalg::evd::ComputeEigenvectors::No,
-					par,
+					par.shape(),
 					default(),
 				))),
 				default(),
@@ -596,7 +596,7 @@ impl<C: Conjugate> MatRef<'_, C> {
 					n,
 					linalg::evd::ComputeEigenvectors::No,
 					linalg::evd::ComputeEigenvectors::No,
-					par,
+					par.shape(),
 					default(),
 				))),
 				default(),
@@ -791,7 +791,7 @@ impl<T: ComplexField> Llt<T> {
 		let mut mem = MemBuffer::new(
 			linalg::cholesky::llt::factor::cholesky_in_place_scratch::<T>(
 				n,
-				par,
+				par.shape(),
 				default(),
 			),
 		);
@@ -840,7 +840,7 @@ impl<T: ComplexField> Ldlt<T> {
 		let mut mem = MemBuffer::new(
 			linalg::cholesky::ldlt::factor::cholesky_in_place_scratch::<T>(
 				n,
-				par,
+				par.shape(),
 				default(),
 			),
 		);
@@ -899,7 +899,7 @@ impl<T: ComplexField> Lblt<T> {
 		let mut mem = MemBuffer::new(
 			linalg::cholesky::lblt::factor::cholesky_in_place_scratch::<usize, T>(
 				n,
-				par,
+				par.shape(),
 				default(),
 			),
 		);
@@ -1001,7 +1001,7 @@ impl<T: ComplexField> PartialPivLu<T> {
 				linalg::lu::partial_pivoting::factor::lu_in_place_scratch::<
 					usize,
 					T,
-				>(m, n, par, default()),
+				>(m, n, par.shape(), default()),
 			)),
 			default(),
 		);
@@ -1060,7 +1060,7 @@ impl<T: ComplexField> FullPivLu<T> {
 				linalg::lu::full_pivoting::factor::lu_in_place_scratch::<
 					usize,
 					T,
-				>(m, n, par, default()),
+				>(m, n, par.shape(), default()),
 			)),
 			default(),
 		);
@@ -1128,7 +1128,7 @@ impl<T: ComplexField> Qr<T> {
 					m,
 					n,
 					block_size,
-					par,
+					par.shape(),
 					default(),
 				),
 			)),
@@ -1232,7 +1232,7 @@ impl<T: ComplexField> ColPivQr<T> {
 					m,
 					n,
 					block_size,
-					par,
+					par.shape(),
 					default(),
 				),
 			)),
@@ -1363,7 +1363,7 @@ impl<T: ComplexField> Svd<T> {
 				n,
 				compute,
 				compute,
-				par,
+				par.shape(),
 				default(),
 			))),
 			default(),
@@ -1408,7 +1408,7 @@ impl<T: ComplexField> Svd<T> {
 			linalg::svd::pseudoinverse_from_svd_scratch::<T>(
 				self.nrows(),
 				self.ncols(),
-				par,
+				par.shape(),
 			),
 		);
 		let mut pinv = Mat::zeros(self.ncols(), self.nrows());
@@ -1454,7 +1454,7 @@ impl<T: ComplexField> SelfAdjointEigen<T> {
 				linalg::evd::self_adjoint_evd_scratch::<T>(
 					n,
 					linalg::evd::ComputeEigenvectors::Yes,
-					par,
+					par.shape(),
 					default(),
 				),
 			)),
@@ -1488,7 +1488,7 @@ impl<T: ComplexField> SelfAdjointEigen<T> {
 		let stack = &mut MemBuffer::new(
 			linalg::evd::pseudoinverse_from_self_adjoint_evd_scratch::<T>(
 				self.nrows(),
-				par,
+				par.shape(),
 			),
 		);
 		let mut pinv = Mat::zeros(self.ncols(), self.nrows());
@@ -1565,7 +1565,7 @@ impl<T: RealField> Eigen<T> {
 				n,
 				linalg::evd::ComputeEigenvectors::No,
 				linalg::evd::ComputeEigenvectors::Yes,
-				par,
+				par.shape(),
 				default(),
 			))),
 			default(),
@@ -1602,7 +1602,7 @@ impl<T: RealField> Eigen<T> {
 				n,
 				linalg::evd::ComputeEigenvectors::No,
 				linalg::evd::ComputeEigenvectors::Yes,
-				par,
+				par.shape(),
 				default(),
 			))),
 			default(),
@@ -1675,7 +1675,7 @@ impl<T: RealField> GeneralizedEigen<T> {
 					n,
 					linalg::evd::ComputeEigenvectors::No,
 					linalg::evd::ComputeEigenvectors::Yes,
-					par,
+					par.shape(),
 					default(),
 				),
 			)),
@@ -1720,7 +1720,7 @@ impl<T: RealField> GeneralizedEigen<T> {
 				n,
 				linalg::evd::ComputeEigenvectors::No,
 				linalg::evd::ComputeEigenvectors::Yes,
-				par,
+				par.shape(),
 				default(),
 			))),
 			default(),
@@ -1866,7 +1866,7 @@ impl<T: ComplexField> SolveCore<T> for Llt<T> {
 			linalg::cholesky::llt::solve::solve_in_place_scratch::<T>(
 				self.L.nrows(),
 				rhs.ncols(),
-				par,
+				par.shape(),
 			),
 		);
 		let stack = MemStack::new(&mut mem);
@@ -1890,7 +1890,7 @@ impl<T: ComplexField> SolveCore<T> for Llt<T> {
 			linalg::cholesky::llt::solve::solve_in_place_scratch::<T>(
 				self.L.nrows(),
 				rhs.ncols(),
-				par,
+				par.shape(),
 			),
 		);
 		let stack = MemStack::new(&mut mem);
@@ -1921,7 +1921,7 @@ impl<T: ComplexField> DenseSolveCore<T> for Llt<T> {
 		let mut out = Mat::zeros(n, n);
 		let mut mem = MemBuffer::new(
 			linalg::cholesky::llt::reconstruct::reconstruct_scratch::<T>(
-				n, par,
+				n, par.shape(),
 			),
 		);
 		let stack = MemStack::new(&mut mem);
@@ -1941,7 +1941,7 @@ impl<T: ComplexField> DenseSolveCore<T> for Llt<T> {
 		let n = self.L.nrows();
 		let mut out = Mat::zeros(n, n);
 		let mut mem = MemBuffer::new(
-			linalg::cholesky::llt::inverse::inverse_scratch::<T>(n, par),
+			linalg::cholesky::llt::inverse::inverse_scratch::<T>(n, par.shape()),
 		);
 		let stack = MemStack::new(&mut mem);
 		linalg::cholesky::llt::inverse::inverse(
@@ -1962,7 +1962,7 @@ impl<T: ComplexField> SolveCore<T> for Ldlt<T> {
 			linalg::cholesky::ldlt::solve::solve_in_place_scratch::<T>(
 				self.L.nrows(),
 				rhs.ncols(),
-				par,
+				par.shape(),
 			),
 		);
 		let stack = MemStack::new(&mut mem);
@@ -1987,7 +1987,7 @@ impl<T: ComplexField> SolveCore<T> for Ldlt<T> {
 			linalg::cholesky::ldlt::solve::solve_in_place_scratch::<T>(
 				self.L.nrows(),
 				rhs.ncols(),
-				par,
+				par.shape(),
 			),
 		);
 		let stack = MemStack::new(&mut mem);
@@ -2009,7 +2009,7 @@ impl<T: ComplexField> DenseSolveCore<T> for Ldlt<T> {
 		let mut out = Mat::zeros(n, n);
 		let mut mem = MemBuffer::new(
 			linalg::cholesky::ldlt::reconstruct::reconstruct_scratch::<T>(
-				n, par,
+				n, par.shape(),
 			),
 		);
 		let stack = MemStack::new(&mut mem);
@@ -2030,7 +2030,7 @@ impl<T: ComplexField> DenseSolveCore<T> for Ldlt<T> {
 		let n = self.L.nrows();
 		let mut out = Mat::zeros(n, n);
 		let mut mem = MemBuffer::new(
-			linalg::cholesky::ldlt::inverse::inverse_scratch::<T>(n, par),
+			linalg::cholesky::ldlt::inverse::inverse_scratch::<T>(n, par.shape()),
 		);
 		let stack = MemStack::new(&mut mem);
 		linalg::cholesky::ldlt::inverse::inverse(
@@ -2052,7 +2052,7 @@ impl<T: ComplexField> SolveCore<T> for Lblt<T> {
 			linalg::cholesky::lblt::solve::solve_in_place_scratch::<usize, T>(
 				self.L.nrows(),
 				rhs.ncols(),
-				par,
+				par.shape(),
 			),
 		);
 		let stack = MemStack::new(&mut mem);
@@ -2079,7 +2079,7 @@ impl<T: ComplexField> SolveCore<T> for Lblt<T> {
 			linalg::cholesky::lblt::solve::solve_in_place_scratch::<usize, T>(
 				self.L.nrows(),
 				rhs.ncols(),
-				par,
+				par.shape(),
 			),
 		);
 		let stack = MemStack::new(&mut mem);
@@ -2103,7 +2103,7 @@ impl<T: ComplexField> DenseSolveCore<T> for Lblt<T> {
 		let mut out = Mat::zeros(n, n);
 		let mut mem = MemBuffer::new(
 			linalg::cholesky::lblt::reconstruct::reconstruct_scratch::<usize, T>(
-				n, par,
+				n, par.shape(),
 			),
 		);
 		let stack = MemStack::new(&mut mem);
@@ -2129,7 +2129,7 @@ impl<T: ComplexField> DenseSolveCore<T> for Lblt<T> {
 			MemBuffer::new(linalg::cholesky::lblt::inverse::inverse_scratch::<
 				usize,
 				T,
-			>(n, par));
+			>(n, par.shape()));
 		let stack = MemStack::new(&mut mem);
 		linalg::cholesky::lblt::inverse::inverse(
 			out.as_mut(),
@@ -2164,7 +2164,7 @@ impl<T: ComplexField> SolveCore<T> for PartialPivLu<T> {
 				linalg::lu::partial_pivoting::solve::solve_in_place_scratch::<
 					usize,
 					T,
-				>(self.nrows(), k, par),
+				>(self.nrows(), k, par.shape()),
 			)),
 		);
 	}
@@ -2189,7 +2189,7 @@ impl<T: ComplexField> SolveCore<T> for PartialPivLu<T> {
 			rhs,
 			par,
 			MemStack::new(&mut MemBuffer::new(
-				linalg::lu::partial_pivoting::solve::solve_transpose_in_place_scratch::<usize, T>(self.nrows(), k, par),
+				linalg::lu::partial_pivoting::solve::solve_transpose_in_place_scratch::<usize, T>(self.nrows(), k, par.shape()),
 			)),
 		);
 	}
@@ -2210,7 +2210,7 @@ impl<T: ComplexField> DenseSolveCore<T> for PartialPivLu<T> {
 				linalg::lu::partial_pivoting::reconstruct::reconstruct_scratch::<
 					usize,
 					T,
-				>(m, n, par),
+				>(m, n, par.shape()),
 			)),
 		);
 		out
@@ -2232,7 +2232,7 @@ impl<T: ComplexField> DenseSolveCore<T> for PartialPivLu<T> {
 				linalg::lu::partial_pivoting::inverse::inverse_scratch::<
 					usize,
 					T,
-				>(n, par),
+				>(n, par.shape()),
 			)),
 		);
 		out
@@ -2259,7 +2259,7 @@ impl<T: ComplexField> SolveCore<T> for FullPivLu<T> {
 				linalg::lu::full_pivoting::solve::solve_in_place_scratch::<
 					usize,
 					T,
-				>(self.nrows(), k, par),
+				>(self.nrows(), k, par.shape()),
 			)),
 		);
 	}
@@ -2287,7 +2287,7 @@ impl<T: ComplexField> SolveCore<T> for FullPivLu<T> {
 			MemStack::new(&mut MemBuffer::new(linalg::lu::full_pivoting::solve::solve_transpose_in_place_scratch::<
 				usize,
 				T,
-			>(self.nrows(), k, par))),
+			>(self.nrows(), k, par.shape()))),
 		);
 	}
 }
@@ -2308,7 +2308,7 @@ impl<T: ComplexField> DenseSolveCore<T> for FullPivLu<T> {
 				linalg::lu::full_pivoting::reconstruct::reconstruct_scratch::<
 					usize,
 					T,
-				>(m, n, par),
+				>(m, n, par.shape()),
 			)),
 		);
 		out
@@ -2329,7 +2329,7 @@ impl<T: ComplexField> DenseSolveCore<T> for FullPivLu<T> {
 			par,
 			MemStack::new(&mut MemBuffer::new(
 				linalg::lu::full_pivoting::inverse::inverse_scratch::<usize, T>(
-					n, par,
+					n, par.shape(),
 				),
 			)),
 		);
@@ -2356,7 +2356,7 @@ impl<T: ComplexField> SolveCore<T> for Qr<T> {
 			par,
 			MemStack::new(&mut MemBuffer::new(
 				linalg::qr::no_pivoting::solve::solve_in_place_scratch::<T>(
-					n, block_size, k, par,
+					n, block_size, k, par.shape(),
 				),
 			)),
 		);
@@ -2384,7 +2384,7 @@ impl<T: ComplexField> SolveCore<T> for Qr<T> {
 			rhs,
 			par,
 			MemStack::new(&mut MemBuffer::new(
-				linalg::qr::no_pivoting::solve::solve_transpose_in_place_scratch::<T>(n, block_size, k, par),
+				linalg::qr::no_pivoting::solve::solve_transpose_in_place_scratch::<T>(n, block_size, k, par.shape()),
 			)),
 		);
 	}
@@ -2410,7 +2410,7 @@ impl<T: ComplexField> SolveLstsqCore<T> for Qr<T> {
 			par,
 			MemStack::new(&mut MemBuffer::new(
 				linalg::qr::no_pivoting::solve::solve_lstsq_in_place_scratch::<T>(
-					m, n, block_size, k, par,
+					m, n, block_size, k, par.shape(),
 				),
 			)),
 		);
@@ -2431,7 +2431,7 @@ impl<T: ComplexField> DenseSolveCore<T> for Qr<T> {
 			par,
 			MemStack::new(&mut MemBuffer::new(
 				linalg::qr::no_pivoting::reconstruct::reconstruct_scratch::<T>(
-					m, n, block_size, par,
+					m, n, block_size, par.shape(),
 				),
 			)),
 		);
@@ -2452,7 +2452,7 @@ impl<T: ComplexField> DenseSolveCore<T> for Qr<T> {
 			par,
 			MemStack::new(&mut MemBuffer::new(
 				linalg::qr::no_pivoting::inverse::inverse_scratch::<T>(
-					n, block_size, par,
+					n, block_size, par.shape(),
 				),
 			)),
 		);
@@ -2482,7 +2482,7 @@ impl<T: ComplexField> SolveCore<T> for ColPivQr<T> {
 				linalg::qr::col_pivoting::solve::solve_in_place_scratch::<
 					usize,
 					T,
-				>(n, block_size, k, par),
+				>(n, block_size, k, par.shape()),
 			)),
 		);
 	}
@@ -2512,7 +2512,7 @@ impl<T: ComplexField> SolveCore<T> for ColPivQr<T> {
 			MemStack::new(&mut MemBuffer::new(linalg::qr::col_pivoting::solve::solve_transpose_in_place_scratch::<
 				usize,
 				T,
-			>(n, block_size, k, par))),
+			>(n, block_size, k, par.shape()))),
 		);
 	}
 }
@@ -2540,7 +2540,7 @@ impl<T: ComplexField> SolveLstsqCore<T> for ColPivQr<T> {
 				linalg::qr::col_pivoting::solve::solve_lstsq_in_place_scratch::<
 					usize,
 					T,
-				>(m, n, block_size, k, par),
+				>(m, n, block_size, k, par.shape()),
 			)),
 		);
 	}
@@ -2563,7 +2563,7 @@ impl<T: ComplexField> DenseSolveCore<T> for ColPivQr<T> {
 				linalg::qr::col_pivoting::reconstruct::reconstruct_scratch::<
 					usize,
 					T,
-				>(m, n, block_size, par),
+				>(m, n, block_size, par.shape()),
 			)),
 		);
 		out
@@ -2584,7 +2584,7 @@ impl<T: ComplexField> DenseSolveCore<T> for ColPivQr<T> {
 			par,
 			MemStack::new(&mut MemBuffer::new(
 				linalg::qr::col_pivoting::inverse::inverse_scratch::<usize, T>(
-					n, block_size, par,
+					n, block_size, par.shape(),
 				),
 			)),
 		);

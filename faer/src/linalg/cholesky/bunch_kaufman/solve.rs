@@ -11,7 +11,7 @@ use linalg::triangular_solve::{
 pub fn solve_in_place_scratch<I: Index, T: ComplexField>(
 	dim: usize,
 	rhs_ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	let _ = par;
 	temp_mat_scratch::<T>(dim, rhs_ncols)

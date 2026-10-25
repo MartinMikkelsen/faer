@@ -23,7 +23,7 @@ impl<T: ComplexField> Auto<T> for TridiagParams {
 /// matrix's tridiagonalization
 pub fn tridiag_in_place_scratch<T: ComplexField>(
 	dim: usize,
-	par: Par,
+	par: ParShape,
 	params: Spec<TridiagParams, T>,
 ) -> StackReq {
 	_ = par;
@@ -556,7 +556,7 @@ mod tests {
 				Par::Seq,
 				MemStack::new(&mut MemBuffer::new(StackReq::all_of(&[
 					householder::apply_block_householder_sequence_transpose_on_the_left_in_place_scratch::<f64>(n - 1, b, n),
-					tridiag_in_place_scratch::<f64>(n, Par::Seq, default()),
+					tridiag_in_place_scratch::<f64>(n, ParShape::Seq, default()),
 				]))),
 				default(),
 			);
@@ -621,7 +621,7 @@ mod tests {
 				MemStack::new(&mut MemBuffer::new(tridiag_in_place_scratch::<
 					c64,
 				>(
-					n, Par::Seq, default()
+					n, ParShape::Seq, default()
 				))),
 				default(),
 			);

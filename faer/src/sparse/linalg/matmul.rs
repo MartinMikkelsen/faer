@@ -61,7 +61,7 @@ pub fn sparse_sparse_matmul_symbolic<I: Index>(
 /// multiplication into `dst`.
 pub fn sparse_sparse_matmul_numeric_scratch<I: Index, T: ComplexField>(
 	dst: SymbolicSparseColMatRef<'_, I>,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	temp_mat_scratch::<T>(dst.nrows(), par.degree())
 }
@@ -211,7 +211,7 @@ pub fn sparse_sparse_matmul<
 		&info,
 		par,
 		MemStack::new(&mut MemBuffer::try_new(
-			sparse_sparse_matmul_numeric_scratch::<I, T>(symbolic.rb(), par),
+			sparse_sparse_matmul_numeric_scratch::<I, T>(symbolic.rb(), par.shape()),
 		)?),
 	);
 	Ok(SparseColMat::new(symbolic, val))

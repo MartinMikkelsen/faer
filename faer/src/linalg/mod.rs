@@ -518,7 +518,7 @@ mod tests {
 			let size = Ord::min(m, n);
 			let bs = cpqr::recommended_block_size::<T>(m, n);
 			let scratch =
-				cpqr::qr_in_place_scratch::<usize, T>(m, n, bs, par, default());
+				cpqr::qr_in_place_scratch::<usize, T>(m, n, bs, par.shape(), default());
 			let (mut cm, mut rm) = fixture::<T>(m, n, flipped);
 			let mut h_cm = vec![T::zero(); bs * size];
 			let mut h_rm = vec![T::zero(); bs * size];
@@ -577,7 +577,7 @@ mod tests {
 		}
 
 		fn check_plu<T: Entry>(m: usize, n: usize, flipped: bool, par: Par) {
-			let scratch = plu::lu_in_place_scratch::<usize, T>(m, n, par, default());
+			let scratch = plu::lu_in_place_scratch::<usize, T>(m, n, par.shape(), default());
 			let (mut cm, mut rm) = fixture::<T>(m, n, flipped);
 			let mut p_cm = vec![0usize; m];
 			let mut p_rm = vec![0usize; m];
@@ -620,7 +620,7 @@ mod tests {
 		}
 
 		fn check_flu<T: Entry>(m: usize, n: usize, flipped: bool, par: Par) {
-			let scratch = flu::lu_in_place_scratch::<usize, T>(m, n, par, default());
+			let scratch = flu::lu_in_place_scratch::<usize, T>(m, n, par.shape(), default());
 			let (mut cm, mut rm) = fixture::<T>(m, n, flipped);
 			let mut p_cm = vec![0usize; m];
 			let mut p_rm = vec![0usize; m];

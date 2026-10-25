@@ -112,7 +112,7 @@ impl<I: Index, T: ComplexField> Llt<I, T> {
 			par,
 			MemStack::new(&mut MemBuffer::try_new(
 				symbolic.inner.factorize_numeric_llt_scratch::<T>(
-					par,
+					par.shape(),
 					Default::default(),
 				),
 			)?),
@@ -139,7 +139,7 @@ impl<I: Index, T: ComplexField> Lu<I, T> {
 			MemStack::new(&mut MemBuffer::try_new(
 				symbolic
 					.inner
-					.factorize_numeric_lu_scratch::<T>(par, Default::default()),
+					.factorize_numeric_lu_scratch::<T>(par.shape(), Default::default()),
 			)?),
 			Default::default(),
 		)?;
@@ -176,7 +176,7 @@ impl<I: Index, T: ComplexField> Qr<I, T> {
 			MemStack::new(&mut MemBuffer::try_new(
 				symbolic
 					.inner
-					.factorize_numeric_qr_scratch::<T>(par, Default::default()),
+					.factorize_numeric_qr_scratch::<T>(par.shape(), Default::default()),
 			)?),
 			Default::default(),
 		);
@@ -236,7 +236,7 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Llt<I, T> {
 			MemStack::new(&mut MemBuffer::new(
 				self.symbolic
 					.inner
-					.solve_in_place_scratch::<T>(rhs_ncols, par),
+					.solve_in_place_scratch::<T>(rhs_ncols, par.shape()),
 			)),
 		);
 	}
@@ -260,7 +260,7 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Llt<I, T> {
 			MemStack::new(&mut MemBuffer::new(
 				self.symbolic
 					.inner
-					.solve_in_place_scratch::<T>(rhs_ncols, par),
+					.solve_in_place_scratch::<T>(rhs_ncols, par.shape()),
 			)),
 		);
 	}
@@ -284,7 +284,7 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Qr<I, T> {
 			MemStack::new(&mut MemBuffer::new(
 				self.symbolic
 					.inner
-					.solve_in_place_scratch::<T>(rhs_ncols, par),
+					.solve_in_place_scratch::<T>(rhs_ncols, par.shape()),
 			)),
 		);
 	}
@@ -323,7 +323,7 @@ impl<I: Index, T: ComplexField> SolveLstsqCore<T> for Qr<I, T> {
 			MemStack::new(&mut MemBuffer::new(
 				self.symbolic
 					.inner
-					.solve_in_place_scratch::<T>(rhs_ncols, par),
+					.solve_in_place_scratch::<T>(rhs_ncols, par.shape()),
 			)),
 		);
 	}
@@ -345,7 +345,7 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Lu<I, T> {
 			MemStack::new(&mut MemBuffer::new(
 				self.symbolic
 					.inner
-					.solve_in_place_scratch::<T>(rhs_ncols, par),
+					.solve_in_place_scratch::<T>(rhs_ncols, par.shape()),
 			)),
 		);
 	}
@@ -370,7 +370,7 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Lu<I, T> {
 			MemStack::new(&mut MemBuffer::new(
 				self.symbolic
 					.inner
-					.solve_transpose_in_place_scratch::<T>(rhs_ncols, par),
+					.solve_transpose_in_place_scratch::<T>(rhs_ncols, par.shape()),
 			)),
 		);
 	}

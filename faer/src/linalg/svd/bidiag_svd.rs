@@ -1004,7 +1004,7 @@ pub(super) fn divide_and_conquer_scratch<T: ComplexField>(
 	qr_fallback_threshold: usize,
 	compute_u: bool,
 	compute_v: bool,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	let qr_fallback_threshold = Ord::max(qr_fallback_threshold, 4);
 	if n < qr_fallback_threshold {
@@ -1696,7 +1696,7 @@ mod tests {
 						4,
 						true,
 						true,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 				4,
@@ -1760,7 +1760,7 @@ mod tests {
 						4,
 						true,
 						true,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 				4,
@@ -2011,7 +2011,7 @@ mod tests {
 								4,
 								true,
 								true,
-								Par::Seq,
+								ParShape::Seq,
 							),
 						)),
 						4,

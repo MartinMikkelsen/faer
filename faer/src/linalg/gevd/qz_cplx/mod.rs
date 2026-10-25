@@ -1078,7 +1078,7 @@ fn aggressive_early_deflation<T: ComplexField>(
 /// hessenberg form.
 pub fn hessenberg_to_qz_scratch<T: ComplexField>(
 	n: usize,
-	par: Par,
+	par: ParShape,
 	params: GeneralizedSchurParams,
 ) -> StackReq {
 	let nmin = Ord::max(15, params.blocking_threshold);
@@ -1114,7 +1114,7 @@ fn multishift_sweep_scratch<T: ComplexField>(n: usize, ns: usize) -> StackReq {
 fn aed_scratch<T: ComplexField>(
 	n: usize,
 	nw: usize,
-	par: Par,
+	par: ParShape,
 	params: GeneralizedSchurParams,
 ) -> StackReq {
 	StackReq::any_of(&[
@@ -1638,7 +1638,7 @@ mod tests {
 					MemStack::new(&mut MemBuffer::new(
 						hessenberg_to_qz_scratch::<c64>(
 							n,
-							Par::Seq,
+							ParShape::Seq,
 							auto!(c64),
 						),
 					)),

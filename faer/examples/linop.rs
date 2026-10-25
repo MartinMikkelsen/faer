@@ -8,7 +8,7 @@ use faer::{dyn_stack, reborrow};
 use faer::mat::{AsMatMut, MatMut, MatRef};
 use faer::matrix_free::{BiLinOp, LinOp};
 use faer::sparse::{SparseRowMatRef, linalg};
-use faer::{Accum, Conj, Par};
+use faer::{Accum, Conj, Par, ParShape};
 
 use faer::c64;
 
@@ -27,7 +27,7 @@ pub struct BinvAOperatorScratch<'a, I: Index> {
 }
 
 impl<I: Index, T: ComplexField> LinOp<T> for BinvAOperatorScratch<'_, I> {
-	fn apply_scratch(&self, rhs_ncols: usize, par: Par) -> StackReq {
+	fn apply_scratch(&self, rhs_ncols: usize, par: ParShape) -> StackReq {
 		self.Binv.solve_in_place_scratch::<T>(rhs_ncols, par)
 	}
 
@@ -63,7 +63,7 @@ impl<I: Index, T: ComplexField> LinOp<T> for BinvAOperatorScratch<'_, I> {
 }
 
 impl<I: Index, T: ComplexField> BiLinOp<T> for BinvAOperatorScratch<'_, I> {
-	fn transpose_apply_scratch(&self, rhs_ncols: usize, par: Par) -> StackReq {
+	fn transpose_apply_scratch(&self, rhs_ncols: usize, par: ParShape) -> StackReq {
 		faer::linalg::temp_mat_scratch::<T>(self.Binv.nrows(), rhs_ncols).and(
 			self.Binv
 				.solve_transpose_in_place_scratch::<T>(rhs_ncols, par),
@@ -94,7 +94,7 @@ impl<I: Index, T: ComplexField> BiLinOp<T> for BinvAOperatorScratch<'_, I> {
 }
 
 impl<I: Index, T: ComplexField> LinOp<T> for BinvAOperator<'_, I, T> {
-	fn apply_scratch(&self, rhs_ncols: usize, par: Par) -> StackReq {
+	fn apply_scratch(&self, rhs_ncols: usize, par: ParShape) -> StackReq {
 		LinOp::<T>::apply_scratch(
 			&BinvAOperatorScratch {
 				Binv: self.Binv.symbolic(),
@@ -156,7 +156,7 @@ impl<I: Index, T: ComplexField> LinOp<T> for BinvAOperator<'_, I, T> {
 
 // not needed for partial_eigen. left here as an example
 impl<I: Index, T: ComplexField> BiLinOp<T> for BinvAOperator<'_, I, T> {
-	fn transpose_apply_scratch(&self, rhs_ncols: usize, par: Par) -> StackReq {
+	fn transpose_apply_scratch(&self, rhs_ncols: usize, par: ParShape) -> StackReq {
 		BiLinOp::<T>::transpose_apply_scratch(
 			&BinvAOperatorScratch {
 				Binv: self.Binv.symbolic(),
@@ -281,11 +281,11 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
 
 	// computing allocation size
 	let factorize_scratch =
-		symbolic.factorize_numeric_lu_scratch::<c64>(par, default());
+		symbolic.factorize_numeric_lu_scratch::<c64>(par.shape(), default());
 	let eigen_scratch = faer::matrix_free::eigen::partial_eigen_scratch(
 		&BinvAOperatorScratch { Binv: &symbolic } as &dyn LinOp<c64>,
 		n_eig,
-		par,
+		par.shape(),
 		default(),
 	);
 

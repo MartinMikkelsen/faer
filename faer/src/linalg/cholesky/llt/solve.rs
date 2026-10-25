@@ -3,7 +3,7 @@ use crate::internal_prelude::*;
 pub fn solve_in_place_scratch<T: ComplexField>(
 	dim: usize,
 	rhs_ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	_ = (dim, rhs_ncols, par);
 	StackReq::EMPTY
@@ -78,7 +78,7 @@ mod tests {
 					MemBuffer::new(
 						llt::factor::cholesky_in_place_scratch::<c64>(
 							n,
-							Par::Seq,
+							ParShape::Seq,
 							LltParams {
 								recursion_threshold: 32,
 								block_size: 128,
@@ -107,7 +107,7 @@ mod tests {
 						llt::solve::solve_in_place_scratch::<c64>(
 							n,
 							k,
-							Par::Seq,
+							ParShape::Seq,
 						),
 					)),
 				);
@@ -123,7 +123,7 @@ mod tests {
 						llt::solve::solve_in_place_scratch::<c64>(
 							n,
 							k,
-							Par::Seq,
+							ParShape::Seq,
 						),
 					)),
 				);

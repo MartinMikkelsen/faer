@@ -3080,7 +3080,7 @@ mod tests {
 							n,
 							true,
 							true,
-							Par::Seq,
+							ParShape::Seq,
 							auto!(f64),
 						),
 					)),

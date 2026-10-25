@@ -7,14 +7,14 @@ pub fn bicgstab_scratch<T: ComplexField>(
 	right_precond: impl Precond<T>,
 	mat: impl LinOp<T>,
 	rhs_ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	fn implementation<T: ComplexField>(
 		K1: &dyn Precond<T>,
 		K2: &dyn Precond<T>,
 		A: &dyn LinOp<T>,
 		rhs_ncols: usize,
-		par: Par,
+		par: ParShape,
 	) -> StackReq {
 		let n = A.nrows();
 		let k = rhs_ncols;
@@ -445,7 +445,7 @@ mod tests {
 				diag.as_ref(),
 				A.as_ref(),
 				sol.ncols(),
-				Par::Seq,
+				ParShape::Seq,
 			))),
 		);
 		let ref out = *out;
@@ -464,7 +464,7 @@ mod tests {
 			max_iters: 10, // unfixed code looped infinitely
 			..BicgParams::default()
 		};
-		let req = bicgstab_scratch(precond, precond, A.as_ref(), 1, Par::Seq);
+		let req = bicgstab_scratch(precond, precond, A.as_ref(), 1, ParShape::Seq);
 		for fill in [0x00u8, 0x3F, 0xFF] {
 			// the workspace is uninitialized memory: any byte pattern must work
 			let mut buffer = alloc::vec![

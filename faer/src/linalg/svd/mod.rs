@@ -66,11 +66,11 @@ fn svd_imp_scratch<T: ComplexField>(
 		n: usize,
 		compute_u: bool,
 		compute_v: bool,
-		par: Par,
+		par: ParShape,
 		params: SvdParams,
 	) -> StackReq,
 	params: SvdParams,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	assert!(m >= n);
 	let householder_block_size =
@@ -131,7 +131,7 @@ fn bidiag_cplx_svd_scratch<T: ComplexField>(
 	n: usize,
 	compute_u: bool,
 	compute_v: bool,
-	par: Par,
+	par: ParShape,
 	params: SvdParams,
 ) -> StackReq {
 	StackReq::all_of(&[
@@ -147,7 +147,7 @@ fn bidiag_real_svd_scratch<T: RealField>(
 	n: usize,
 	compute_u: bool,
 	compute_v: bool,
-	par: Par,
+	par: ParShape,
 	params: SvdParams,
 ) -> StackReq {
 	if n < params.recursion_threshold {
@@ -356,13 +356,13 @@ fn compute_bidiag_real_svd<T: RealField>(
 /// use faer::linalg::svd::bidiagonal_svd_scratch;
 /// let _buffer = dyn_stack::MemBuffer::new(bidiagonal_svd_scratch::<f64>(
 /// 	3,
-/// 	Par::Seq,
+/// 	faer::ParShape::Seq,
 /// 	Default::default(),
 /// ));
 /// ```
 pub fn bidiagonal_svd_scratch<T: ComplexField>(
 	dim: usize,
-	par: Par,
+	par: ParShape,
 	params: Spec<SvdParams, T>,
 ) -> StackReq {
 	let n = dim;
@@ -401,7 +401,7 @@ pub fn bidiagonal_svd_scratch<T: ComplexField>(
 /// let (mut u, mut v) = (Mat::zeros(2, 2), Mat::zeros(2, 2));
 /// let mut mem = MemBuffer::new(bidiagonal_svd_scratch::<f64>(
 /// 	2,
-/// 	Par::Seq,
+/// 	faer::ParShape::Seq,
 /// 	Default::default(),
 /// ));
 /// bidiagonal_svd(
@@ -638,7 +638,7 @@ pub fn svd_scratch<T: ComplexField>(
 	ncols: usize,
 	compute_u: ComputeSvdVectors,
 	compute_v: ComputeSvdVectors,
-	par: Par,
+	par: ParShape,
 	params: Spec<SvdParams, T>,
 ) -> StackReq {
 	let params = params.config;
@@ -848,7 +848,7 @@ pub fn svd<T: ComplexField>(
 pub fn pseudoinverse_from_svd_scratch<T: ComplexField>(
 	nrows: usize,
 	ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	_ = par;
 	let size = Ord::min(nrows, ncols);
@@ -969,7 +969,7 @@ mod tests {
 					n,
 					ComputeSvdVectors::Full,
 					ComputeSvdVectors::Full,
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				))),
 				params,
@@ -994,7 +994,7 @@ mod tests {
 					n,
 					ComputeSvdVectors::Thin,
 					ComputeSvdVectors::Thin,
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				))),
 				params,
@@ -1017,7 +1017,7 @@ mod tests {
 					n,
 					ComputeSvdVectors::Thin,
 					ComputeSvdVectors::No,
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				))),
 				params,
@@ -1040,7 +1040,7 @@ mod tests {
 					n,
 					ComputeSvdVectors::No,
 					ComputeSvdVectors::Thin,
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				))),
 				params,
@@ -1062,7 +1062,7 @@ mod tests {
 					n,
 					ComputeSvdVectors::No,
 					ComputeSvdVectors::No,
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				))),
 				params,
@@ -1100,7 +1100,7 @@ mod tests {
 					n,
 					vectors(want_u),
 					vectors(want_v),
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				))),
 				params,
@@ -1199,7 +1199,7 @@ mod tests {
 					n,
 					vectors(want_u),
 					vectors(want_v),
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				))),
 				params,
@@ -1280,7 +1280,7 @@ mod tests {
 					2,
 					ComputeSvdVectors::Thin,
 					ComputeSvdVectors::Thin,
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				))),
 				params,
@@ -1474,7 +1474,7 @@ mod tests {
 				n,
 				false,
 				false,
-				Par::Seq,
+				ParShape::Seq,
 				params,
 			))),
 		)
@@ -1545,7 +1545,7 @@ mod tests {
 						n,
 						true,
 						true,
-						Par::Seq,
+						ParShape::Seq,
 						params,
 					),
 				)),
@@ -1599,7 +1599,7 @@ mod tests {
 					n,
 					ComputeSvdVectors::Full,
 					ComputeSvdVectors::Full,
-					Par::Seq,
+					ParShape::Seq,
 					default(),
 				))),
 				default(),

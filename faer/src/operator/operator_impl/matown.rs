@@ -11,7 +11,7 @@ impl<T: ComplexField, ViewT: Conjugate<Canonical = T>> LinOp<T> for Mat<ViewT> {
 	}
 
 	#[inline]
-	fn apply_scratch(&self, rhs_ncols: usize, par: Par) -> StackReq {
+	fn apply_scratch(&self, rhs_ncols: usize, par: ParShape) -> StackReq {
 		self.rb().apply_scratch(rhs_ncols, par)
 	}
 
@@ -43,7 +43,7 @@ impl<T: ComplexField, ViewT: Conjugate<Canonical = T>> BiLinOp<T>
 	for Mat<ViewT>
 {
 	#[inline]
-	fn transpose_apply_scratch(&self, rhs_ncols: usize, par: Par) -> StackReq {
+	fn transpose_apply_scratch(&self, rhs_ncols: usize, par: ParShape) -> StackReq {
 		self.rb().transpose_apply_scratch(rhs_ncols, par)
 	}
 

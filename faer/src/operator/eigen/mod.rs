@@ -1085,7 +1085,7 @@ fn partial_schur_cplx_imp<T: ComplexField>(
 pub fn partial_eigen_scratch<T: ComplexField>(
 	A: &dyn LinOp<T>,
 	n_eigval: usize,
-	par: Par,
+	par: ParShape,
 	params: PartialEigenParams,
 ) -> StackReq {
 	let n = A.nrows();
@@ -1146,7 +1146,7 @@ pub fn partial_eigen_scratch<T: ComplexField>(
 pub fn partial_self_adjoint_eigen_scratch<T: ComplexField>(
 	A: &dyn LinOp<T>,
 	n_eigval: usize,
-	par: Par,
+	par: ParShape,
 	params: PartialEigenParams,
 ) -> StackReq {
 	let n = A.nrows();
@@ -1204,7 +1204,7 @@ pub fn partial_self_adjoint_eigen_scratch<T: ComplexField>(
 pub fn partial_svd_scratch<T: ComplexField>(
 	A: &dyn BiLinOp<T>,
 	n_sval: usize,
-	par: Par,
+	par: ParShape,
 	params: PartialEigenParams,
 ) -> StackReq {
 	let m = A.nrows();
@@ -1485,7 +1485,7 @@ mod tests {
 		let mem = &mut MemBuffer::new(partial_eigen_scratch(
 			&A,
 			n_eigval,
-			par,
+			par.shape(),
 			PartialEigenParams {
 				min_dim,
 				max_dim,
@@ -1542,7 +1542,7 @@ mod tests {
 		let mem = &mut MemBuffer::new(partial_eigen_scratch(
 			&A,
 			n_eigval,
-			par,
+			par.shape(),
 			PartialEigenParams {
 				min_dim,
 				max_dim,
@@ -1601,7 +1601,7 @@ mod tests {
 		let mem = &mut MemBuffer::new(partial_eigen_scratch(
 			&A,
 			n_eigval,
-			par,
+			par.shape(),
 			PartialEigenParams {
 				min_dim,
 				max_dim,
@@ -1655,7 +1655,7 @@ mod tests {
 		let mem = &mut MemBuffer::new(partial_eigen_scratch(
 			&A,
 			n_eigval,
-			par,
+			par.shape(),
 			default(),
 		));
 		let mut V = Mat::zeros(n, n_eigval);
@@ -1699,7 +1699,7 @@ mod tests {
 		let mem = &mut MemBuffer::new(partial_eigen_scratch(
 			&A,
 			n_eigval,
-			par,
+			par.shape(),
 			default(),
 		));
 		let mut V = Mat::zeros(n, n_eigval);

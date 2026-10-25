@@ -359,17 +359,17 @@
 //! 			supernodal::factorize_supernodal_numeric_llt_scratch::<
 //! 				usize,
 //! 				f64,
-//! 			>(&symbolic, faer::Par::Seq, Default::default()),
+//! 			>(&symbolic, faer::ParShape::Seq, Default::default()),
 //! 			supernodal::factorize_supernodal_numeric_ldlt_scratch::<
 //! 				usize,
 //! 				f64,
-//! 			>(&symbolic, faer::Par::Seq, Default::default()),
+//! 			>(&symbolic, faer::ParShape::Seq, Default::default()),
 //! 			supernodal::factorize_supernodal_numeric_intranode_lblt_scratch::<
 //! 				usize,
 //! 				f64,
-//! 			>(&symbolic, faer::Par::Seq, Default::default()),
+//! 			>(&symbolic, faer::ParShape::Seq, Default::default()),
 //! 			faer::perm::permute_rows_in_place_scratch::<usize, f64>(dim, 1),
-//! 			symbolic.solve_in_place_scratch::<f64>(dim, Par::Seq),
+//! 			symbolic.solve_in_place_scratch::<f64>(dim, faer::ParShape::Seq),
 //! 		]))?;
 //! 	let stack = MemStack::new(&mut mem);
 //! 	// llt skipped since a is not positive-definite
@@ -1648,7 +1648,7 @@ pub mod supernodal {
 		pub fn solve_in_place_scratch<T: ComplexField>(
 			&self,
 			rhs_ncols: usize,
-			par: Par,
+			par: ParShape,
 		) -> StackReq {
 			_ = par;
 			let mut req = StackReq::EMPTY;
@@ -2971,7 +2971,7 @@ pub mod supernodal {
 		T: ComplexField,
 	>(
 		symbolic: &SymbolicSupernodalCholesky<I>,
-		par: Par,
+		par: ParShape,
 		params: Spec<LltParams, T>,
 	) -> StackReq {
 		let n_supernodes = symbolic.n_supernodes();
@@ -3021,7 +3021,7 @@ pub mod supernodal {
 		T: ComplexField,
 	>(
 		symbolic: &SymbolicSupernodalCholesky<I>,
-		par: Par,
+		par: ParShape,
 		params: Spec<LdltParams, T>,
 	) -> StackReq {
 		let n_supernodes = symbolic.n_supernodes();
@@ -3072,7 +3072,7 @@ pub mod supernodal {
 		T: ComplexField,
 	>(
 		symbolic: &SymbolicSupernodalCholesky<I>,
-		par: Par,
+		par: ParShape,
 		params: Spec<LbltParams, T>,
 	) -> StackReq {
 		let n_supernodes = symbolic.n_supernodes();
@@ -3840,7 +3840,7 @@ impl<I: Index> SymbolicCholesky<I> {
 	#[inline]
 	pub fn factorize_numeric_llt_scratch<T: ComplexField>(
 		&self,
-		par: Par,
+		par: ParShape,
 		params: Spec<LltParams, T>,
 	) -> StackReq {
 		let n = self.nrows();
@@ -3873,7 +3873,7 @@ impl<I: Index> SymbolicCholesky<I> {
 	#[inline]
 	pub fn factorize_numeric_ldlt_scratch<T: ComplexField>(
 		&self,
-		par: Par,
+		par: ParShape,
 		params: Spec<LdltParams, T>,
 	) -> StackReq {
 		let n = self.nrows();
@@ -3908,7 +3908,7 @@ impl<I: Index> SymbolicCholesky<I> {
 	#[inline]
 	pub fn factorize_numeric_intranode_lblt_scratch<T: ComplexField>(
 		&self,
-		par: Par,
+		par: ParShape,
 		params: Spec<LbltParams, T>,
 	) -> StackReq {
 		let n = self.nrows();
@@ -4230,7 +4230,7 @@ impl<I: Index> SymbolicCholesky<I> {
 	pub fn solve_in_place_scratch<T: ComplexField>(
 		&self,
 		rhs_ncols: usize,
-		par: Par,
+		par: ParShape,
 	) -> StackReq {
 		temp_mat_scratch::<T>(self.nrows(), rhs_ncols).and(match self.raw() {
 			SymbolicCholeskyRaw::Simplicial(this) => {
@@ -5011,7 +5011,7 @@ pub(super) mod tests {
 					supernodal::factorize_supernodal_numeric_ldlt_scratch::<
 						usize,
 						c64,
-					>(symbolic, Par::Seq, Default::default()),
+					>(symbolic, ParShape::Seq, Default::default()),
 				)),
 				Default::default(),
 			)?;
@@ -5037,7 +5037,7 @@ pub(super) mod tests {
 					x.rb_mut(),
 					Par::Seq,
 					MemStack::new(&mut MemBuffer::new(
-						symbolic.solve_in_place_scratch::<c64>(k, Par::Seq),
+						symbolic.solve_in_place_scratch::<c64>(k, ParShape::Seq),
 					)),
 				);
 				let target = rhs.rb();
@@ -5066,7 +5066,7 @@ pub(super) mod tests {
 				MemStack::new(&mut MemBuffer::new(supernodal::factorize_supernodal_numeric_intranode_lblt_scratch::<
 					usize,
 					c64,
-				>(symbolic, Par::Seq, Default::default()))),
+				>(symbolic, ParShape::Seq, Default::default()))),
 				Default::default(),
 			);
 			let mut A = A_lower.to_dense();
@@ -5099,7 +5099,7 @@ pub(super) mod tests {
 					tmp.rb_mut(),
 					Par::Seq,
 					MemStack::new(&mut MemBuffer::new(
-						symbolic.solve_in_place_scratch::<c64>(k, Par::Seq),
+						symbolic.solve_in_place_scratch::<c64>(k, ParShape::Seq),
 					)),
 				);
 				for j in 0..k {
@@ -5132,7 +5132,7 @@ pub(super) mod tests {
 					supernodal::factorize_supernodal_numeric_llt_scratch::<
 						usize,
 						c64,
-					>(symbolic, Par::Seq, Default::default()),
+					>(symbolic, ParShape::Seq, Default::default()),
 				)),
 				Default::default(),
 			)?;
@@ -5157,7 +5157,7 @@ pub(super) mod tests {
 					x.rb_mut(),
 					Par::Seq,
 					MemStack::new(&mut MemBuffer::new(
-						symbolic.solve_in_place_scratch::<c64>(k, Par::Seq),
+						symbolic.solve_in_place_scratch::<c64>(k, ParShape::Seq),
 					)),
 				);
 				let target = rhs.rb();
@@ -5353,7 +5353,7 @@ pub(super) mod tests {
 						par,
 						MemStack::new(&mut MemBuffer::new(
 							symbolic.factorize_numeric_llt_scratch::<c64>(
-								par,
+								par.shape(),
 								Default::default(),
 							),
 						)),
@@ -5378,7 +5378,7 @@ pub(super) mod tests {
 								MemStack::new(&mut MemBuffer::new(
 									llt.solve_in_place_scratch::<c64>(
 										k,
-										Par::Seq,
+										ParShape::Seq,
 									),
 								)),
 							);
@@ -5434,7 +5434,7 @@ pub(super) mod tests {
 						par,
 						MemStack::new(&mut MemBuffer::new(
 							symbolic.factorize_numeric_ldlt_scratch::<c64>(
-								par,
+								par.shape(),
 								Default::default(),
 							),
 						)),
@@ -5459,7 +5459,7 @@ pub(super) mod tests {
 								MemStack::new(&mut MemBuffer::new(
 									ldlt.solve_in_place_scratch::<c64>(
 										k,
-										Par::Seq,
+										ParShape::Seq,
 									),
 								)),
 							);
@@ -5521,7 +5521,7 @@ pub(super) mod tests {
 						MemStack::new(&mut MemBuffer::new(
 							symbolic
 								.factorize_numeric_intranode_lblt_scratch::<c64>(
-									par,
+									par.shape(),
 									Default::default(),
 								),
 						)),
@@ -5546,7 +5546,7 @@ pub(super) mod tests {
 								MemStack::new(&mut MemBuffer::new(
 									lblt.solve_in_place_scratch::<c64>(
 										k,
-										Par::Seq,
+										ParShape::Seq,
 									),
 								)),
 							);

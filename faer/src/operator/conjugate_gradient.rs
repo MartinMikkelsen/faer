@@ -61,13 +61,13 @@ pub fn conjugate_gradient_scratch<T: ComplexField>(
 	precond: impl Precond<T>,
 	mat: impl LinOp<T>,
 	rhs_ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	fn implementation<T: ComplexField>(
 		M: &dyn Precond<T>,
 		A: &dyn LinOp<T>,
 		rhs_ncols: usize,
-		par: Par,
+		par: ParShape,
 	) -> StackReq {
 		let n = A.nrows();
 		let k = rhs_ncols;
@@ -406,7 +406,7 @@ mod tests {
 				precond,
 				A.as_ref(),
 				2,
-				Par::Seq,
+				ParShape::Seq,
 			))),
 		);
 		let ref out = *out;
@@ -471,7 +471,7 @@ mod tests {
 					diag.as_ref(),
 					A.as_ref(),
 					k,
-					Par::Seq,
+					ParShape::Seq,
 				),
 			)),
 		);
@@ -492,7 +492,7 @@ mod tests {
 			initial_guess: InitialGuessStatus::Zero,
 			..CgParams::default()
 		};
-		let req = conjugate_gradient_scratch(precond, A.as_ref(), 1, Par::Seq);
+		let req = conjugate_gradient_scratch(precond, A.as_ref(), 1, ParShape::Seq);
 		for fill in [0x00u8, 0x3F, 0xFF] {
 			// the workspace is uninitialized memory: any byte pattern must work
 			let mut buffer = alloc::vec![

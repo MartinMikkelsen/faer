@@ -28,7 +28,7 @@ impl<T: ComplexField> Auto<T> for HessenbergParams {
 pub fn hessenberg_in_place_scratch<T: ComplexField>(
 	dim: usize,
 	block_size: usize,
-	par: Par,
+	par: ParShape,
 	params: Spec<HessenbergParams, T>,
 ) -> StackReq {
 	let params = params.config;

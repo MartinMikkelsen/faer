@@ -19,7 +19,7 @@ pub fn determinant<T: ComplexField>(mat: MatRef<'_, T>) -> T::Canonical {
 				linalg::lu::partial_pivoting::factor::lu_in_place_scratch::<
 					usize,
 					T,
-				>(m, n, par, default()),
+				>(m, n, par.shape(), default()),
 			)),
 			default(),
 		)

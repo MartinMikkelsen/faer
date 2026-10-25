@@ -435,7 +435,7 @@ mod tests {
 					Par::Seq,
 					MemStack::new(&mut MemBuffer::new(linalg::cholesky::llt::factor::cholesky_in_place_scratch::<c64>(
 						n,
-						Par::Seq,
+						ParShape::Seq,
 						default(),
 					))),
 					default(),

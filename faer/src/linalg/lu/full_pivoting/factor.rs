@@ -452,7 +452,7 @@ impl<T: ComplexField> Auto<T> for FullPivLuParams {
 pub fn lu_in_place_scratch<I: Index, T: ComplexField>(
 	nrows: usize,
 	ncols: usize,
-	par: Par,
+	par: ParShape,
 	params: Spec<FullPivLuParams, T>,
 ) -> StackReq {
 	_ = par;
@@ -602,7 +602,7 @@ mod tests {
 						usize,
 						c64,
 					>(
-						n, n, par, default()
+						n, n, par.shape(), default()
 					))),
 					default(),
 				);
@@ -652,7 +652,7 @@ mod tests {
 						usize,
 						f64,
 					>(
-						n, n, par, default()
+						n, n, par.shape(), default()
 					))),
 					default(),
 				);

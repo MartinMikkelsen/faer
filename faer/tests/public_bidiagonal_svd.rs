@@ -39,7 +39,7 @@ fn check<T: ComplexField>(make: fn(f64, f64) -> T) {
 				params.recursion_threshold = 8;
 				let mut mem = MemBuffer::new(bidiagonal_svd_scratch::<T>(
 					n,
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				));
 				bidiagonal_svd(
@@ -82,7 +82,7 @@ fn nonfinite_and_empty() {
 	let (mut u, mut v) = (Mat::zeros(1, 1), Mat::zeros(1, 1));
 	let mut mem = MemBuffer::new(bidiagonal_svd_scratch::<f64>(
 		1,
-		Par::Seq,
+		ParShape::Seq,
 		Default::default(),
 	));
 	assert_eq!(
@@ -141,7 +141,7 @@ fn extreme<T: ComplexField>(make: fn(f64, f64) -> T) {
 				let (mut u, mut v) = (Mat::zeros(n, n), Mat::zeros(n, n));
 				let mut mem = MemBuffer::new(bidiagonal_svd_scratch::<T>(
 					n,
-					Par::Seq,
+					ParShape::Seq,
 					Default::default(),
 				));
 				bidiagonal_svd(
@@ -204,7 +204,7 @@ fn reviewer_subnormal_one_by_one() {
 		let (mut u, mut v) = (Mat::zeros(1, 1), Mat::zeros(1, 1));
 		let mut mem = MemBuffer::new(bidiagonal_svd_scratch::<c64>(
 			1,
-			Par::Seq,
+			ParShape::Seq,
 			Default::default(),
 		));
 		let mut d = [value];
@@ -251,7 +251,7 @@ fn one_by_one_boundary<T: ComplexField>(value: T, upper: bool) {
 	let (mut u, mut v) = (Mat::zeros(1, 1), Mat::zeros(1, 1));
 	let mut mem = MemBuffer::new(bidiagonal_svd_scratch::<T>(
 		1,
-		Par::Seq,
+		ParShape::Seq,
 		Default::default(),
 	));
 	let mut d = [value.copy()];

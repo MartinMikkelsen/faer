@@ -1130,7 +1130,7 @@ pub fn rank1_update_fallback<'a, T: ComplexField>(
 /// decomposition
 pub fn cholesky_in_place_scratch<I: Index, T: ComplexField>(
 	dim: usize,
-	par: Par,
+	par: ParShape,
 	params: Spec<LbltParams, T>,
 ) -> StackReq {
 	let params = params.config;

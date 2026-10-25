@@ -567,7 +567,7 @@ mod tests {
 					let mut perm = vec![0usize; n];
 					let mut perm_inv = vec![0usize; n];
 					let mut mem = dyn_stack::MemBuffer::new(
-						crate::linalg::lu::partial_pivoting::factor::lu_in_place_scratch::<usize, f64>(n, n, par, Default::default()),
+						crate::linalg::lu::partial_pivoting::factor::lu_in_place_scratch::<usize, f64>(n, n, par.shape(), Default::default()),
 					);
 					crate::linalg::lu::partial_pivoting::factor::lu_in_place(
 						f.as_mut(),
@@ -589,7 +589,7 @@ mod tests {
 					let bs = crate::linalg::qr::no_pivoting::factor::recommended_block_size::<f64>(n, n);
 					let mut h = Mat::<f64>::zeros(bs, n);
 					let mut mem = dyn_stack::MemBuffer::new(
-						crate::linalg::qr::no_pivoting::factor::qr_in_place_scratch::<f64>(n, n, bs, par, Default::default()),
+						crate::linalg::qr::no_pivoting::factor::qr_in_place_scratch::<f64>(n, n, bs, par.shape(), Default::default()),
 					);
 					crate::linalg::qr::no_pivoting::factor::qr_in_place(
 						m.as_mut(),
@@ -616,7 +616,7 @@ mod tests {
 				let ch = |par: Par| {
 					let mut f = spd.clone();
 					let mut mem = dyn_stack::MemBuffer::new(
-						crate::linalg::cholesky::llt::factor::cholesky_in_place_scratch::<f64>(n, par, Default::default()),
+						crate::linalg::cholesky::llt::factor::cholesky_in_place_scratch::<f64>(n, par.shape(), Default::default()),
 					);
 					crate::linalg::cholesky::llt::factor::cholesky_in_place(
 						f.as_mut(),

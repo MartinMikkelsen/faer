@@ -47,7 +47,7 @@ pub mod supernodal {
 	pub fn solve_in_place_scratch<I: Index, T: ComplexField>(
 		dim: usize,
 		rhs_ncols: usize,
-		par: Par,
+		par: ParShape,
 	) -> StackReq {
 		let _ = par;
 		crate::perm::permute_rows_in_place_scratch::<I, T>(dim, rhs_ncols)
@@ -57,7 +57,7 @@ pub mod supernodal {
 	pub fn solve_transpose_in_place_scratch<I: Index, T: ComplexField>(
 		dim: usize,
 		rhs_ncols: usize,
-		par: Par,
+		par: ParShape,
 	) -> StackReq {
 		solve_in_place_scratch::<I, T>(dim, rhs_ncols, par)
 	}
@@ -1335,7 +1335,7 @@ pub mod simplicial {
 	pub fn solve_in_place_scratch<I: Index, T: ComplexField>(
 		dim: usize,
 		rhs_ncols: usize,
-		par: Par,
+		par: ParShape,
 	) -> StackReq {
 		let _ = par;
 		crate::perm::permute_rows_in_place_scratch::<I, T>(dim, rhs_ncols)
@@ -1344,7 +1344,7 @@ pub mod simplicial {
 	pub fn solve_transpose_in_place_scratch<I: Index, T: ComplexField>(
 		dim: usize,
 		rhs_ncols: usize,
-		par: Par,
+		par: ParShape,
 	) -> StackReq {
 		solve_in_place_scratch::<I, T>(dim, rhs_ncols, par)
 	}
@@ -2023,7 +2023,7 @@ impl<I: Index> SymbolicLu<I> {
 	/// $LU$ factorization
 	pub fn factorize_numeric_lu_scratch<T>(
 		&self,
-		par: Par,
+		par: ParShape,
 		params: Spec<PartialPivLuParams, T>,
 	) -> StackReq
 	where
@@ -2059,7 +2059,7 @@ impl<I: Index> SymbolicLu<I> {
 	pub fn solve_in_place_scratch<T>(
 		&self,
 		rhs_ncols: usize,
-		par: Par,
+		par: ParShape,
 	) -> StackReq
 	where
 		T: ComplexField,
@@ -2083,7 +2083,7 @@ impl<I: Index> SymbolicLu<I> {
 	pub fn solve_transpose_in_place_scratch<T>(
 		&self,
 		rhs_ncols: usize,
-		par: Par,
+		par: ParShape,
 	) -> StackReq
 	where
 		T: ComplexField,
@@ -2471,7 +2471,7 @@ mod tests {
 					supernodal::solve_in_place_scratch::<usize, T>(
 						n,
 						k,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);
@@ -2489,7 +2489,7 @@ mod tests {
 					supernodal::solve_in_place_scratch::<usize, T>(
 						n,
 						k,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);
@@ -2507,7 +2507,7 @@ mod tests {
 					supernodal::solve_transpose_in_place_scratch::<usize, T>(
 						n,
 						k,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);
@@ -2525,7 +2525,7 @@ mod tests {
 					supernodal::solve_transpose_in_place_scratch::<usize, T>(
 						n,
 						k,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);
@@ -2593,7 +2593,7 @@ mod tests {
 					simplicial::solve_in_place_scratch::<usize, T>(
 						n,
 						k,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);
@@ -2611,7 +2611,7 @@ mod tests {
 					simplicial::solve_in_place_scratch::<usize, T>(
 						n,
 						k,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);
@@ -2629,7 +2629,7 @@ mod tests {
 					simplicial::solve_transpose_in_place_scratch::<usize, T>(
 						n,
 						k,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);
@@ -2647,7 +2647,7 @@ mod tests {
 					simplicial::solve_transpose_in_place_scratch::<usize, T>(
 						n,
 						k,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);
@@ -2696,7 +2696,7 @@ mod tests {
 					Par::Seq,
 					MemStack::new(&mut MemBuffer::new(
 						symbolic.factorize_numeric_lu_scratch::<T>(
-							Par::Seq,
+							ParShape::Seq,
 							Default::default(),
 						),
 					)),
@@ -2711,7 +2711,7 @@ mod tests {
 					Par::Seq,
 					MemStack::new(&mut MemBuffer::new(
 						symbolic
-							.solve_in_place_scratch::<T>(rhs.ncols(), Par::Seq),
+							.solve_in_place_scratch::<T>(rhs.ncols(), ParShape::Seq),
 					)),
 				);
 				let linsolve_diff = A * &x - &rhs;
@@ -2725,7 +2725,7 @@ mod tests {
 					Par::Seq,
 					MemStack::new(&mut MemBuffer::new(
 						symbolic
-							.solve_in_place_scratch::<T>(rhs.ncols(), Par::Seq),
+							.solve_in_place_scratch::<T>(rhs.ncols(), ParShape::Seq),
 					)),
 				);
 				let linsolve_diff = A.conjugate() * &x - &rhs;
@@ -2740,7 +2740,7 @@ mod tests {
 					MemStack::new(&mut MemBuffer::new(
 						symbolic.solve_transpose_in_place_scratch::<T>(
 							rhs.ncols(),
-							Par::Seq,
+							ParShape::Seq,
 						),
 					)),
 				);
@@ -2756,7 +2756,7 @@ mod tests {
 					MemStack::new(&mut MemBuffer::new(
 						symbolic.solve_transpose_in_place_scratch::<T>(
 							rhs.ncols(),
-							Par::Seq,
+							ParShape::Seq,
 						),
 					)),
 				);

@@ -1264,7 +1264,7 @@ fn qz_to_gevd_cplx<T: ComplexField>(
 	}
 }
 
-fn qz_to_gevd_real_scratch<T: RealField>(n: usize, _: Par) -> StackReq {
+fn qz_to_gevd_real_scratch<T: RealField>(n: usize, _: ParShape) -> StackReq {
 	StackReq::all_of(&[
 		temp_mat_scratch::<T>(n, 1),
 		temp_mat_scratch::<T>(n, 1),
@@ -1277,17 +1277,17 @@ fn qz_to_gevd_real_scratch<T: RealField>(n: usize, _: Par) -> StackReq {
 			linalg::lu::full_pivoting::factor::lu_in_place_scratch::<
 				usize,
 				Complex<T>,
-			>(2, 2, Par::Seq, Default::default()),
+			>(2, 2, ParShape::Seq, Default::default()),
 			linalg::lu::full_pivoting::solve::solve_in_place_scratch::<
 				usize,
 				Complex<T>,
-			>(2, 1, Par::Seq),
+			>(2, 1, ParShape::Seq),
 		]),
 		temp_mat_scratch::<T>(n, 2),
 	])
 }
 
-fn qz_to_gevd_cplx_scratch<T: ComplexField>(n: usize, _: Par) -> StackReq {
+fn qz_to_gevd_cplx_scratch<T: ComplexField>(n: usize, _: ParShape) -> StackReq {
 	StackReq::all_of(&[temp_mat_scratch::<T>(n, 1); 4])
 }
 
@@ -1297,7 +1297,7 @@ pub fn gevd_scratch<T: ComplexField>(
 	dim: usize,
 	left: ComputeEigenvectors,
 	right: ComputeEigenvectors,
-	par: Par,
+	par: ParShape,
 	params: Spec<GevdParams, T>,
 ) -> StackReq {
 	let _ = (left, right);
@@ -1506,7 +1506,7 @@ mod tests {
 					n,
 					ComputeEigenvectors::Yes,
 					ComputeEigenvectors::Yes,
-					Par::Seq,
+					ParShape::Seq,
 					default(),
 				))),
 				default(),
@@ -1598,7 +1598,7 @@ mod tests {
 					n,
 					ComputeEigenvectors::Yes,
 					ComputeEigenvectors::Yes,
-					Par::Seq,
+					ParShape::Seq,
 					default(),
 				))),
 				default(),
@@ -1660,7 +1660,7 @@ mod t {
 			n,
 			CE::No,
 			ce,
-			Par::Seq,
+			ParShape::Seq,
 			Spec::default(),
 		));
 		linalg::gevd::gevd_real(
@@ -1818,7 +1818,7 @@ mod t {
 								2,
 								ce(want_left),
 								ce(want_right),
-								Par::Seq,
+								ParShape::Seq,
 								Spec::default(),
 							),
 						)),

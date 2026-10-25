@@ -106,7 +106,7 @@ pub enum ComputeEigenvectors {
 pub fn self_adjoint_evd_scratch<T: ComplexField>(
 	dim: usize,
 	compute_u: ComputeEigenvectors,
-	par: Par,
+	par: ParShape,
 	params: Spec<SelfAdjointEvdParams, T>,
 ) -> StackReq {
 	let n = dim;
@@ -162,14 +162,14 @@ pub fn self_adjoint_evd_scratch<T: ComplexField>(
 /// 	dyn_stack::MemBuffer::new(tridiagonal_self_adjoint_evd_scratch::<f64>(
 /// 		3,
 /// 		ComputeEigenvectors::Yes,
-/// 		Par::Seq,
+/// 		faer::ParShape::Seq,
 /// 		Default::default(),
 /// 	));
 /// ```
 pub fn tridiagonal_self_adjoint_evd_scratch<T: ComplexField>(
 	dim: usize,
 	compute_u: ComputeEigenvectors,
-	par: Par,
+	par: ParShape,
 	params: Spec<SelfAdjointEvdParams, T>,
 ) -> StackReq {
 	let n = dim;
@@ -475,7 +475,7 @@ pub fn self_adjoint_evd<T: ComplexField>(
 /// matrix's pseudoinverse, given the eigendecomposition
 pub fn pseudoinverse_from_self_adjoint_evd_scratch<T: ComplexField>(
 	dim: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	_ = par;
 	temp_mat_scratch::<T>(dim, dim).array(2)
@@ -1154,7 +1154,7 @@ pub fn evd_scratch<T: ComplexField>(
 	dim: usize,
 	eigen_left: ComputeEigenvectors,
 	eigen_right: ComputeEigenvectors,
-	par: Par,
+	par: ParShape,
 	params: Spec<EvdParams, T>,
 ) -> StackReq {
 	let n = dim;
@@ -1205,13 +1205,13 @@ pub fn evd_scratch<T: ComplexField>(
 /// use faer::Par;
 /// use faer::linalg::evd::hessenberg_schur_scratch;
 /// let req =
-/// 	hessenberg_schur_scratch::<f64>(3, true, Par::Seq, Default::default());
+/// 	hessenberg_schur_scratch::<f64>(3, true, faer::ParShape::Seq, Default::default());
 /// let _buffer = dyn_stack::MemBuffer::new(req);
 /// ```
 pub fn hessenberg_schur_scratch<T: ComplexField>(
 	dim: usize,
 	compute_z: bool,
-	par: Par,
+	par: ParShape,
 	params: Spec<SchurParams, T>,
 ) -> StackReq {
 	schur::multishift_qr_scratch::<T>(dim, dim, true, compute_z, par, *params)
@@ -1242,7 +1242,7 @@ pub fn hessenberg_schur_scratch<T: ComplexField>(
 /// let mut mem = MemBuffer::new(hessenberg_schur_scratch::<f64>(
 /// 	2,
 /// 	true,
-/// 	Par::Seq,
+/// 	faer::ParShape::Seq,
 /// 	Default::default(),
 /// ));
 /// hessenberg_schur_real(
@@ -1326,7 +1326,7 @@ pub fn hessenberg_schur_real<T: RealField>(
 /// let mut mem = MemBuffer::new(hessenberg_schur_scratch::<c64>(
 /// 	2,
 /// 	false,
-/// 	Par::Seq,
+/// 	faer::ParShape::Seq,
 /// 	Default::default(),
 /// ));
 /// hessenberg_schur_cplx(
@@ -2053,7 +2053,7 @@ mod general_tests {
 					n,
 					ComputeEigenvectors::Yes,
 					ComputeEigenvectors::Yes,
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				))),
 				params,
@@ -2092,7 +2092,7 @@ mod general_tests {
 					n,
 					ComputeEigenvectors::Yes,
 					ComputeEigenvectors::Yes,
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				))),
 				params,
@@ -2211,7 +2211,7 @@ mod eig_2131_tests {
 			n,
 			ComputeEigenvectors::Yes,
 			ComputeEigenvectors::Yes,
-			Par::Seq,
+			ParShape::Seq,
 			params,
 		));
 		evd_real(
@@ -2364,7 +2364,7 @@ mod eig_2131_tests {
 				n,
 				ComputeEigenvectors::No,
 				ComputeEigenvectors::Yes,
-				Par::Seq,
+				ParShape::Seq,
 				params,
 			));
 			evd_cplx(
@@ -2417,7 +2417,7 @@ mod self_adjoint_tests {
 					self_adjoint_evd_scratch::<T>(
 						n,
 						ComputeEigenvectors::Yes,
-						Par::Seq,
+						ParShape::Seq,
 						params,
 					),
 				)),
@@ -2438,7 +2438,7 @@ mod self_adjoint_tests {
 					self_adjoint_evd_scratch::<T>(
 						n,
 						ComputeEigenvectors::No,
-						Par::Seq,
+						ParShape::Seq,
 						params,
 					),
 				)),

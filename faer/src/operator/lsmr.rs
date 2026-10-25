@@ -58,13 +58,13 @@ pub fn lsmr_scratch<T: ComplexField>(
 	right_precond: impl BiPrecond<T>,
 	mat: impl BiLinOp<T>,
 	rhs_ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	fn implementation<T: ComplexField>(
 		M: &dyn BiPrecond<T>,
 		A: &dyn BiLinOp<T>,
 		rhs_ncols: usize,
-		par: Par,
+		par: ParShape,
 	) -> StackReq {
 		let m = A.nrows();
 		let n = A.ncols();
@@ -689,7 +689,7 @@ mod tests {
 					diag.as_ref(),
 					A.as_ref(),
 					k,
-					Par::Seq,
+					ParShape::Seq,
 				))),
 			);
 			assert!(result.is_ok());
@@ -747,7 +747,7 @@ mod tests {
 					diag.as_ref(),
 					A.as_ref(),
 					k,
-					Par::Seq,
+					ParShape::Seq,
 				))),
 			);
 			assert!(result.is_ok());

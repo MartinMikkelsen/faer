@@ -1517,7 +1517,7 @@ fn llt<T: Scalar, Lib: self::Lib, Thd: self::Thread>(
 	let params = Default::default();
 	let stack = &mut MemBuffer::new(
 		linalg::cholesky::llt::factor::cholesky_in_place_scratch::<T>(
-			n, parallel, params,
+			n, parallel.shape(), params,
 		),
 	);
 	let stack = MemStack::new(stack);
@@ -1615,7 +1615,7 @@ fn ldlt<T: Scalar, Lib: self::Lib, Thd: self::Thread>(
 	let params = Default::default();
 	let stack = &mut MemBuffer::new(
 		linalg::cholesky::ldlt::factor::cholesky_in_place_scratch::<T>(
-			n, parallel, params,
+			n, parallel.shape(), params,
 		),
 	);
 	let stack = MemStack::new(stack);
@@ -1730,7 +1730,7 @@ fn lblt<T: Scalar, Lib: self::Lib, Thd: self::Thread>(
 	let work = &mut *avec![zero::<T>(); lwork];
 	let stack = &mut MemBuffer::new(
 		linalg::cholesky::lblt::factor::cholesky_in_place_scratch::<usize, T>(
-			n, parallel, params,
+			n, parallel.shape(), params,
 		),
 	);
 	let stack = MemStack::new(stack);
@@ -1834,7 +1834,7 @@ fn lblt_diag<T: Scalar, Lib: self::Lib, Thd: self::Thread>(
 	.into();
 	let stack = &mut MemBuffer::new(
 		linalg::cholesky::lblt::factor::cholesky_in_place_scratch::<usize, T>(
-			n, parallel, params,
+			n, parallel.shape(), params,
 		),
 	);
 	let stack = MemStack::new(stack);
@@ -1946,7 +1946,7 @@ fn lblt_rook<T: Scalar, Lib: self::Lib, Thd: self::Thread>(
 	let work = &mut *avec![zero::<T>(); lwork];
 	let stack = &mut MemBuffer::new(
 		linalg::cholesky::lblt::factor::cholesky_in_place_scratch::<usize, T>(
-			n, parallel, params,
+			n, parallel.shape(), params,
 		),
 	);
 	let stack = MemStack::new(stack);
@@ -2050,7 +2050,7 @@ fn lblt_rook_diag<T: Scalar, Lib: self::Lib, Thd: self::Thread>(
 	.into();
 	let stack = &mut MemBuffer::new(
 		linalg::cholesky::lblt::factor::cholesky_in_place_scratch::<usize, T>(
-			n, parallel, params,
+			n, parallel.shape(), params,
 		),
 	);
 	let stack = MemStack::new(stack);
@@ -2102,7 +2102,7 @@ fn lblt_full<T: Scalar, Lib: self::Lib, Thd: self::Thread>(
 	.into();
 	let stack = &mut MemBuffer::new(
 		linalg::cholesky::lblt::factor::cholesky_in_place_scratch::<usize, T>(
-			n, parallel, params,
+			n, parallel.shape(), params,
 		),
 	);
 	let stack = MemStack::new(stack);
@@ -2208,7 +2208,7 @@ fn qr<T: Scalar, Lib: self::Lib, Thd: self::Thread>(
 	let params = Default::default();
 	let stack = &mut MemBuffer::new(
 		linalg::qr::no_pivoting::factor::qr_in_place_scratch::<T>(
-			m, n, block_size, parallel, params,
+			m, n, block_size, parallel.shape(), params,
 		),
 	);
 	let stack = MemStack::new(stack);
@@ -2386,7 +2386,7 @@ fn col_piv_qr<T: Scalar, Lib: self::Lib, Thd: self::Thread>(
 	let params = Default::default();
 	let stack = &mut MemBuffer::new(
 		linalg::qr::col_pivoting::factor::qr_in_place_scratch::<usize, T>(
-			m, n, block_size, parallel, params,
+			m, n, block_size, parallel.shape(), params,
 		),
 	);
 	let stack = MemStack::new(stack);
@@ -2503,7 +2503,7 @@ fn partial_piv_lu<T: Scalar, Lib: self::Lib, Thd: self::Thread>(
 	let params = Default::default();
 	let stack = &mut MemBuffer::new(
 		linalg::lu::partial_pivoting::factor::lu_in_place_scratch::<usize, T>(
-			n, n, parallel, params,
+			n, n, parallel.shape(), params,
 		),
 	);
 	let stack = MemStack::new(stack);
@@ -2606,7 +2606,7 @@ fn full_piv_lu<T: Scalar, Lib: self::Lib, Thd: self::Thread>(
 	let params = Default::default();
 	let stack = &mut MemBuffer::new(
 		linalg::lu::full_pivoting::factor::lu_in_place_scratch::<usize, T>(
-			m, n, parallel, params,
+			m, n, parallel.shape(), params,
 		),
 	);
 	let stack = MemStack::new(stack);
@@ -2805,7 +2805,7 @@ fn svd<T: Scalar, Lib: self::Lib, Thd: self::Thread>(
 		n,
 		linalg::svd::ComputeSvdVectors::Full,
 		linalg::svd::ComputeSvdVectors::Full,
-		parallel,
+		parallel.shape(),
 		params,
 	));
 	let stack = MemStack::new(stack);
@@ -3032,7 +3032,7 @@ fn self_adjoint_evd<T: Scalar, Lib: self::Lib, Thd: self::Thread>(
 		&mut MemBuffer::new(linalg::evd::self_adjoint_evd_scratch::<T>(
 			m,
 			linalg::evd::ComputeEigenvectors::Yes,
-			parallel,
+			parallel.shape(),
 			params,
 		));
 	let stack = MemStack::new(stack);
@@ -3247,7 +3247,7 @@ fn evd<T: Scalar, Lib: self::Lib, Thd: self::Thread>(
 		n,
 		linalg::evd::ComputeEigenvectors::Yes,
 		linalg::evd::ComputeEigenvectors::Yes,
-		parallel,
+		parallel.shape(),
 		params.into(),
 	));
 	let stack = MemStack::new(stack);
@@ -3419,7 +3419,7 @@ fn main() -> eyre::Result<()> {
 						);
 						let name = match parallel {
 							Par::Seq => seq_name,
-							Par::Rayon(_) => par_name,
+							_ => par_name,
 						};
 						if bench_config
 							.group_filter
@@ -3518,7 +3518,7 @@ fn main() -> eyre::Result<()> {
 									shapes($config),
 								),
 
-								Par::Rayon(_) => bench.register_many(
+								_ => bench.register_many(
 									par_name,
 									{
 										let list = diol::variadics::Nil;

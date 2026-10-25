@@ -940,7 +940,69 @@ pub enum Par {
 	#[cfg(feature = "threadteam")]
 	Team(NonZeroUsize),
 }
+/// the shape of a [`Par`]: which kind of parallelism and how many threads, without the
+/// right to run anything. `Copy`, so workspace queries and thresholds can use it freely; it
+/// cannot be passed to any function that executes work.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ParShape {
+	/// sequential
+	Seq,
+	/// the global rayon threadpool with this many threads
+	#[cfg(feature = "rayon")]
+	Rayon(NonZeroUsize),
+	/// a threadteam team of this many participants
+	#[cfg(feature = "threadteam")]
+	Team(NonZeroUsize),
+}
+impl ParShape {
+	/// sequential
+	#[inline]
+	pub const fn seq() -> Self {
+		Self::Seq
+	}
+
+	/// `Rayon(nthreads)`, or `Rayon(rayon::current_num_threads())` when `nthreads` is zero
+	#[inline]
+	#[cfg(feature = "rayon")]
+	pub fn rayon(nthreads: usize) -> Self {
+		match Par::rayon(nthreads) {
+			Par::Rayon(n) => Self::Rayon(n),
+			_ => unreachable!(),
+		}
+	}
+
+	/// `Team(nthreads)`, with zero treated as one
+	#[inline]
+	#[cfg(feature = "threadteam")]
+	pub fn team(nthreads: usize) -> Self {
+		Self::Team(NonZeroUsize::new(nthreads.max(1)).unwrap())
+	}
+
+	/// the number of threads that should ideally execute an operation of this shape
+	#[inline]
+	pub fn degree(self) -> usize {
+		match self {
+			Self::Seq => 1,
+			#[cfg(feature = "rayon")]
+			Self::Rayon(n) => n.get(),
+			#[cfg(feature = "threadteam")]
+			Self::Team(n) => n.get(),
+		}
+	}
+}
 impl Par {
+	/// the shape of this parallelism, without the right to execute with it
+	#[inline]
+	pub fn shape(&self) -> ParShape {
+		match *self {
+			Par::Seq => ParShape::Seq,
+			#[cfg(feature = "rayon")]
+			Par::Rayon(n) => ParShape::Rayon(n),
+			#[cfg(feature = "threadteam")]
+			Par::Team(n) => ParShape::Team(n),
+		}
+	}
+
 	/// returns `Par::Team(nthreads)`, with zero treated as one
 	#[inline]
 	#[cfg(feature = "threadteam")]
@@ -1063,8 +1125,8 @@ mod internal_prelude {
 	}
 	pub(crate) use self::{unzip as uz, zip as z};
 	pub(crate) use crate::{
-		Accum, Conj, ContiguousBwd, ContiguousFwd, DiagStatus, Par, Shape,
-		Stride, Unbind, make_guard, unzip, zip,
+		Accum, Conj, ContiguousBwd, ContiguousFwd, DiagStatus, Par, ParShape,
+		Shape, Stride, Unbind, make_guard, unzip, zip,
 	};
 	pub use dyn_stack::{MemStack, StackReq, alloc as alloca};
 	pub use equator::{
@@ -1092,7 +1154,7 @@ pub mod prelude {
 	pub use super::linalg::solvers::{DenseSolve, Solve, SolveLstsq};
 	#[cfg(feature = "sparse")]
 	pub use super::prelude_sp::*;
-	pub use super::{Par, Scale, c32, c64, col, mat, row, unzip, zip};
+	pub use super::{Par, ParShape, Scale, c32, c64, col, mat, row, unzip, zip};
 	pub use col::{Col, ColMut, ColRef};
 	pub use mat::{Mat, MatMut, MatRef};
 	pub use reborrow::{IntoConst, Reborrow, ReborrowMut};

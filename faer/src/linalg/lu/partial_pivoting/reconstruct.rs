@@ -4,7 +4,7 @@ use linalg::matmul::triangular::BlockStructure;
 pub fn reconstruct_scratch<I: Index, T: ComplexField>(
 	nrows: usize,
 	ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	_ = par;
 	temp_mat_scratch::<T>(nrows, ncols)
@@ -94,7 +94,7 @@ mod tests {
 					MemBuffer::new(factor::lu_in_place_scratch::<usize, c64>(
 						m,
 						n,
-						Par::Seq,
+						ParShape::Seq,
 						default(),
 					))
 				}),
@@ -112,7 +112,7 @@ mod tests {
 					reconstruct::reconstruct_scratch::<usize, c64>(
 						m,
 						n,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);

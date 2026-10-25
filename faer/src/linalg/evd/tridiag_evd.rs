@@ -671,7 +671,7 @@ pub(crate) fn divide_and_conquer<T: RealField>(
 }
 pub(crate) fn divide_and_conquer_scratch<T: ComplexField>(
 	n: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	let _ = par;
 	StackReq::all_of(&[
@@ -739,7 +739,7 @@ mod evd_qr_tests {
 				u.as_mut(),
 				Par::Seq,
 				MemStack::new(&mut MemBuffer::new(
-					divide_and_conquer_scratch::<f64>(n, Par::Seq),
+					divide_and_conquer_scratch::<f64>(n, ParShape::Seq),
 				)),
 				4,
 			)

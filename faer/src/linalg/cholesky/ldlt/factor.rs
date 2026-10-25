@@ -715,7 +715,7 @@ impl<T: ComplexField> Auto<T> for LdltParams {
 #[inline]
 pub fn cholesky_in_place_scratch<T: ComplexField>(
 	dim: usize,
-	par: Par,
+	par: ParShape,
 	params: Spec<LdltParams, T>,
 ) -> StackReq {
 	_ = par;
