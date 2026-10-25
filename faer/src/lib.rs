@@ -1134,6 +1134,8 @@ impl<T> Scale<T> {
 /// n >= 2: `Rayon(n - 2)`
 ///
 /// default: `Rayon(0)`
+#[cfg(feature = "threadteam")]
+const TEAM_GLOBAL: usize = 1 << (usize::BITS - 1);
 static GLOBAL_PARALLELISM: AtomicUsize = {
 	#[cfg(all(not(miri), feature = "rayon"))]
 	{
@@ -1154,9 +1156,9 @@ pub fn set_global_parallelism(par: Par) {
 		Par::Seq => 1,
 		#[cfg(feature = "rayon")]
 		Par::Rayon(n) => n.get().saturating_add(2),
-		// a team is installed per thread and cannot be a process wide default
+		// the width is global, the team itself is the one installed on the calling thread
 		#[cfg(feature = "threadteam")]
-		Par::Team(_) => 1,
+		Par::Team(n) => TEAM_GLOBAL | n.get(),
 	};
 	GLOBAL_PARALLELISM.store(value, core::sync::atomic::Ordering::Relaxed);
 }
@@ -1170,6 +1172,8 @@ pub fn get_global_parallelism() -> Par {
 	match value {
 		0 => panic!("Global parallelism is disabled."),
 		1 => Par::Seq,
+		#[cfg(feature = "threadteam")]
+		n if n & TEAM_GLOBAL != 0 => Par::team(n & !TEAM_GLOBAL),
 		#[cfg(feature = "rayon")]
 		n => Par::rayon(n - 2),
 		#[cfg(not(feature = "rayon"))]
