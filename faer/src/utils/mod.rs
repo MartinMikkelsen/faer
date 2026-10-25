@@ -27,15 +27,17 @@ pub mod thread {
 					if n_threads == 1 {
 						(op_a(Par::Seq), op_b(Par::Seq));
 					} else {
-						let parallelism = Par::Rayon(
-							core::num::NonZeroUsize::new(
-								n_threads - n_threads / 2,
-							)
-							.unwrap(),
+						// the two halves add up to `n_threads`, so the leaves of
+						// a recursive split never exceed the requested width
+						let par = |n: usize| {
+							Par::Rayon(core::num::NonZeroUsize::new(n).unwrap())
+						};
+						let half = n_threads / 2;
+						spindle::for_each(
+							2,
+							[(op_a, par(n_threads - half)), (op_b, par(half))],
+							|(op, parallelism)| op(parallelism),
 						);
-						spindle::for_each(2, [op_a, op_b], |op| {
-							op(parallelism)
-						});
 					}
 				},
 			};
@@ -92,6 +94,65 @@ pub mod thread {
 		let start = idx_to_col_start(idx);
 		let end = idx_to_col_start(idx + 1);
 		(start, end - start)
+	}
+
+	#[cfg(all(test, feature = "rayon"))]
+	mod tests {
+		use super::{join_raw, parallelism_degree};
+		use crate::Par;
+		use core::sync::atomic::{AtomicUsize, Ordering};
+
+		struct Leaves {
+			count: AtomicUsize,
+			active: AtomicUsize,
+			peak: AtomicUsize,
+		}
+
+		// splits until each branch has a single thread, then holds the
+		// leaf long enough for the leaves to overlap
+		fn split(parallelism: Par, leaves: &Leaves) {
+			if parallelism_degree(parallelism) > 1 {
+				join_raw(
+					|par| split(par, leaves),
+					|par| split(par, leaves),
+					parallelism,
+				);
+			} else {
+				leaves.count.fetch_add(1, Ordering::Relaxed);
+				let now = leaves.active.fetch_add(1, Ordering::AcqRel) + 1;
+				leaves.peak.fetch_max(now, Ordering::AcqRel);
+				std::thread::sleep(std::time::Duration::from_millis(5));
+				leaves.active.fetch_sub(1, Ordering::AcqRel);
+			}
+		}
+
+		#[test]
+		fn join_raw_leaves_do_not_exceed_requested_width() {
+			// the pool is wider than every requested width, so only the
+			// split itself can bound the concurrency
+			let pool = rayon::ThreadPoolBuilder::new()
+				.num_threads(16)
+				.build()
+				.unwrap();
+			for n in [2usize, 3, 5, 6, 7, 8] {
+				let leaves = Leaves {
+					count: AtomicUsize::new(0),
+					active: AtomicUsize::new(0),
+					peak: AtomicUsize::new(0),
+				};
+				pool.install(|| {
+					split(
+						Par::Rayon(core::num::NonZeroUsize::new(n).unwrap()),
+						&leaves,
+					)
+				});
+				assert_eq!(leaves.count.into_inner(), n, "leaves for n = {n}");
+				assert!(
+					leaves.peak.into_inner() <= n,
+					"concurrent leaves exceed n = {n}"
+				);
+			}
+		}
 	}
 }
 /// approximate comparators for testing purposes
