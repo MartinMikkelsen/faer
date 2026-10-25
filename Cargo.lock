@@ -2833,7 +2833,7 @@ dependencies = [
 [[package]]
 name = "threadteam"
 version = "0.1.0"
-source = "git+https://github.com/tensor4all/threadteam-rs?rev=292ac194a1b9bd45f368184c573d4c65264d0b4a#292ac194a1b9bd45f368184c573d4c65264d0b4a"
+source = "git+https://github.com/tensor4all/threadteam-rs?rev=5afe0b4d2ea604d0d8fe6b563bacf4c80f2d0bc4#5afe0b4d2ea604d0d8fe6b563bacf4c80f2d0bc4"
 dependencies = [
  "libc",
  "loom",

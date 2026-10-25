@@ -36,7 +36,7 @@ reaches it at 4.5 times fewer MACs. Test: `utils::team::tests::the_team_floor_is
 - `lu/partial_pivoting/factor.rs`: `trailing_update_pays`, `swap_stage_pays`.
 - `qr/no_pivoting/factor.rs`: the unused `QrParams::par_threshold` is removed (`faer-ffi`, outside the
   workspace, still mirrors it).
-- threadteam pinned at `292ac19` (`feat/dispatch-cost` HEAD; code identical to `b99e913`, docs only), so that downstream crates that patch `threadteam` to the same rev share one `TeamExec` type.
+- threadteam pinned at `5afe0b4` (`feat/dispatch-cost` HEAD; adds `Exec::carries_team` to `b99e913`), so that downstream crates that patch `threadteam` to the same rev share one `TeamExec` type.
 
 ## Remaining (thresholds unchanged)
 
