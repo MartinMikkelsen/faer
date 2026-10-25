@@ -484,6 +484,13 @@ fn apply_block_householder_on_the_left_in_place_generic<
 	let mut matrix = matrix;
 	let M = householder_basis.nrows();
 	let N = householder_basis.ncols();
+	// An empty block Householder transformation is the identity, so there is nothing to apply. A
+	// column block that adds no rank reaches this with `N == 0`: the QR factor keeps only the
+	// nonzero columns of each block, and a block that is exactly zero keeps none. Both branches
+	// below size work by `N` -- the row split's chunk is `N * K`, which rayon rejects at zero.
+	if N.unbound() == 0 {
+		return;
+	}
 	make_guard!(TAIL);
 	let midpoint = M.head_partition(N, TAIL);
 	// The N == 1 kernel below is one sequential rank-one update per target column, and a panel of a
