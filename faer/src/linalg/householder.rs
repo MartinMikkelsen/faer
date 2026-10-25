@@ -812,7 +812,7 @@ fn apply_block_householder_on_the_left_in_place_generic<
 			#[cfg(feature = "rayon")]
 			{
 				use rayon::prelude::*;
-				spindle::for_each(
+				crate::utils::thread::for_each(par, 
 					n_tasks,
 					tmp.rb_mut()
 						.par_col_partition_mut(n_tasks)
