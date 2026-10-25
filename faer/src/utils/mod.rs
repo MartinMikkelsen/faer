@@ -18,11 +18,11 @@ pub mod thread {
 		fn implementation<'a>(
 			op_a: &'a mut (dyn Send + FnMut(Par)),
 			op_b: &'a mut (dyn Send + FnMut(Par)),
-			parallelism: Par,
+			mut parallelism: Par,
 		) {
 			match parallelism {
 				Par::Seq => {
-					(op_a(parallelism), op_b(parallelism));
+					(op_a(parallelism.reborrow()), op_b(parallelism));
 				},
 				#[cfg(feature = "rayon")]
 				Par::Rayon(n_threads) => {
@@ -87,8 +87,9 @@ pub mod thread {
 	/// the amount of threads that should ideally execute an operation with the
 	/// given parallelism
 	#[inline]
-	pub fn parallelism_degree(parallelism: Par) -> usize {
-		match parallelism {
+	pub fn parallelism_degree(parallelism: &Par) -> usize {
+		match *parallelism {
+			Par::__Lifetime(never, _) => match never {},
 			Par::Seq => 1,
 			#[cfg(feature = "rayon")]
 			Par::Rayon(n_threads) => n_threads.get(),
@@ -172,8 +173,9 @@ pub mod thread {
 			Par::Seq => for_each(Par::Seq, n_jobs, iter, |item| f(item, Par::Seq)),
 			Par::Rayon(n) => {
 				let width = n.get() / n_jobs.max(1);
-				let child = if width >= 2 { Par::rayon(width) } else { Par::Seq };
-				spindle::for_each(n_jobs, iter, |item| f(item, child))
+				spindle::for_each(n_jobs, iter, |item| {
+					f(item, if width >= 2 { Par::rayon(width) } else { Par::Seq })
+				})
 			},
 			#[cfg(feature = "threadteam")]
 			Par::Team(_) => super::team::for_each(n_jobs, iter, |item| {
@@ -287,7 +289,7 @@ pub mod thread {
 		// splits until each branch has a single thread, then holds the
 		// leaf long enough for the leaves to overlap
 		fn split(parallelism: Par, leaves: &Leaves) {
-			if parallelism_degree(parallelism) > 1 {
+			if parallelism_degree(&parallelism) > 1 {
 				join_raw(
 					|par| split(par, leaves),
 					|par| split(par, leaves),
@@ -345,8 +347,8 @@ pub mod thread {
 					let peak = AtomicUsize::new(0);
 					let widths = [AtomicUsize::new(0), AtomicUsize::new(0)];
 					let side = |which: usize, par: Par| {
-						widths[which].store(parallelism_degree(par), Ordering::Relaxed);
-						let jobs = parallelism_degree(par);
+						widths[which].store(parallelism_degree(&par), Ordering::Relaxed);
+						let jobs = parallelism_degree(&par);
 						for_each_with_par(par, jobs, (0..jobs).into_par_iter(), |_, _| {
 							let now = active.fetch_add(1, Ordering::AcqRel) + 1;
 							peak.fetch_max(now, Ordering::AcqRel);

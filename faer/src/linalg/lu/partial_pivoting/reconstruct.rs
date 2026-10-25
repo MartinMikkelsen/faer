@@ -15,7 +15,7 @@ pub fn reconstruct<I: Index, T: ComplexField>(
 	L: MatRef<'_, T>,
 	U: MatRef<'_, T>,
 	row_perm: PermRef<'_, I>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let m = L.nrows();
@@ -34,7 +34,7 @@ pub fn reconstruct<I: Index, T: ComplexField>(
 		U.get(..size, ..size),
 		BlockStructure::TriangularUpper,
 		one(),
-		par,
+		par.reborrow(),
 	);
 	if m > n {
 		linalg::matmul::triangular::matmul(
@@ -46,7 +46,7 @@ pub fn reconstruct<I: Index, T: ComplexField>(
 			U.get(..size, ..size),
 			BlockStructure::TriangularUpper,
 			one(),
-			par,
+			par.reborrow(),
 		);
 	}
 	if m < n {

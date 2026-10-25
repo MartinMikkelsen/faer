@@ -41,7 +41,7 @@ pub fn solve_lstsq_in_place_with_conj<T: ComplexField>(
 	R: MatRef<'_, T>,
 	conj_QR: Conj,
 	rhs: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let m = Q_basis.nrows();
@@ -63,7 +63,7 @@ pub fn solve_lstsq_in_place_with_conj<T: ComplexField>(
 		Q_coeff,
 		conj_QR.compose(Conj::Yes),
 		rhs.rb_mut(),
-		par,
+		par.reborrow(),
 		stack.rb_mut(),
 	);
 	linalg::triangular_solve::solve_upper_triangular_in_place_with_conj(
@@ -143,7 +143,7 @@ pub fn solve_transpose_in_place_with_conj<T: ComplexField>(
 	R: MatRef<'_, T>,
 	conj_QR: Conj,
 	rhs: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let n = Q_basis.nrows();
@@ -163,7 +163,7 @@ pub fn solve_transpose_in_place_with_conj<T: ComplexField>(
 		R.transpose(),
 		conj_QR,
 		rhs.rb_mut(),
-		par,
+		par.reborrow(),
 	);
 	linalg::householder::apply_block_householder_sequence_on_the_left_in_place_with_conj(
 		Q_basis,

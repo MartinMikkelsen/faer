@@ -110,7 +110,7 @@ fn mat_x_lower_impl_unchecked<'M, 'N, T: ComplexField>(
 	alpha: &T,
 	conj_lhs: Conj,
 	conj_rhs: Conj,
-	par: Par,
+	mut par: Par,
 ) {
 	let N = rhs.nrows();
 	let M = lhs.nrows();
@@ -125,7 +125,7 @@ fn mat_x_lower_impl_unchecked<'M, 'N, T: ComplexField>(
 	let join_parallelism = if n * n * m < 128usize * 128usize * 64usize {
 		Par::Seq
 	} else {
-		par
+		par.reborrow()
 	};
 	if n <= 16 {
 		let op = {
@@ -216,7 +216,7 @@ fn lower_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 	alpha: &T,
 	conj_lhs: Conj,
 	conj_rhs: Conj,
-	par: Par,
+	mut par: Par,
 ) {
 	let N = dst.nrows();
 	let n = N.unbound();
@@ -291,7 +291,7 @@ fn lower_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 			alpha,
 			conj_lhs,
 			conj_rhs,
-			par,
+			par.reborrow(),
 		);
 		mat_x_lower_impl_unchecked(
 			dst_bot_left.rb_mut(),
@@ -302,7 +302,7 @@ fn lower_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 			alpha,
 			conj_lhs,
 			conj_rhs,
-			par,
+			par.reborrow(),
 		);
 		mat_x_lower_impl_unchecked(
 			dst_bot_left.reverse_rows_and_cols_mut().transpose_mut(),
@@ -313,7 +313,7 @@ fn lower_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 			alpha,
 			conj_rhs,
 			conj_lhs,
-			par,
+			par.reborrow(),
 		);
 		lower_x_lower_into_lower_impl_unchecked(
 			dst_bot_right,
@@ -396,7 +396,7 @@ fn upper_x_lower_impl_unchecked<'N, T: ComplexField>(
 		let (rhs_top_left, _, rhs_bot_left, rhs_bot_right) =
 			rhs.split_with(bs, bs);
 		join_raw(
-			|par| {
+			|mut par| {
 				super::matmul_with_conj(
 					dst_top_left.rb_mut(),
 					beta,
@@ -405,7 +405,7 @@ fn upper_x_lower_impl_unchecked<'N, T: ComplexField>(
 					rhs_bot_left,
 					conj_rhs,
 					alpha.clone(),
-					par,
+					par.reborrow(),
 				);
 				upper_x_lower_impl_unchecked(
 					dst_top_left,
@@ -420,7 +420,7 @@ fn upper_x_lower_impl_unchecked<'N, T: ComplexField>(
 					par,
 				)
 			},
-			|par| {
+			|mut par| {
 				join_raw(
 					|par| {
 						mat_x_lower_impl_unchecked(
@@ -448,7 +448,7 @@ fn upper_x_lower_impl_unchecked<'N, T: ComplexField>(
 							par,
 						)
 					},
-					par,
+					par.reborrow(),
 				);
 				upper_x_lower_impl_unchecked(
 					dst_bot_right,
@@ -543,7 +543,7 @@ fn upper_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 		let (rhs_top_left, _, rhs_bot_left, rhs_bot_right) =
 			rhs.split_with(bs, bs);
 		join_raw(
-			|par| {
+			|mut par| {
 				mat_x_mat_into_lower_impl_unchecked(
 					dst_top_left.rb_mut(),
 					beta,
@@ -553,7 +553,7 @@ fn upper_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 					alpha,
 					conj_lhs,
 					conj_rhs,
-					par,
+					par.reborrow(),
 				);
 				upper_x_lower_into_lower_impl_unchecked(
 					dst_top_left,
@@ -569,7 +569,7 @@ fn upper_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 					par,
 				)
 			},
-			|par| {
+			|mut par| {
 				mat_x_lower_impl_unchecked(
 					dst_bot_left.transpose_mut(),
 					beta,
@@ -579,7 +579,7 @@ fn upper_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 					alpha,
 					conj_rhs,
 					conj_lhs,
-					par,
+					par.reborrow(),
 				);
 				upper_x_lower_into_lower_impl_unchecked(
 					dst_bot_right,
@@ -788,7 +788,7 @@ fn mat_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 	alpha: &T,
 	conj_lhs: Conj,
 	conj_rhs: Conj,
-	par: Par,
+	mut par: Par,
 ) {
 	let N = dst.nrows();
 	let n = N.unbound();
@@ -851,7 +851,7 @@ fn mat_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 			rhs_bot_left,
 			conj_rhs,
 			alpha.clone(),
-			par,
+			par.reborrow(),
 		);
 		mat_x_lower_into_lower_impl_unchecked(
 			dst_bot_right,
@@ -863,7 +863,7 @@ fn mat_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 			alpha,
 			conj_lhs,
 			conj_rhs,
-			par,
+			par.reborrow(),
 		);
 		mat_x_lower_into_lower_impl_unchecked(
 			dst_top_left.rb_mut(),
@@ -875,7 +875,7 @@ fn mat_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 			alpha,
 			conj_lhs,
 			conj_rhs,
-			par,
+			par.reborrow(),
 		);
 		mat_x_mat_into_lower_impl_unchecked(
 			dst_top_left,
@@ -886,7 +886,7 @@ fn mat_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 			alpha,
 			conj_lhs,
 			conj_rhs,
-			par,
+			par.reborrow(),
 		);
 		mat_x_lower_impl_unchecked(
 			dst_bot_left,

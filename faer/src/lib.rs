@@ -925,7 +925,7 @@ impl Conj {
 	}
 }
 /// determines the parallelization configuration
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum Par<'team> {
 	/// sequential, non portable across different platforms
 	Seq,
@@ -993,6 +993,20 @@ impl ParShape {
 	}
 }
 impl Par<'_> {
+	/// lends the parallelism for one phase. The parent is exclusively borrowed and unusable
+	/// while the lent value lives, so a phase sequence never holds the authority twice.
+	#[inline]
+	pub fn reborrow(&mut self) -> Par<'_> {
+		match self {
+			Par::Seq => Par::Seq,
+			#[cfg(feature = "rayon")]
+			Par::Rayon(n) => Par::Rayon(*n),
+			#[cfg(feature = "threadteam")]
+			Par::Team(n) => Par::Team(*n),
+			Par::__Lifetime(never, _) => match *never {},
+		}
+	}
+
 	/// the shape of this parallelism, without the right to execute with it
 	#[inline]
 	pub fn shape(&self) -> ParShape {
@@ -1031,7 +1045,7 @@ impl Par<'_> {
 	/// given parallelism
 	#[inline]
 	pub fn degree(&self) -> usize {
-		utils::thread::parallelism_degree(*self)
+		utils::thread::parallelism_degree(self)
 	}
 }
 #[allow(non_camel_case_types)]

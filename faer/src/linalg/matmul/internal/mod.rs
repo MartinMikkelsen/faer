@@ -69,7 +69,7 @@ pub fn spicy_matmul<I: Index, T: ComplexField>(
 	if nrows == 0 || ncols == 0 {
 		return;
 	}
-	let par = if (nrows * ncols).saturating_mul(depth)
+	let mut par = if (nrows * ncols).saturating_mul(depth)
 		> 32usize * 32usize * 32usize
 	{
 		par
@@ -300,7 +300,7 @@ pub fn spicy_matmul<I: Index, T: ComplexField>(
 				BlockStructure::Rectangular,
 				conj_B,
 				alpha.copy(),
-				par,
+				par.reborrow(),
 			);
 			if C_block.is_lower() && nrows > ncols {
 				linalg::matmul::matmul_with_conj(

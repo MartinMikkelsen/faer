@@ -71,7 +71,7 @@ fn faer(bencher: Bencher, PlotArg(n): PlotArg) {
 	let mut subdiag = Diag::zeros(n);
 	let perm = &mut *vec![0usize; n];
 	let perm_inv = &mut *vec![0usize; n];
-	let par = Par::Seq;
+	let mut par = Par::Seq;
 	let params = default();
 	let scratch =
 		lblt::factor::cholesky_in_place_scratch::<usize, f64>(n, par.shape(), params);
@@ -84,7 +84,7 @@ fn faer(bencher: Bencher, PlotArg(n): PlotArg) {
 			subdiag.rb_mut(),
 			perm,
 			perm_inv,
-			par,
+			par.reborrow(),
 			stack,
 			params,
 		);

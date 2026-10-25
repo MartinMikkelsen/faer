@@ -507,7 +507,7 @@ fn svd_imp<T: ComplexField>(
 		par: Par,
 		stack: &mut MemStack,
 	) -> Result<(), SvdError>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 	params: SvdParams,
 ) -> Result<(), SvdError> {
@@ -527,7 +527,7 @@ fn svd_imp<T: ComplexField>(
 		bid.rb_mut(),
 		Hl.rb_mut(),
 		Hr.rb_mut(),
-		par,
+		par.reborrow(),
 		stack,
 		params.bidiag.into(),
 	);
@@ -566,7 +566,7 @@ fn svd_imp<T: ComplexField>(
 		v.rb().map(|_| ub.rb_mut()),
 		u.rb().map(|_| vb.rb_mut()),
 		params,
-		par,
+		par.reborrow(),
 		stack,
 	)?;
 	{ s }.copy_from(diag);
@@ -579,7 +579,7 @@ fn svd_imp<T: ComplexField>(
 			.submatrix_mut(n, n, ncols - n, ncols - n)
 			.diagonal_mut()
 			.fill(one());
-		linalg::householder::apply_block_householder_sequence_on_the_left_in_place_with_conj(bid.rb(), Hl.rb(), Conj::No, u, par, stack);
+		linalg::householder::apply_block_householder_sequence_on_the_left_in_place_with_conj(bid.rb(), Hl.rb(), Conj::No, u, par.reborrow(), stack);
 	}
 	if let Some(mut v) = v {
 		v.copy_from(ub.rb().submatrix(0, 0, n, n));
@@ -702,7 +702,7 @@ pub fn svd<T: ComplexField>(
 	s: DiagMut<'_, T>,
 	u: Option<MatMut<'_, T>>,
 	v: Option<MatMut<'_, T>>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 	params: Spec<SvdParams, T>,
 ) -> Result<(), SvdError> {
@@ -784,7 +784,7 @@ pub fn svd<T: ComplexField>(
 			linalg::qr::no_pivoting::factor::qr_in_place(
 				qr.rb_mut(),
 				householder.rb_mut(),
-				par,
+				par.reborrow(),
 				stack,
 				params.qr.into(),
 			);
@@ -807,7 +807,7 @@ pub fn svd<T: ComplexField>(
 				s,
 				u.rb_mut().map(|u| u.submatrix_mut(0, 0, n, n)),
 				v.rb_mut(),
-				par,
+				par.reborrow(),
 				stack,
 				params,
 			)?;

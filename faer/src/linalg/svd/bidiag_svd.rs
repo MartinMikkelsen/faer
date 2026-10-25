@@ -1026,7 +1026,7 @@ pub(super) fn divide_and_conquer<T: RealField>(
 	subdiag: ColMut<'_, T, usize, ContiguousFwd>,
 	u: MatU<'_, T>,
 	v: Option<MatMut<'_, T>>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 	qr_fallback_threshold: usize,
 ) -> Result<(), SvdError> {
@@ -1178,7 +1178,7 @@ pub(super) fn divide_and_conquer<T: RealField>(
 					qr_fallback_threshold,
 				);
 			},
-			par,
+			par.reborrow(),
 		);
 		r1?;
 		r2?;
@@ -1356,7 +1356,7 @@ pub(super) fn divide_and_conquer<T: RealField>(
 	}
 	let _v_is_none = v.is_none();
 	let update_v =
-		|mut v: Option<MatMut<'_, T>>, par: Par, stack: &mut MemStack| {
+		|mut v: Option<MatMut<'_, T>>, mut par: Par, stack: &mut MemStack| {
 			let (mut combined_v, _) =
 				unsafe { temp_mat_uninit(n, allocate_vm * n, stack) };
 			let mut combined_v = if v.is_some() {
@@ -1402,7 +1402,7 @@ pub(super) fn divide_and_conquer<T: RealField>(
 							par,
 						)
 					},
-					par,
+					par.reborrow(),
 				);
 				crate::linalg::matmul::matmul(
 					combined_v.rb_mut().submatrix_mut(k, 0, 1, n),
@@ -1432,14 +1432,14 @@ pub(super) fn divide_and_conquer<T: RealField>(
 		);
 		let (u_rhs1, u_rhs2) = u_rhs.split_at_row(k + 1);
 		crate::utils::thread::join_raw(
-			|par| {
+			|mut par| {
 				crate::linalg::matmul::matmul(
 					combined_u1.rb_mut(),
 					Accum::Replace,
 					u_lhs1,
 					u_rhs1,
 					one(),
-					par,
+					par.reborrow(),
 				);
 				crate::linalg::matmul::matmul(
 					combined_u1.rb_mut(),
@@ -1450,14 +1450,14 @@ pub(super) fn divide_and_conquer<T: RealField>(
 					par,
 				);
 			},
-			|par| {
+			|mut par| {
 				crate::linalg::matmul::matmul(
 					combined_u2.rb_mut(),
 					Accum::Replace,
 					u_lhs2,
 					u_rhs2,
 					one(),
-					par,
+					par.reborrow(),
 				);
 				crate::linalg::matmul::matmul(
 					combined_u2.rb_mut(),
@@ -1477,7 +1477,7 @@ pub(super) fn divide_and_conquer<T: RealField>(
 			update_v(v.rb_mut(), par, stack);
 		},
 		MatU::TwoRows(mut u) => {
-			update_v(v.rb_mut(), par, stack);
+			update_v(v.rb_mut(), par.reborrow(), stack);
 			let (mut combined_u, _) =
 				unsafe { temp_mat_uninit(2, n + 1, stack) };
 			let mut combined_u = combined_u.as_mat_mut();
@@ -1507,7 +1507,7 @@ pub(super) fn divide_and_conquer<T: RealField>(
 				);
 			},
 			_ => {
-				update_v(v.rb_mut(), par, stack);
+				update_v(v.rb_mut(), par.reborrow(), stack);
 				update_u(u, par, stack);
 			},
 		},

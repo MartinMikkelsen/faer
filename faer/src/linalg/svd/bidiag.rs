@@ -127,7 +127,7 @@ pub fn bidiag_in_place<T: ComplexField>(
 					let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 						use rayon::prelude::*;
 						let nthreads = nthreads.get();
-						crate::utils::thread::for_each(par, 
+						crate::utils::thread::for_each(par.reborrow(), 
 							nthreads,
 							A22.rb_mut()
 								.par_col_partition_mut(nthreads)
@@ -154,7 +154,7 @@ pub fn bidiag_in_place<T: ComplexField>(
 					A21.rb().adjoint(),
 					A22.rb(),
 					one(),
-					par,
+					par.reborrow(),
 				);
 			}
 			z!(y2.rb_mut(), A12.rb_mut()).for_each(|uz!(y, a)| {
@@ -180,7 +180,7 @@ pub fn bidiag_in_place<T: ComplexField>(
 				A22.rb(),
 				A12.rb().adjoint(),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			if k + 1 == size {
 				break;
@@ -237,7 +237,7 @@ pub fn bidiag_in_place<T: ComplexField>(
 			A.rb().get(j.., j..j + bl),
 			bl,
 			1,
-			par,
+			par.reborrow(),
 		);
 		j += bl;
 	}
@@ -257,7 +257,7 @@ pub fn bidiag_in_place<T: ComplexField>(
 				A.transpose().get(j.., j..j + br),
 				br,
 				1,
-				par,
+				par.reborrow(),
 			);
 			j += br;
 		}

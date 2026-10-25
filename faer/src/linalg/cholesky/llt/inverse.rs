@@ -9,7 +9,7 @@ pub fn inverse_scratch<T: ComplexField>(dim: usize, par: ParShape) -> StackReq {
 pub fn inverse<T: ComplexField>(
 	out: MatMut<'_, T>,
 	L: MatRef<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let mut out = out;
@@ -22,7 +22,7 @@ pub fn inverse<T: ComplexField>(
 	));
 	let (mut L_inv, _) = unsafe { temp_mat_uninit::<T, _, _>(n, n, stack) };
 	let mut L_inv = L_inv.as_mat_mut();
-	linalg::triangular_inverse::invert_lower_triangular(L_inv.rb_mut(), L, par);
+	linalg::triangular_inverse::invert_lower_triangular(L_inv.rb_mut(), L, par.reborrow());
 	let L_inv = L_inv.rb();
 	linalg::matmul::triangular::matmul(
 		out.rb_mut(),

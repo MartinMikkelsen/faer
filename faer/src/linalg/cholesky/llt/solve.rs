@@ -13,7 +13,7 @@ pub fn solve_in_place_with_conj<T: ComplexField>(
 	L: MatRef<'_, T>,
 	conj_lhs: Conj,
 	rhs: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let n = L.nrows();
@@ -24,7 +24,7 @@ pub fn solve_in_place_with_conj<T: ComplexField>(
 		L,
 		conj_lhs,
 		rhs.rb_mut(),
-		par,
+		par.reborrow(),
 	);
 	linalg::triangular_solve::solve_upper_triangular_in_place_with_conj(
 		L.transpose(),

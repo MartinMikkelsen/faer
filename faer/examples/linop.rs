@@ -116,7 +116,7 @@ impl<I: Index, T: ComplexField> LinOp<T> for BinvAOperator<'_, I, T> {
 		&self,
 		out: MatMut<'_, T>,
 		rhs: MatRef<'_, T>,
-		par: Par,
+		mut par: Par,
 		stack: &mut MemStack,
 	) {
 		let mut out = out;
@@ -127,7 +127,7 @@ impl<I: Index, T: ComplexField> LinOp<T> for BinvAOperator<'_, I, T> {
 			self.A,
 			rhs,
 			T::one(),
-			par,
+			par.reborrow(),
 		);
 		self.Binv
 			.solve_in_place_with_conj(Conj::No, out.rb_mut(), par, stack);
@@ -137,7 +137,7 @@ impl<I: Index, T: ComplexField> LinOp<T> for BinvAOperator<'_, I, T> {
 		&self,
 		out: MatMut<'_, T>,
 		rhs: MatRef<'_, T>,
-		par: Par,
+		mut par: Par,
 		stack: &mut MemStack,
 	) {
 		let mut out = out;
@@ -147,7 +147,7 @@ impl<I: Index, T: ComplexField> LinOp<T> for BinvAOperator<'_, I, T> {
 			self.A.conjugate(),
 			rhs,
 			T::one(),
-			par,
+			par.reborrow(),
 		);
 		self.Binv
 			.solve_in_place_with_conj(Conj::Yes, out.rb_mut(), par, stack);
@@ -170,7 +170,7 @@ impl<I: Index, T: ComplexField> BiLinOp<T> for BinvAOperator<'_, I, T> {
 		&self,
 		out: MatMut<'_, T>,
 		rhs: MatRef<'_, T>,
-		par: Par,
+		mut par: Par,
 		stack: &mut MemStack,
 	) {
 		let (m, n) = (rhs.nrows(), rhs.ncols());
@@ -183,7 +183,7 @@ impl<I: Index, T: ComplexField> BiLinOp<T> for BinvAOperator<'_, I, T> {
 		self.Binv.solve_transpose_in_place_with_conj(
 			Conj::No,
 			tmp.rb_mut(),
-			par,
+			par.reborrow(),
 			stack,
 		);
 		linalg::matmul::sparse_dense_matmul(
@@ -200,7 +200,7 @@ impl<I: Index, T: ComplexField> BiLinOp<T> for BinvAOperator<'_, I, T> {
 		&self,
 		out: MatMut<'_, T>,
 		rhs: MatRef<'_, T>,
-		par: Par,
+		mut par: Par,
 		stack: &mut MemStack,
 	) {
 		let (m, n) = (rhs.nrows(), rhs.ncols());
@@ -213,7 +213,7 @@ impl<I: Index, T: ComplexField> BiLinOp<T> for BinvAOperator<'_, I, T> {
 		self.Binv.solve_transpose_in_place_with_conj(
 			Conj::Yes,
 			tmp.rb_mut(),
-			par,
+			par.reborrow(),
 			stack,
 		);
 		linalg::matmul::sparse_dense_matmul(
@@ -273,7 +273,7 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
 	let B = B.to_col_major()?;
 
 	// this example uses a single thread
-	let par = Par::Seq;
+	let mut par = Par::Seq;
 
 	// symbolic factorization
 	let symbolic = linalg::lu::factorize_symbolic_lu(B.symbolic(), default())?;
@@ -328,7 +328,7 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
 		symbolic.factorize_numeric_lu(
 			&mut numeric,
 			B.rb(),
-			par,
+			par.reborrow(),
 			stack,
 			default(),
 		)?

@@ -195,8 +195,9 @@ pub fn sparse_sparse_matmul<
 	lhs: SparseColMatRef<'_, I, LhsT>,
 	rhs: SparseColMatRef<'_, I, RhsT>,
 	alpha: T,
-	par: Par,
+	mut par: Par,
 ) -> Result<SparseColMat<I, T>, FaerError> {
+		let par_shape = par.shape();
 	assert!(lhs.ncols() == rhs.nrows());
 	let (symbolic, info) =
 		sparse_sparse_matmul_symbolic(lhs.symbolic(), rhs.symbolic())?;
@@ -212,9 +213,9 @@ pub fn sparse_sparse_matmul<
 		rhs,
 		alpha,
 		&info,
-		par,
+		par.reborrow(),
 		MemStack::new(&mut MemBuffer::try_new(
-			sparse_sparse_matmul_numeric_scratch::<I, T>(symbolic.rb(), par.shape()),
+			sparse_sparse_matmul_numeric_scratch::<I, T>(symbolic.rb(), par_shape),
 		)?),
 	);
 	Ok(SparseColMat::new(symbolic, val))

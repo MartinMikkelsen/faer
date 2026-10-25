@@ -25,7 +25,7 @@ pub fn solve_in_place_with_conj<I: Index, T: ComplexField>(
 	col_perm: PermRef<'_, I>,
 	conj_LU: Conj,
 	rhs: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let n = L.nrows();
@@ -44,7 +44,7 @@ pub fn solve_in_place_with_conj<I: Index, T: ComplexField>(
 		L,
 		conj_LU,
 		rhs.rb_mut(),
-		par,
+		par.reborrow(),
 	);
 	linalg::triangular_solve::solve_upper_triangular_in_place_with_conj(
 		U,
@@ -62,7 +62,7 @@ pub fn solve_transpose_in_place_with_conj<I: Index, T: ComplexField>(
 	col_perm: PermRef<'_, I>,
 	conj_LU: Conj,
 	rhs: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let n = L.nrows();
@@ -81,7 +81,7 @@ pub fn solve_transpose_in_place_with_conj<I: Index, T: ComplexField>(
 		U.transpose(),
 		conj_LU,
 		rhs.rb_mut(),
-		par,
+		par.reborrow(),
 	);
 	linalg::triangular_solve::solve_unit_upper_triangular_in_place_with_conj(
 		L.transpose(),

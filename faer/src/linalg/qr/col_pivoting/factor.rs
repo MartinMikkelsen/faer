@@ -183,7 +183,7 @@ fn qr_in_place_unblocked<'out, I: Index, T: ComplexField>(
 						A10,
 						dot,
 						one(),
-						par,
+						par.reborrow(),
 					);
 					best = zero();
 					for j in k..n {
@@ -265,7 +265,7 @@ fn qr_in_place_unblocked<'out, I: Index, T: ComplexField>(
 						let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 							let nthreads = nthreads.get();
 							use rayon::prelude::*;
-							crate::utils::thread::for_each(par, 
+							crate::utils::thread::for_each(par.reborrow(), 
 								nthreads,
 								norm.par_partition_mut(nthreads)
 									.zip(dot.par_partition_mut(nthreads))
@@ -295,7 +295,7 @@ fn qr_in_place_unblocked<'out, I: Index, T: ComplexField>(
 						B10.rb().adjoint(),
 						B11.rb(),
 						one(),
-						par,
+						par.reborrow(),
 					);
 					zip!(B01.rb_mut(), dot.rb_mut(), norm.rb_mut()).for_each(
 						|unzip!(a, dot, norm)| {
@@ -351,7 +351,7 @@ pub fn qr_in_place<'out, I: Index, T: ComplexField>(
 	Q_coeff: MatMut<'_, T>,
 	col_perm: &'out mut [I],
 	col_perm_inv: &'out mut [I],
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 	params: Spec<ColPivQrParams, T>,
 ) -> (ColPivQrInfo, PermRef<'out, I>) {
@@ -374,13 +374,13 @@ pub fn qr_in_place<'out, I: Index, T: ComplexField>(
 		let (m, n) = A.shape();
 		let mut work = alloc::vec![zero::<T>(); m * n];
 		let mut work = MatMut::from_column_major_slice_mut(&mut work, m, n);
-		linalg::copy_across_layouts(work.rb_mut(), A.rb(), par);
+		linalg::copy_across_layouts(work.rb_mut(), A.rb(), par.reborrow());
 		let ret = qr_in_place(
 			work.rb_mut(),
 			Q_coeff,
 			col_perm,
 			col_perm_inv,
-			par,
+			par.reborrow(),
 			stack,
 			params,
 		);
@@ -395,7 +395,7 @@ pub fn qr_in_place<'out, I: Index, T: ComplexField>(
 		H.rb_mut().row_mut(0),
 		col_perm,
 		col_perm_inv,
-		par,
+		par.reborrow(),
 		stack,
 		params,
 	);
@@ -415,7 +415,7 @@ pub fn qr_in_place<'out, I: Index, T: ComplexField>(
 			A,
 			block_size,
 			1,
-			par,
+			par.reborrow(),
 		);
 		j += block_size;
 	}
@@ -431,7 +431,8 @@ mod tests {
 	#[test]
 	fn test_unblocked_qr() {
 		let rng = &mut StdRng::seed_from_u64(0);
-		for par in [Par::Seq, Par::rayon(8)] {
+		for mut par in [Par::Seq, Par::rayon(8)] {
+			let par_shape = par.shape();
 			for n in [2, 3, 4, 8, 16, 24, 32, 128, 255] {
 				let bs = 15;
 				let approx_eq = CwiseMat(ApproxEq {
@@ -457,7 +458,7 @@ mod tests {
 					H.as_mut(),
 					col_perm,
 					col_perm_inv,
-					par,
+					par.reborrow(),
 					MemStack::new(&mut MemBuffer::new(qr_in_place_scratch::<
 						usize,
 						c64,
@@ -465,7 +466,7 @@ mod tests {
 						n,
 						n,
 						bs,
-						par.shape(),
+						par_shape,
 						default(),
 					))),
 					default(),
@@ -520,7 +521,7 @@ mod tests {
 					H.as_mut(),
 					col_perm,
 					col_perm_inv,
-					par,
+					par.reborrow(),
 					MemStack::new(&mut MemBuffer::new(qr_in_place_scratch::<
 						usize,
 						c64,
@@ -528,7 +529,7 @@ mod tests {
 						m,
 						n,
 						bs,
-						par.shape(),
+						par_shape,
 						default(),
 					))),
 					default(),
@@ -564,15 +565,16 @@ mod tests {
 	fn zero_matrix_reconstructs() {
 		// 64x64 crosses the blocking threshold, the rest keep the panel path short
 		for (m, n) in [(1, 1), (3, 2), (8, 8), (64, 64)] {
-			for par in [Par::Seq, Par::rayon(8)] {
-				check_zero_matrix::<f32>(m, n, par);
-				check_zero_matrix::<c32>(m, n, par);
-				check_zero_matrix::<f64>(m, n, par);
+			for mut par in [Par::Seq, Par::rayon(8)] {
+				check_zero_matrix::<f32>(m, n, par.reborrow());
+				check_zero_matrix::<c32>(m, n, par.reborrow());
+				check_zero_matrix::<f64>(m, n, par.reborrow());
 				check_zero_matrix::<c64>(m, n, par);
 			}
 		}
 	}
-	fn check_zero_matrix<T: ComplexField>(m: usize, n: usize, par: Par) {
+	fn check_zero_matrix<T: ComplexField>(m: usize, n: usize, mut par: Par) {
+		let par_shape = par.shape();
 		let size = Ord::min(m, n);
 		let bs = 15;
 		let approx_eq = CwiseMat(ApproxEq {
@@ -590,9 +592,9 @@ mod tests {
 			H.as_mut(),
 			col_perm,
 			col_perm_inv,
-			par,
+			par.reborrow(),
 			MemStack::new(&mut MemBuffer::new(
-				qr_in_place_scratch::<usize, T>(m, n, bs, par.shape(), default()),
+				qr_in_place_scratch::<usize, T>(m, n, bs, par_shape, default()),
 			)),
 			default(),
 		)

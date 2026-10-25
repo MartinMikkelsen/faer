@@ -19,7 +19,7 @@ pub fn inverse<I: Index, T: ComplexField>(
 	Q_coeff: MatRef<'_, T>,
 	R: MatRef<'_, T>,
 	col_perm: PermRef<'_, I>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let n = Q_basis.ncols();
@@ -37,7 +37,7 @@ pub fn inverse<I: Index, T: ComplexField>(
 	));
 	let mut out = out;
 	out.fill(zero());
-	linalg::triangular_inverse::invert_upper_triangular(out.rb_mut(), R, par);
+	linalg::triangular_inverse::invert_upper_triangular(out.rb_mut(), R, par.reborrow());
 	linalg::householder::apply_block_householder_sequence_transpose_on_the_right_in_place_with_conj(
 		Q_basis,
 		Q_coeff,

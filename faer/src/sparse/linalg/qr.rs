@@ -720,7 +720,7 @@ pub mod supernodal {
 			&self,
 			conj_qr: Conj,
 			rhs: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) where
 			T: ComplexField,
@@ -793,7 +793,7 @@ pub mod supernodal {
 							b_tau.rb(),
 							conj_qr,
 							tmp.rb_mut().subrows_mut(start, nrows),
-							par,
+							par.reborrow(),
 							stack.rb_mut(),
 						);
 						start += ncols;
@@ -825,7 +825,7 @@ pub mod supernodal {
 			&self,
 			conj: Conj,
 			rhs: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) where
 			T: ComplexField,
@@ -836,7 +836,7 @@ pub mod supernodal {
 			self.apply_Q_transpose_in_place_with_conj(
 				conj.compose(Conj::Yes),
 				rhs.rb_mut(),
-				par,
+				par.reborrow(),
 				stack,
 			);
 			let L_symbolic = self.symbolic().R_adjoint();
@@ -870,13 +870,13 @@ pub mod supernodal {
 						tmp.rb(),
 						Conj::No,
 						-one::<T>(),
-						par,
+						par.reborrow(),
 					);
 					linalg::triangular_solve::solve_upper_triangular_in_place_with_conj(
 						s_L_top.transpose(),
 						conj.compose(Conj::Yes),
 						x_top.rb_mut(),
-						par,
+						par.reborrow(),
 					);
 				}
 			}
@@ -1041,7 +1041,7 @@ pub mod supernodal {
 		index_to_super: &[I],
 		child_head: &[I::Signed],
 		child_next: &[I::Signed],
-		par: Par,
+		mut par: Par,
 		stack: &mut MemStack,
 		params: Spec<QrParams, T>,
 	) -> usize {
@@ -1288,7 +1288,7 @@ pub mod supernodal {
 							linalg::qr::no_pivoting::factor::qr_in_place(
 								left.rb_mut(),
 								s_tau.rb_mut(),
-								par,
+								par.reborrow(),
 								stack.rb_mut(),
 								params,
 							);
@@ -1298,7 +1298,7 @@ pub mod supernodal {
 									s_tau.rb(),
 									Conj::Yes,
 									right.rb_mut(),
-									par,
+									par.reborrow(),
 									stack.rb_mut(),
 								);
 							}
@@ -1657,7 +1657,7 @@ pub mod simplicial {
 			&self,
 			conj_qr: Conj,
 			rhs: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) where
 			T: ComplexField,
@@ -1666,7 +1666,7 @@ pub mod simplicial {
 			self.apply_Q_transpose_in_place_with_conj(
 				conj_qr,
 				rhs.rb_mut(),
-				par,
+				par.reborrow(),
 				stack,
 			);
 			let _ = par;

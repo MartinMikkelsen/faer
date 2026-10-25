@@ -103,16 +103,17 @@ impl<I: Index, T: ComplexField> Llt<I, T> {
 			.try_reserve_exact(len_val)
 			.map_err(|_| FaerError::OutOfMemory)?;
 		numeric.resize(len_val, zero::<T>());
-		let par = get_global_parallelism();
+		let mut par = get_global_parallelism();
+		let par_shape = par.shape();
 		symbolic.inner.factorize_numeric_llt::<T>(
 			&mut numeric,
 			mat,
 			side,
 			Default::default(),
-			par,
+			par.reborrow(),
 			MemStack::new(&mut MemBuffer::try_new(
 				symbolic.inner.factorize_numeric_llt_scratch::<T>(
-					par.shape(),
+					par_shape,
 					Default::default(),
 				),
 			)?),
@@ -131,15 +132,16 @@ impl<I: Index, T: ComplexField> Lu<I, T> {
 		mat: SparseColMatRef<'_, I, T>,
 	) -> Result<Self, LuError> {
 		let mut numeric = linalg_sp::lu::NumericLu::new();
-		let par = get_global_parallelism();
+		let mut par = get_global_parallelism();
+		let par_shape = par.shape();
 		symbolic.inner.factorize_numeric_lu::<T>(
 			&mut numeric,
 			mat,
-			par,
+			par.reborrow(),
 			MemStack::new(&mut MemBuffer::try_new(
 				symbolic
 					.inner
-					.factorize_numeric_lu_scratch::<T>(par.shape(), Default::default()),
+					.factorize_numeric_lu_scratch::<T>(par_shape, Default::default()),
 			)?),
 			Default::default(),
 		)?;
@@ -167,16 +169,17 @@ impl<I: Index, T: ComplexField> Qr<I, T> {
 			.try_reserve_exact(len_idx)
 			.map_err(|_| FaerError::OutOfMemory)?;
 		indices.resize(len_idx, I::truncate(0));
-		let par = get_global_parallelism();
+		let mut par = get_global_parallelism();
+		let par_shape = par.shape();
 		symbolic.inner.factorize_numeric_qr::<T>(
 			&mut indices,
 			&mut numeric,
 			mat,
-			par,
+			par.reborrow(),
 			MemStack::new(&mut MemBuffer::try_new(
 				symbolic
 					.inner
-					.factorize_numeric_qr_scratch::<T>(par.shape(), Default::default()),
+					.factorize_numeric_qr_scratch::<T>(par_shape, Default::default()),
 			)?),
 			Default::default(),
 		);
@@ -223,7 +226,8 @@ impl<I: Index, T: ComplexField> ShapeCore for Lu<I, T> {
 impl<I: Index, T: ComplexField> SolveCore<T> for Llt<I, T> {
 	#[track_caller]
 	fn solve_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let par = get_global_parallelism();
+		let mut par = get_global_parallelism();
+		let par_shape = par.shape();
 		let rhs_ncols = rhs.ncols();
 		linalg_sp::cholesky::LltRef::<'_, I, T>::new(
 			&self.symbolic.inner,
@@ -232,11 +236,11 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Llt<I, T> {
 		.solve_in_place_with_conj(
 			conj,
 			rhs,
-			par,
+			par.reborrow(),
 			MemStack::new(&mut MemBuffer::new(
 				self.symbolic
 					.inner
-					.solve_in_place_scratch::<T>(rhs_ncols, par.shape()),
+					.solve_in_place_scratch::<T>(rhs_ncols, par_shape),
 			)),
 		);
 	}
@@ -247,7 +251,8 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Llt<I, T> {
 		conj: Conj,
 		rhs: MatMut<'_, T>,
 	) {
-		let par = get_global_parallelism();
+		let mut par = get_global_parallelism();
+		let par_shape = par.shape();
 		let rhs_ncols = rhs.ncols();
 		linalg_sp::cholesky::LltRef::<'_, I, T>::new(
 			&self.symbolic.inner,
@@ -256,11 +261,11 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Llt<I, T> {
 		.solve_in_place_with_conj(
 			conj.compose(Conj::Yes),
 			rhs,
-			par,
+			par.reborrow(),
 			MemStack::new(&mut MemBuffer::new(
 				self.symbolic
 					.inner
-					.solve_in_place_scratch::<T>(rhs_ncols, par.shape()),
+					.solve_in_place_scratch::<T>(rhs_ncols, par_shape),
 			)),
 		);
 	}
@@ -268,7 +273,8 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Llt<I, T> {
 impl<I: Index, T: ComplexField> SolveCore<T> for Qr<I, T> {
 	#[track_caller]
 	fn solve_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let par = get_global_parallelism();
+		let mut par = get_global_parallelism();
+		let par_shape = par.shape();
 		let rhs_ncols = rhs.ncols();
 		unsafe {
 			linalg_sp::qr::QrRef::<'_, I, T>::new_unchecked(
@@ -280,11 +286,11 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Qr<I, T> {
 		.solve_in_place_with_conj(
 			conj,
 			rhs,
-			par,
+			par.reborrow(),
 			MemStack::new(&mut MemBuffer::new(
 				self.symbolic
 					.inner
-					.solve_in_place_scratch::<T>(rhs_ncols, par.shape()),
+					.solve_in_place_scratch::<T>(rhs_ncols, par_shape),
 			)),
 		);
 	}
@@ -307,7 +313,8 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Qr<I, T> {
 impl<I: Index, T: ComplexField> SolveLstsqCore<T> for Qr<I, T> {
 	#[track_caller]
 	fn solve_lstsq_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let par = get_global_parallelism();
+		let mut par = get_global_parallelism();
+		let par_shape = par.shape();
 		let rhs_ncols = rhs.ncols();
 		unsafe {
 			linalg_sp::qr::QrRef::<'_, I, T>::new_unchecked(
@@ -319,11 +326,11 @@ impl<I: Index, T: ComplexField> SolveLstsqCore<T> for Qr<I, T> {
 		.solve_in_place_with_conj(
 			conj,
 			rhs,
-			par,
+			par.reborrow(),
 			MemStack::new(&mut MemBuffer::new(
 				self.symbolic
 					.inner
-					.solve_in_place_scratch::<T>(rhs_ncols, par.shape()),
+					.solve_in_place_scratch::<T>(rhs_ncols, par_shape),
 			)),
 		);
 	}
@@ -331,7 +338,8 @@ impl<I: Index, T: ComplexField> SolveLstsqCore<T> for Qr<I, T> {
 impl<I: Index, T: ComplexField> SolveCore<T> for Lu<I, T> {
 	#[track_caller]
 	fn solve_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let par = get_global_parallelism();
+		let mut par = get_global_parallelism();
+		let par_shape = par.shape();
 		let rhs_ncols = rhs.ncols();
 
 		linalg_sp::lu::LuRef::<'_, I, T>::new_unchecked(
@@ -341,11 +349,11 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Lu<I, T> {
 		.solve_in_place_with_conj(
 			conj,
 			rhs,
-			par,
+			par.reborrow(),
 			MemStack::new(&mut MemBuffer::new(
 				self.symbolic
 					.inner
-					.solve_in_place_scratch::<T>(rhs_ncols, par.shape()),
+					.solve_in_place_scratch::<T>(rhs_ncols, par_shape),
 			)),
 		);
 	}
@@ -356,7 +364,8 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Lu<I, T> {
 		conj: Conj,
 		rhs: MatMut<'_, T>,
 	) {
-		let par = get_global_parallelism();
+		let mut par = get_global_parallelism();
+		let par_shape = par.shape();
 		let rhs_ncols = rhs.ncols();
 
 		linalg_sp::lu::LuRef::<'_, I, T>::new_unchecked(
@@ -366,11 +375,11 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Lu<I, T> {
 		.solve_transpose_in_place_with_conj(
 			conj,
 			rhs,
-			par,
+			par.reborrow(),
 			MemStack::new(&mut MemBuffer::new(
 				self.symbolic
 					.inner
-					.solve_transpose_in_place_scratch::<T>(rhs_ncols, par.shape()),
+					.solve_transpose_in_place_scratch::<T>(rhs_ncols, par_shape),
 			)),
 		);
 	}

@@ -350,7 +350,7 @@ fn lblt_full_piv<T: ComplexField>(
 			if n < params.par_threshold {}
 			if n != 0 {
 				(max_i, max_j, max_offdiag) =
-					rank_1_update_and_argmax(A.rb_mut(), L.rb(), diag, par);
+					rank_1_update_and_argmax(A.rb_mut(), L.rb(), diag, par.reborrow());
 			}
 		} else {
 			let a00 = A[(0, 0)].real();
@@ -378,7 +378,7 @@ fn lblt_full_piv<T: ComplexField>(
 					d00.copy(),
 					d11.copy(),
 					d10.copy(),
-					par,
+					par.reborrow(),
 				);
 			}
 			for j in 0..n {
@@ -499,7 +499,7 @@ fn lblt_blocked_step<T: ComplexField>(
 	pivots: &mut [usize],
 	rook: bool,
 	diagonal: bool,
-	par: Par,
+	mut par: Par,
 ) -> usize {
 	let mut A = A;
 	let mut A_left = A_left;
@@ -540,7 +540,7 @@ fn lblt_blocked_step<T: ComplexField>(
 			Al.rb(),
 			Ar.rb(),
 			i0,
-			par,
+			par.reborrow(),
 		);
 		if k + 1 == n || gamma_i == zero() {
 			nothing_to_do = true;
@@ -557,7 +557,7 @@ fn lblt_blocked_step<T: ComplexField>(
 						Al.rb(),
 						Ar.rb(),
 						i1,
-						par,
+						par.reborrow(),
 					);
 					if Ar[(i1, i1)].abs1() >= &alpha * &gamma_r {
 						npiv = 1;
@@ -582,7 +582,7 @@ fn lblt_blocked_step<T: ComplexField>(
 					Al.rb(),
 					Ar.rb(),
 					i1,
-					par,
+					par.reborrow(),
 				);
 				if Ar[(i0, i0)].real().abs()
 					>= (&alpha * &gamma_r) * (&gamma_r / &gamma_i)
@@ -706,7 +706,7 @@ fn lblt_blocked<T: ComplexField>(
 	block_size: usize,
 	rook: bool,
 	diagonal: bool,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let ref alpha = (one::<T::Real>() + from_f64::<T::Real>(17.0).sqrt())
@@ -730,7 +730,7 @@ fn lblt_blocked<T: ComplexField>(
 				&mut pivots[k..],
 				rook,
 				diagonal,
-				par,
+				par.reborrow(),
 			);
 			next = n;
 		} else {
@@ -743,7 +743,7 @@ fn lblt_blocked<T: ComplexField>(
 				&mut pivots[k..],
 				rook,
 				diagonal,
-				par,
+				par.reborrow(),
 			);
 			next = k + block_size;
 		}
@@ -767,7 +767,7 @@ fn lblt_blocked<T: ComplexField>(
 				_ => {
 				let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 					let nthreads = nthreads.get();
-					crate::utils::thread::for_each(par, 
+					crate::utils::thread::for_each(par.reborrow(), 
 						nthreads,
 						A_left.par_col_iter_mut(),
 						|mut col| {

@@ -14,7 +14,7 @@ pub fn solve_in_place_with_conj<T: ComplexField>(
 	D: DiagRef<'_, T>,
 	conj_lhs: Conj,
 	rhs: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let n = L.nrows();
@@ -30,7 +30,7 @@ pub fn solve_in_place_with_conj<T: ComplexField>(
 		L,
 		conj_lhs,
 		rhs.rb_mut(),
-		par,
+		par.reborrow(),
 	);
 	{
 		with_dim!(N, rhs.nrows());

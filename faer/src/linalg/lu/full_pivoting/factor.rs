@@ -394,7 +394,7 @@ fn lu_in_place_unblocked<T: ComplexField>(
 					.take(nthreads)
 					.collect::<alloc::vec::Vec<_>>();
 				let full_cols = A11.ncols();
-				crate::utils::thread::for_each(par, 
+				crate::utils::thread::for_each(par.reborrow(), 
 					nthreads,
 					best.par_iter_mut()
 						.zip_eq(A11.rb_mut().par_col_partition_mut(nthreads))
@@ -470,7 +470,7 @@ pub fn lu_in_place<'out, I: Index, T: ComplexField>(
 	row_perm_inv: &'out mut [I],
 	col_perm: &'out mut [I],
 	col_perm_inv: &'out mut [I],
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 	params: Spec<FullPivLuParams, T>,
 ) -> (FullPivLuInfo, PermRef<'out, I>, PermRef<'out, I>) {
@@ -493,14 +493,14 @@ pub fn lu_in_place<'out, I: Index, T: ComplexField>(
 	{
 		let mut work = alloc::vec![zero::<T>(); M * N];
 		let mut work = MatMut::from_column_major_slice_mut(&mut work, M, N);
-		linalg::copy_across_layouts(work.rb_mut(), mat.rb(), par);
+		linalg::copy_across_layouts(work.rb_mut(), mat.rb(), par.reborrow());
 		let ret = lu_in_place(
 			work.rb_mut(),
 			row_perm,
 			row_perm_inv,
 			col_perm,
 			col_perm_inv,
-			par,
+			par.reborrow(),
 			stack,
 			params,
 		);
@@ -569,7 +569,8 @@ mod tests {
 	#[test]
 	fn test_flu() {
 		let rng = &mut StdRng::seed_from_u64(0);
-		for par in [Par::Seq, Par::rayon(8)] {
+		for mut par in [Par::Seq, Par::rayon(8)] {
+			let par_shape = par.shape();
 			for m in [8, 16, 24, 32, 128, 255, 256, 257] {
 				let n = 8;
 				let approx_eq = CwiseMat(ApproxEq {
@@ -597,12 +598,12 @@ mod tests {
 					row_perm_inv,
 					col_perm,
 					col_perm_inv,
-					par,
+					par.reborrow(),
 					MemStack::new(&mut MemBuffer::new(lu_in_place_scratch::<
 						usize,
 						c64,
 					>(
-						n, n, par.shape(), default()
+						n, n, par_shape, default()
 					))),
 					default(),
 				);
@@ -647,12 +648,12 @@ mod tests {
 					row_perm_inv,
 					col_perm,
 					col_perm_inv,
-					par,
+					par.reborrow(),
 					MemStack::new(&mut MemBuffer::new(lu_in_place_scratch::<
 						usize,
 						f64,
 					>(
-						n, n, par.shape(), default()
+						n, n, par_shape, default()
 					))),
 					default(),
 				);

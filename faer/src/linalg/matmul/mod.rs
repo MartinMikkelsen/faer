@@ -211,7 +211,7 @@ mod matmul_vertical {
 		rhs: MatRef<'_, T, Dim<'K>, Dim<'N>>,
 		conj_rhs: Conj,
 		alpha: &T,
-		par: Par,
+		mut par: Par,
 	) {
 		let dst = dst.as_dyn_mut();
 		let lhs = lhs.as_dyn();
@@ -299,7 +299,7 @@ mod matmul_vertical {
 						let nthreads = nthreads.get();
 						use rayon::prelude::*;
 						let job_idx = core::sync::atomic::AtomicUsize::new(0);
-						crate::utils::thread::for_each(par, 
+						crate::utils::thread::for_each(par.reborrow(), 
 							nthreads,
 							(0..nthreads).into_par_iter(),
 							|_| {
@@ -484,7 +484,7 @@ mod matmul_horizontal {
 		rhs: MatRef<'_, T, Dim<'K>, Dim<'N>, ContiguousFwd, isize>,
 		conj_rhs: Conj,
 		alpha: &T,
-		par: Par,
+		mut par: Par,
 	) {
 		let dst = dst.as_dyn_mut();
 		let lhs = lhs.as_dyn();
@@ -572,7 +572,7 @@ mod matmul_horizontal {
 						let nthreads = nthreads.get();
 						use rayon::prelude::*;
 						let job_idx = core::sync::atomic::AtomicUsize::new(0);
-						crate::utils::thread::for_each(par, 
+						crate::utils::thread::for_each(par.reborrow(), 
 							nthreads,
 							(0..nthreads).into_par_iter(),
 							|_| {
@@ -1868,7 +1868,7 @@ mod tests {
 		#[cfg(not(miri))]
 		let alphas = [c32::ONE, c32::ZERO, c32::new(21.04, -12.13)];
 		#[cfg(not(miri))]
-		let par = [Par::Seq, Par::Rayon(NonZeroUsize::new(4).unwrap())];
+		let par = || [Par::Seq, Par::Rayon(NonZeroUsize::new(4).unwrap())];
 		#[cfg(not(miri))]
 		let conjs = [Conj::Yes, Conj::No];
 		#[cfg(miri)]
@@ -1970,7 +1970,7 @@ mod tests {
 												}
 												for conj_a in conjs {
 													for conj_b in conjs {
-														for par in par {
+														for mut par in par() {
 															for beta in betas {
 																for alpha in
 																	alphas
@@ -1983,7 +1983,7 @@ mod tests {
 																		n,
 																		conj_a,
 																		conj_b,
-																		par,
+																		par.reborrow(),
 																		beta,
 																		alpha,
 																		acc_init.as_mut(),
@@ -2053,7 +2053,7 @@ mod tests {
 		n: usize,
 		conj_a: Conj,
 		conj_b: Conj,
-		par: Par,
+		mut par: Par,
 		beta: Accum,
 		alpha: c32,
 		acc_init: MatMut<c32>,
@@ -2105,7 +2105,7 @@ mod tests {
 					b,
 					conj_b,
 					&alpha,
-					par,
+					par.reborrow(),
 				);
 			}
 			for j in 0..n {
@@ -2137,7 +2137,7 @@ mod tests {
 					b.try_as_col_major().unwrap(),
 					conj_b,
 					&alpha,
-					par,
+					par.reborrow(),
 				);
 			}
 			for j in 0..n {
@@ -2216,7 +2216,7 @@ mod tests {
 		let dst_orig = dst.as_ref().to_owned();
 		let lhs = generate_structured_matrix(false, m, k, lhs_structure);
 		let rhs = generate_structured_matrix(false, k, n, rhs_structure);
-		for par in [Par::Seq, Par::rayon(8)] {
+		for mut par in [Par::Seq, Par::rayon(8)] {
 			triangular::matmul_with_conj(
 				dst.as_mut(),
 				dst_structure,
@@ -2228,7 +2228,7 @@ mod tests {
 				rhs_structure,
 				Conj::No,
 				2.5,
-				par,
+				par.reborrow(),
 			);
 			matmul_with_conj(
 				dst_target.as_mut(),

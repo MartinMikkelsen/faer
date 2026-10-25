@@ -278,7 +278,7 @@ fn divide_and_conquer_recurse<T: RealField>(
 	mut diag: ColMut<'_, T, usize, ContiguousFwd>,
 	mut offdiag: ColMut<'_, T, usize, ContiguousFwd>,
 	mut u: MatMut<'_, T, usize, usize>,
-	par: Par,
+	mut par: Par,
 	pl_before: &mut [usize],
 	pl_after: &mut [usize],
 	pr: &mut [usize],
@@ -368,7 +368,7 @@ fn divide_and_conquer_recurse<T: RealField>(
 					qr_fallback_threshold,
 				);
 			},
-			par,
+			par.reborrow(),
 		);
 		r0?;
 		r1?;

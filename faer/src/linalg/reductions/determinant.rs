@@ -4,7 +4,8 @@ use alloc::vec;
 use dyn_stack::MemBuffer;
 pub fn determinant<T: ComplexField>(mat: MatRef<'_, T>) -> T::Canonical {
 	assert!(mat.nrows() == mat.ncols());
-	let par = get_global_parallelism();
+	let mut par = get_global_parallelism();
+		let par_shape = par.shape();
 	let (m, n) = mat.shape();
 	let mut row_perm_fwd = vec![0usize; m];
 	let mut row_perm_bwd = vec![0usize; m];
@@ -14,12 +15,12 @@ pub fn determinant<T: ComplexField>(mat: MatRef<'_, T>) -> T::Canonical {
 			factors.as_mat_mut(),
 			&mut row_perm_fwd,
 			&mut row_perm_bwd,
-			par,
+			par.reborrow(),
 			MemStack::new(&mut MemBuffer::new(
 				linalg::lu::partial_pivoting::factor::lu_in_place_scratch::<
 					usize,
 					T,
-				>(m, n, par.shape(), default()),
+				>(m, n, par_shape, default()),
 			)),
 			default(),
 		)

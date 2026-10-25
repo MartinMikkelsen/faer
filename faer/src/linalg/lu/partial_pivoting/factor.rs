@@ -88,7 +88,7 @@ pub(crate) fn lu_in_place_recursion<I: Index, T: ComplexField>(
 	start: usize,
 	end: usize,
 	trans: &mut [I],
-	par: Par,
+	mut par: Par,
 	params: Spec<PartialPivLuParams, T>,
 ) -> usize {
 	let params = params.config;
@@ -109,7 +109,7 @@ pub(crate) fn lu_in_place_recursion<I: Index, T: ComplexField>(
 		0,
 		block_size,
 		&mut trans[..block_size],
-		par,
+		par.reborrow(),
 		params.into(),
 	);
 	{
@@ -134,8 +134,8 @@ pub(crate) fn lu_in_place_recursion<I: Index, T: ComplexField>(
 			.nrows()
 			.saturating_mul(A11.ncols())
 			.saturating_mul(if T::IS_REAL { 2 } else { 8 });
-		let par_here = if work > params.par_threshold.saturating_mul(2) {
-			par
+		let mut par_here = if work > params.par_threshold.saturating_mul(2) {
+			par.reborrow()
 		} else {
 			Par::Seq
 		};
@@ -143,7 +143,7 @@ pub(crate) fn lu_in_place_recursion<I: Index, T: ComplexField>(
 			linalg::triangular_solve::solve_unit_lower_triangular_in_place(
 				A00.rb(),
 				A01.rb_mut(),
-				par_here,
+				par_here.reborrow(),
 			);
 		}
 		linalg::matmul::matmul(
@@ -159,7 +159,7 @@ pub(crate) fn lu_in_place_recursion<I: Index, T: ComplexField>(
 			block_size,
 			n,
 			&mut trans[block_size..n],
-			par,
+			par.reborrow(),
 			params.into(),
 		);
 	}
@@ -291,7 +291,7 @@ pub fn lu_in_place<'out, I: Index, T: ComplexField>(
 	A: MatMut<'_, T>,
 	perm: &'out mut [I],
 	perm_inv: &'out mut [I],
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 	params: Spec<PartialPivLuParams, T>,
 ) -> (PartialPivLuInfo, PermRef<'out, I>) {
@@ -328,12 +328,12 @@ pub fn lu_in_place<'out, I: Index, T: ComplexField>(
 	{
 		let mut work = alloc::vec![zero::<T>(); m * n];
 		let mut work = MatMut::from_column_major_slice_mut(&mut work, m, n);
-		linalg::copy_across_layouts(work.rb_mut(), matrix.rb(), par);
+		linalg::copy_across_layouts(work.rb_mut(), matrix.rb(), par.reborrow());
 		let ret = lu_in_place(
 			work.rb_mut(),
 			perm,
 			perm_inv,
-			par,
+			par.reborrow(),
 			stack,
 			params,
 		);
@@ -353,7 +353,7 @@ pub fn lu_in_place<'out, I: Index, T: ComplexField>(
 		0,
 		size,
 		transpositions.as_mut(),
-		par,
+		par.reborrow(),
 		params,
 	);
 	for idx in 0..size {
@@ -630,7 +630,8 @@ mod tests {
 			rel_tol: tol,
 		});
 		let n = a.nrows();
-		for par in [Par::Seq, Par::rayon(8)] {
+		for mut par in [Par::Seq, Par::rayon(8)] {
+			let par_shape = par.shape();
 			let mut LU = a.cloned();
 			let perm = &mut *vec![0usize; n];
 			let perm_inv = &mut *vec![0usize; n];
@@ -643,12 +644,12 @@ mod tests {
 				LU.as_mut(),
 				perm,
 				perm_inv,
-				par,
+				par.reborrow(),
 				MemStack::new(&mut MemBuffer::new(lu_in_place_scratch::<
 					usize,
 					T,
 				>(
-					n, n, par.shape(), params.into()
+					n, n, par_shape, params.into()
 				))),
 				params.into(),
 			)

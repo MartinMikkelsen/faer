@@ -148,7 +148,7 @@ pub mod supernodal {
 			col_perm: PermRef<'_, I>,
 			conj_lhs: Conj,
 			rhs: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) where
 			T: ComplexField,
@@ -159,7 +159,7 @@ pub mod supernodal {
 			));
 			let mut X = rhs;
 			crate::perm::permute_rows_in_place(X.rb_mut(), row_perm, stack);
-			self.l_solve_in_place_with_conj(conj_lhs, X.rb_mut(), par, stack);
+			self.l_solve_in_place_with_conj(conj_lhs, X.rb_mut(), par.reborrow(), stack);
 			self.u_solve_in_place_with_conj(conj_lhs, X.rb_mut(), par, stack);
 			crate::perm::permute_rows_in_place(
 				X.rb_mut(),
@@ -181,7 +181,7 @@ pub mod supernodal {
 			col_perm: PermRef<'_, I>,
 			conj_lhs: Conj,
 			rhs: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) where
 			T: ComplexField,
@@ -195,7 +195,7 @@ pub mod supernodal {
 			self.u_solve_transpose_in_place_with_conj(
 				conj_lhs,
 				X.rb_mut(),
-				par,
+				par.reborrow(),
 				stack,
 			);
 			self.l_solve_transpose_in_place_with_conj(
@@ -216,7 +216,7 @@ pub mod supernodal {
 			&self,
 			conj_lhs: Conj,
 			rhs: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) where
 			T: ComplexField,
@@ -246,7 +246,7 @@ pub mod supernodal {
 					L_top,
 					conj_lhs,
 					X.rb_mut().subrows_mut(s_begin, s_size),
-					par,
+					par.reborrow(),
 				);
 				linalg::matmul::matmul_with_conj(
 					work.rb_mut().subrows_mut(0, s_row_idx_count - s_size),
@@ -256,7 +256,7 @@ pub mod supernodal {
 					X.rb().subrows(s_begin, s_size),
 					Conj::No,
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				for j in 0..nrhs {
 					for (idx, &i) in lu.l_row_idx[lu.l_col_ptr_for_row_idx[s]
@@ -277,7 +277,7 @@ pub mod supernodal {
 			&self,
 			conj_lhs: Conj,
 			rhs: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) where
 			T: ComplexField,
@@ -322,13 +322,13 @@ pub mod supernodal {
 					work.rb().subrows(0, s_row_idx_count - s_size),
 					Conj::No,
 					-one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				linalg::triangular_solve::solve_unit_upper_triangular_in_place_with_conj(
 					L_top.transpose(),
 					conj_lhs,
 					X.rb_mut().subrows_mut(s_begin, s_size),
-					par,
+					par.reborrow(),
 				);
 			}
 		}
@@ -338,7 +338,7 @@ pub mod supernodal {
 			&self,
 			conj_lhs: Conj,
 			rhs: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) where
 			T: ComplexField,
@@ -393,9 +393,9 @@ pub mod supernodal {
 					work.rb().subrows(0, s_col_index_count),
 					Conj::No,
 					-one::<T>(),
-					par,
+					par.reborrow(),
 				);
-				linalg::triangular_solve::solve_upper_triangular_in_place_with_conj(U_left, conj_lhs, X.rb_mut().subrows_mut(s_begin, s_size), par);
+				linalg::triangular_solve::solve_upper_triangular_in_place_with_conj(U_left, conj_lhs, X.rb_mut().subrows_mut(s_begin, s_size), par.reborrow());
 			}
 		}
 
@@ -404,7 +404,7 @@ pub mod supernodal {
 			&self,
 			conj_lhs: Conj,
 			rhs: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) where
 			T: ComplexField,
@@ -444,7 +444,7 @@ pub mod supernodal {
 					U_left.transpose(),
 					conj_lhs,
 					X.rb_mut().subrows_mut(s_begin, s_size),
-					par,
+					par.reborrow(),
 				);
 				linalg::matmul::matmul_with_conj(
 					work.rb_mut().subrows_mut(0, s_col_index_count),
@@ -454,7 +454,7 @@ pub mod supernodal {
 					X.rb().subrows(s_begin, s_size),
 					Conj::No,
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				for j in 0..nrhs {
 					for (idx, &i) in lu.ut_row_idx[lu.ut_col_ptr_for_row_idx[s]
@@ -610,7 +610,7 @@ pub mod supernodal {
 		AT: SparseColMatRef<'_, I, T>,
 		col_perm: PermRef<'_, I>,
 		symbolic: &SymbolicSupernodalLu<I>,
-		par: Par,
+		mut par: Par,
 		stack: &mut MemStack,
 		params: Spec<PartialPivLuParams, T>,
 	) -> Result<(), LuError> {
@@ -942,7 +942,7 @@ pub mod supernodal {
 				0,
 				s_size,
 				transpositions,
-				par,
+				par.reborrow(),
 				params,
 			);
 			for (idx, t) in transpositions.iter().enumerate() {
@@ -1163,7 +1163,7 @@ pub mod supernodal {
 			linalg::triangular_solve::solve_unit_lower_triangular_in_place(
 				s_L.rb().subrows(0, s_size),
 				s_U.rb_mut(),
-				par,
+				par.reborrow(),
 			);
 			if s_row_idx_count > s_size && s_col_index_count > 0 {
 				resize_vec::<T>(
@@ -1201,7 +1201,7 @@ pub mod supernodal {
 					s_L.rb().get(s_size.., ..),
 					s_U.rb(),
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				noinline(Front, || {
 					for d in &u_compress_cols[s] {
@@ -1444,7 +1444,7 @@ pub mod simplicial {
 			col_perm: PermRef<'_, I>,
 			conj_lhs: Conj,
 			rhs: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) where
 			T: ComplexField,
@@ -1459,7 +1459,7 @@ pub mod simplicial {
 				l,
 				conj_lhs,
 				X.rb_mut(),
-				par,
+				par.reborrow(),
 			);
 			linalg_sp::triangular_solve::solve_upper_triangular_in_place(
 				u,
@@ -1487,7 +1487,7 @@ pub mod simplicial {
 			col_perm: PermRef<'_, I>,
 			conj_lhs: Conj,
 			rhs: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) where
 			T: ComplexField,
@@ -1500,7 +1500,7 @@ pub mod simplicial {
 			let l = self.l_factor_unsorted();
 			let u = self.u_factor_unsorted();
 			crate::perm::permute_rows_in_place(X.rb_mut(), col_perm, stack);
-			linalg_sp::triangular_solve::solve_upper_triangular_transpose_in_place(u, conj_lhs, X.rb_mut(), par);
+			linalg_sp::triangular_solve::solve_upper_triangular_transpose_in_place(u, conj_lhs, X.rb_mut(), par.reborrow());
 			linalg_sp::triangular_solve::solve_unit_lower_triangular_transpose_in_place(l, conj_lhs, X.rb_mut(), par);
 			crate::perm::permute_rows_in_place(
 				X.rb_mut(),

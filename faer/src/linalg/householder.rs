@@ -154,11 +154,11 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 	// `n`-wide reductions ~50 times for work the floor itself calls too small to split. The
 	// decision here is the floor, asked once: no region at all when the products below would not
 	// split either.
-	let threads = crate::utils::thread::parallelism_degree(par);
+	let threads = crate::utils::thread::parallelism_degree(&par);
 	let deep_rows = essentials.nrows().unbound().saturating_sub(n);
 	let above_floor =
 		deep_rows >= 2 * n && deep_rows >= 4 * threads && deep_rows * n * n >= 8 * 1024;
-	let par = if above_floor { par } else { Par::Seq };
+	let mut par = if above_floor { par } else { Par::Seq };
 	let mut householder_factor = householder_factor;
 	let essentials = essentials;
 	assert!(householder_factor.nrows() == householder_factor.ncols());
@@ -207,7 +207,7 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 			basis_top,
 			BlockStructure::UnitTriangularLower,
 			one(),
-			par,
+			par.reborrow(),
 		);
 		// `T += V_bot^H V_bot` reduces over every row below the basis' diagonal, so on a tall panel
 		// it is one serial kernel per task with an `n x n` output -- the same shape as the reduction
@@ -215,7 +215,7 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 		// threads for `m = 4096, n = 16`, against 0.040 when its rows are split. The partials here
 		// are `n x n` each, tiny against the basis, and only the strict upper triangle is stored
 		// (the diagonal is the caller's `tau`), so the split costs almost nothing.
-		let threads = crate::utils::thread::parallelism_degree(par);
+		let threads = crate::utils::thread::parallelism_degree(&par);
 		let rows = basis_bot.nrows().unbound();
 		let deep = cfg!(feature = "rayon")
 			&& threads > 1
@@ -310,7 +310,7 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 					parallelism,
 				);
 			},
-			|parallelism| {
+			|mut parallelism| {
 				let basis_left = basis_left.split_at_row(mid).1;
 				let row_mid = basis_right.ncols();
 				let (basis_left_top, basis_left_bot) =
@@ -326,7 +326,7 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 					basis_right_top,
 					BlockStructure::UnitTriangularLower,
 					one(),
-					parallelism,
+					parallelism.reborrow(),
 				);
 				matmul(
 					tau_tr.rb_mut(),
@@ -449,7 +449,7 @@ fn apply_block_householder_on_the_left_in_place_generic<
 	conj_lhs: Conj,
 	matrix: MatMut<'_, T, Dim<'M>, Dim<'K>>,
 	forward: bool,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	assert!(all(
@@ -478,7 +478,7 @@ fn apply_block_householder_on_the_left_in_place_generic<
 		>= 8 * 1024;
 	let use_simd = N.unbound() == 1
 		&& T::SIMD_CAPABILITIES.is_simd()
-		&& !(crate::utils::thread::parallelism_degree(par) > 1 && big_rank_one);
+		&& !(crate::utils::thread::parallelism_degree(&par) > 1 && big_rank_one);
 	if let (Some(householder_basis), Some(matrix), true) = (
 		householder_basis.try_as_col_major(),
 		matrix.rb_mut().try_as_col_major_mut(),
@@ -595,7 +595,7 @@ fn apply_block_householder_on_the_left_in_place_generic<
 		let K = matrix.ncols();
 		let (mut tmp, _) = unsafe { temp_mat_uninit::<T, _, _>(N, K, stack) };
 		let mut tmp = tmp.as_mat_mut();
-		let threads = crate::utils::thread::parallelism_degree(par);
+		let threads = crate::utils::thread::parallelism_degree(&par);
 		// The split below slices the reduction's rows, but the top `n` rows carry the unit
 		// diagonal and are applied through their own `n x n` factor -- a chunk whose rows
 		// are a *subrange* of those `n` would need that factor column-sliced, and the
@@ -677,7 +677,7 @@ fn apply_block_householder_on_the_left_in_place_generic<
 				let bot_basis = essentials_bot.as_dyn_rows().as_dyn_cols();
 				let conj = Conj::Yes.compose(conj_lhs);
 				crate::utils::thread::par_for_each(
-					par,
+					par.reborrow(),
 					partials.par_chunks_mut(n * k).enumerate(),
 					|(index, part)| {
 						let lo = index * chunk;
@@ -739,7 +739,7 @@ fn apply_block_householder_on_the_left_in_place_generic<
 			MatMut<'_, T, Dim<'N>>,
 			MatMut<'_, T, Dim<'M>>,
 		),
-		            inner_parallelism: Par| {
+		            mut inner_parallelism: Par| {
 			let (mut top, mut bot) =
 				matrix.rb_mut().split_rows_with_mut(midpoint);
 			if !row_split {
@@ -754,7 +754,7 @@ fn apply_block_householder_on_the_left_in_place_generic<
 					BlockStructure::Rectangular,
 					Conj::No,
 					one(),
-					inner_parallelism,
+					inner_parallelism.reborrow(),
 				);
 				matmul_with_conj(
 					tmp.rb_mut(),
@@ -764,7 +764,7 @@ fn apply_block_householder_on_the_left_in_place_generic<
 					bot.rb(),
 					Conj::No,
 					one(),
-					inner_parallelism,
+					inner_parallelism.reborrow(),
 				);
 			}
 			if forward {
@@ -772,14 +772,14 @@ fn apply_block_householder_on_the_left_in_place_generic<
 					householder_factor.transpose(),
 					Conj::Yes.compose(conj_lhs),
 					tmp.rb_mut(),
-					inner_parallelism,
+					inner_parallelism.reborrow(),
 				);
 			} else {
 				triangular_solve::solve_upper_triangular_in_place_with_conj(
 					householder_factor,
 					Conj::No.compose(conj_lhs),
 					tmp.rb_mut(),
-					inner_parallelism,
+					inner_parallelism.reborrow(),
 				);
 			}
 			triangular::matmul_with_conj(
@@ -793,7 +793,7 @@ fn apply_block_householder_on_the_left_in_place_generic<
 				BlockStructure::Rectangular,
 				Conj::No,
 				-one::<T>(),
-				inner_parallelism,
+				inner_parallelism.reborrow(),
 			);
 			matmul_with_conj(
 				bot.rb_mut(),
@@ -934,7 +934,7 @@ pub fn apply_block_householder_sequence_on_the_left_in_place_with_conj<
 	householder_factor: MatRef<'_, T>,
 	conj_lhs: Conj,
 	matrix: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let mut matrix = matrix;
@@ -963,7 +963,7 @@ pub fn apply_block_householder_sequence_on_the_left_in_place_with_conj<
 			householder,
 			conj_lhs,
 			matrix,
-			par,
+			par.reborrow(),
 			stack.rb_mut(),
 		);
 		j = j_prev;
@@ -980,7 +980,7 @@ pub fn apply_block_householder_sequence_transpose_on_the_left_in_place_with_conj
 	householder_factor: MatRef<'_, T>,
 	conj_lhs: Conj,
 	matrix: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let mut matrix = matrix;
@@ -1006,7 +1006,7 @@ pub fn apply_block_householder_sequence_transpose_on_the_left_in_place_with_conj
 			householder,
 			conj_lhs,
 			matrix,
-			par,
+			par.reborrow(),
 			stack.rb_mut(),
 		);
 		j += block_size;

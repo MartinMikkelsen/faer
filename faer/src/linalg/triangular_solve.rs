@@ -430,7 +430,7 @@ fn solve_unit_lower_triangular_in_place_imp<'N, 'K, T: ComplexField>(
 	tril: MatRef<'_, T, Dim<'N>, Dim<'N>>,
 	conj_lhs: Conj,
 	rhs: MatMut<'_, T, Dim<'N>, Dim<'K>>,
-	par: Par,
+	mut par: Par,
 ) {
 	let N = tril.nrows();
 	let K = rhs.ncols();
@@ -442,12 +442,12 @@ fn solve_unit_lower_triangular_in_place_imp<'N, 'K, T: ComplexField>(
 		let mid = K.partition(IdxInc::new_checked(k / 2, K), LEFT, RIGHT);
 		let (rhs_left, rhs_right) = rhs.split_cols_with_mut(mid);
 		join_raw(
-			|_| {
+			|par| {
 				solve_unit_lower_triangular_in_place_imp(
 					tril, conj_lhs, rhs_left, par,
 				)
 			},
-			|_| {
+			|par| {
 				solve_unit_lower_triangular_in_place_imp(
 					tril, conj_lhs, rhs_right, par,
 				)
@@ -488,7 +488,7 @@ fn solve_unit_lower_triangular_in_place_imp<'N, 'K, T: ComplexField>(
 		tril_top_left,
 		conj_lhs,
 		rhs_top.rb_mut(),
-		par,
+		par.reborrow(),
 	);
 	crate::linalg::matmul::matmul_with_conj(
 		rhs_bot.rb_mut(),
@@ -498,7 +498,7 @@ fn solve_unit_lower_triangular_in_place_imp<'N, 'K, T: ComplexField>(
 		rhs_top.into_const(),
 		Conj::No,
 		-one::<T>(),
-		par,
+		par.reborrow(),
 	);
 	solve_unit_lower_triangular_in_place_imp(
 		tril_bot_right,
@@ -511,7 +511,7 @@ fn solve_lower_triangular_in_place_imp<'N, 'K, T: ComplexField>(
 	tril: MatRef<'_, T, Dim<'N>, Dim<'N>>,
 	conj_lhs: Conj,
 	rhs: MatMut<'_, T, Dim<'N>, Dim<'K>>,
-	par: Par,
+	mut par: Par,
 ) {
 	let N = tril.nrows();
 	let K = rhs.ncols();
@@ -523,12 +523,12 @@ fn solve_lower_triangular_in_place_imp<'N, 'K, T: ComplexField>(
 		let mid = K.partition(IdxInc::new_checked(k / 2, K), LEFT, RIGHT);
 		let (rhs_left, rhs_right) = rhs.split_cols_with_mut(mid);
 		join_raw(
-			|_| {
+			|par| {
 				solve_lower_triangular_in_place_imp(
 					tril, conj_lhs, rhs_left, par,
 				)
 			},
-			|_| {
+			|par| {
 				solve_lower_triangular_in_place_imp(
 					tril, conj_lhs, rhs_right, par,
 				)
@@ -569,7 +569,7 @@ fn solve_lower_triangular_in_place_imp<'N, 'K, T: ComplexField>(
 		tril_top_left,
 		conj_lhs,
 		rhs_top.rb_mut(),
-		par,
+		par.reborrow(),
 	);
 	crate::linalg::matmul::matmul_with_conj(
 		rhs_bot.rb_mut(),
@@ -579,7 +579,7 @@ fn solve_lower_triangular_in_place_imp<'N, 'K, T: ComplexField>(
 		rhs_top.into_const(),
 		Conj::No,
 		-one::<T>(),
-		par,
+		par.reborrow(),
 	);
 	solve_lower_triangular_in_place_imp(tril_bot_right, conj_lhs, rhs_bot, par);
 }

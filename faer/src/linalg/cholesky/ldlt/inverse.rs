@@ -10,7 +10,7 @@ pub fn inverse<T: ComplexField>(
 	out: MatMut<'_, T>,
 	L: MatRef<'_, T>,
 	D: DiagRef<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let mut out = out;
@@ -27,7 +27,7 @@ pub fn inverse<T: ComplexField>(
 	linalg::triangular_inverse::invert_unit_lower_triangular(
 		L_inv.rb_mut(),
 		L,
-		par,
+		par.reborrow(),
 	);
 	{
 		with_dim!(N, n);

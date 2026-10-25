@@ -15,7 +15,7 @@ pub fn inverse<I: Index, T: ComplexField>(
 	U: MatRef<'_, T>,
 	row_perm: PermRef<'_, I>,
 	col_perm: PermRef<'_, I>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let n = L.ncols();
@@ -34,9 +34,9 @@ pub fn inverse<I: Index, T: ComplexField>(
 	linalg::triangular_inverse::invert_unit_lower_triangular(
 		out.rb_mut(),
 		L,
-		par,
+		par.reborrow(),
 	);
-	linalg::triangular_inverse::invert_upper_triangular(out.rb_mut(), U, par);
+	linalg::triangular_inverse::invert_upper_triangular(out.rb_mut(), U, par.reborrow());
 	linalg::matmul::triangular::matmul(
 		tmp.rb_mut(),
 		BlockStructure::Rectangular,
