@@ -2722,6 +2722,7 @@ dependencies = [
  "t4a-faer-traits",
  "t4a-private-gemm-x86",
  "tar",
+ "threadteam",
  "toml 0.9.8",
 ]
 
@@ -2827,6 +2828,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f60246a4944f24f6e018aa17cdeffb7818b76356965d03b07d6a9886e8962185"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "threadteam"
+version = "0.1.0"
+source = "git+https://github.com/tensor4all/threadteam-rs?rev=b7d094dde11be2e3f947675db2803f03ad2ad259#b7d094dde11be2e3f947675db2803f03ad2ad259"
+dependencies = [
+ "libc",
+ "loom",
+ "rayon",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

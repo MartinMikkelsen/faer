@@ -386,14 +386,15 @@ fn lu_in_place_unblocked<T: ComplexField>(
 					);
 			},
 			#[cfg(feature = "rayon")]
-			Par::Rayon(nthreads) => {
+			_ => {
+			let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 				use rayon::prelude::*;
 				let nthreads = nthreads.get();
 				let mut best = core::iter::repeat_with(|| (0, 0, zero()))
 					.take(nthreads)
 					.collect::<alloc::vec::Vec<_>>();
 				let full_cols = A11.ncols();
-				spindle::for_each(
+				crate::utils::thread::for_each(par, 
 					nthreads,
 					best.par_iter_mut()
 						.zip_eq(A11.rb_mut().par_col_partition_mut(nthreads))

@@ -294,11 +294,12 @@ mod matmul_vertical {
 						}
 					},
 					#[cfg(feature = "rayon")]
-					Par::Rayon(nthreads) => {
+					_ => {
+					let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 						let nthreads = nthreads.get();
 						use rayon::prelude::*;
 						let job_idx = core::sync::atomic::AtomicUsize::new(0);
-						spindle::for_each(
+						crate::utils::thread::for_each(par, 
 							nthreads,
 							(0..nthreads).into_par_iter(),
 							|_| {
@@ -566,11 +567,12 @@ mod matmul_horizontal {
 						}
 					},
 					#[cfg(feature = "rayon")]
-					Par::Rayon(nthreads) => {
+					_ => {
+					let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 						let nthreads = nthreads.get();
 						use rayon::prelude::*;
 						let job_idx = core::sync::atomic::AtomicUsize::new(0);
-						spindle::for_each(
+						crate::utils::thread::for_each(par, 
 							nthreads,
 							(0..nthreads).into_par_iter(),
 							|_| {
@@ -842,10 +844,11 @@ mod matvec_rowmajor {
 				);
 			},
 			#[cfg(feature = "rayon")]
-			Par::Rayon(nthreads) => {
+			_ => {
+			let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 				let nthreads = nthreads.get();
 				use rayon::prelude::*;
-				spindle::for_each(
+				crate::utils::thread::for_each(par, 
 					nthreads,
 					dst.par_partition_mut(nthreads)
 						.zip_eq(lhs.par_row_partition(nthreads)),
@@ -973,7 +976,8 @@ mod matvec_colmajor {
 				)
 			},
 			#[cfg(feature = "rayon")]
-			Par::Rayon(nthreads) => {
+			_ => {
+			let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 				use rayon::prelude::*;
 				let nthreads = nthreads.get();
 				let mut mem = MemBuffer::new(temp_mat_scratch::<T>(
@@ -990,7 +994,7 @@ mod matvec_colmajor {
 				make_guard!(Z);
 				let Z = 0usize.bind(Z);
 				let z = IdxInc::new_checked(0, lhs.ncols());
-				spindle::for_each(
+				crate::utils::thread::for_each(par, 
 					nthreads,
 					tmp.rb_mut()
 						.par_col_iter_mut()
@@ -1148,10 +1152,11 @@ mod rank_update {
 				rank_update_imp(dst, beta, lhs, conj_lhs, rhs, conj_rhs, alpha);
 			},
 			#[cfg(feature = "rayon")]
-			Par::Rayon(nthreads) => {
+			_ => {
+			let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 				let nthreads = nthreads.get();
 				use rayon::prelude::*;
-				spindle::for_each(
+				crate::utils::thread::for_each(par, 
 					nthreads,
 					dst.par_col_partition_mut(nthreads)
 						.zip(rhs.par_partition(nthreads)),
@@ -1352,6 +1357,37 @@ fn matmul_imp<'M, 'N, 'K, T: ComplexField>(
 						);
 						return;
 					} else {
+						#[cfg(feature = "threadteam")]
+						if let Par::Team(nt) = par {
+							// the team path replaces the Rayon calls of both kernels below: one
+							// sequential gemm per team member on its own tile of the output
+							crate::utils::team::gemm_tiled::<$ty>(
+								nt.get(),
+								M.unbound(),
+								N.unbound(),
+								K.unbound(),
+								dst.as_ptr_mut(),
+								dst.col_stride(),
+								dst.row_stride(),
+								beta != Accum::Replace,
+								lhs.as_ptr(),
+								lhs.col_stride(),
+								lhs.row_stride(),
+								rhs.as_ptr(),
+								rhs.col_stride(),
+								rhs.row_stride(),
+								match beta {
+									Accum::Replace => core::mem::zeroed(),
+									Accum::Add => {
+										<$ty as ComplexFieldExt>::from_f64(1.0)
+									},
+								},
+								alpha,
+								conj_lhs == Conj::Yes,
+								conj_rhs == Conj::Yes,
+							);
+							return;
+						}
 						#[cfg(all(target_arch = "x86_64", feature = "std"))]
 						{
 							use private_gemm_x86::*;
@@ -1459,6 +1495,8 @@ fn matmul_imp<'M, 'N, 'K, T: ComplexField>(
 									Par::Rayon(nthreads) => {
 										gemm::Parallelism::Rayon(nthreads.get())
 									},
+									#[cfg(feature = "threadteam")]
+									Par::Team(_) => gemm::Parallelism::None,
 								},
 							);
 							return;
@@ -1538,7 +1576,8 @@ fn matmul_imp<'M, 'N, 'K, T: ComplexField>(
 			}
 		},
 		#[cfg(feature = "rayon")]
-		Par::Rayon(nthreads) => {
+		_ => {
+		let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 			use rayon::prelude::*;
 			let nthreads = nthreads.get();
 			let m = *dst.nrows();
@@ -1546,7 +1585,7 @@ fn matmul_imp<'M, 'N, 'K, T: ComplexField>(
 			let task_count = m * n;
 			let task_per_thread = task_count.msrv_div_ceil(nthreads);
 			let dst = dst.rb();
-			spindle::for_each(nthreads, (0..nthreads).into_par_iter(), |tid| {
+			crate::utils::thread::for_each(par, nthreads, (0..nthreads).into_par_iter(), |tid| {
 				let task_idx = tid * task_per_thread;
 				if task_idx >= task_count {
 					return;

@@ -191,7 +191,8 @@ pub(crate) fn lu_in_place_recursion<I: Index, T: ComplexField>(
 			swap(A_right);
 		},
 		#[cfg(feature = "rayon")]
-		Par::Rayon(nthreads) => {
+		_ => {
+		let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 			let nthreads = nthreads.get();
 			let len = (A_left.ncols() + A_right.ncols()) as f64;
 			let left_threads = Ord::min(
@@ -202,7 +203,7 @@ pub(crate) fn lu_in_place_recursion<I: Index, T: ComplexField>(
 			crate::utils::thread::join_raw(
 				|_| {
 					if A_left.ncols() > 0 {
-						spindle::for_each(
+						crate::utils::thread::for_each(par, 
 							left_threads,
 							A_left.par_col_partition_mut(left_threads),
 							|A| swap(A),
@@ -211,7 +212,7 @@ pub(crate) fn lu_in_place_recursion<I: Index, T: ComplexField>(
 				},
 				|_| {
 					if A_right.ncols() > 0 {
-						spindle::for_each(
+						crate::utils::thread::for_each(par, 
 							right_threads,
 							A_right.par_col_partition_mut(right_threads),
 							|A| swap(A),

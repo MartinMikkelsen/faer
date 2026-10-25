@@ -147,7 +147,8 @@ fn rank_1_update_and_argmax<T: ComplexField>(
 			N.end(),
 		),
 		#[cfg(feature = "rayon")]
-		Par::Rayon(nthreads) => {
+		_ => {
+		let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 			use rayon::prelude::*;
 			let nthreads = nthreads.get();
 			let n = *N;
@@ -160,7 +161,7 @@ fn rank_1_update_and_argmax<T: ComplexField>(
 			};
 			let mut r =
 				alloc::vec![(0usize, 0usize, zero::< T::Real > ()); nthreads];
-			spindle::for_each(
+			crate::utils::thread::for_each(par, 
 				nthreads,
 				r.par_iter_mut().enumerate(),
 				|(idx, out)| {
@@ -214,7 +215,8 @@ fn rank_2_update_and_argmax<'N, T: ComplexField>(
 			N.end(),
 		),
 		#[cfg(feature = "rayon")]
-		Par::Rayon(nthreads) => {
+		_ => {
+		let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 			use rayon::prelude::*;
 			let nthreads = nthreads.get();
 			let n = *N;
@@ -227,7 +229,7 @@ fn rank_2_update_and_argmax<'N, T: ComplexField>(
 			};
 			let mut r =
 				alloc::vec![(0usize, 0usize, zero::< T::Real > ()); nthreads];
-			spindle::for_each(
+			crate::utils::thread::for_each(par, 
 				nthreads,
 				r.par_iter_mut().enumerate(),
 				|(idx, out)| {
@@ -762,9 +764,10 @@ fn lblt_blocked<T: ComplexField>(
 					}
 				},
 				#[cfg(feature = "rayon")]
-				Par::Rayon(nthreads) => {
+				_ => {
+				let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 					let nthreads = nthreads.get();
-					spindle::for_each(
+					crate::utils::thread::for_each(par, 
 						nthreads,
 						A_left.par_col_iter_mut(),
 						|mut col| {

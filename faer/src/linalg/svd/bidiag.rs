@@ -123,10 +123,11 @@ pub fn bidiag_in_place<T: ComplexField>(
 						simd_align(k + 1),
 					),
 					#[cfg(feature = "rayon")]
-					Par::Rayon(nthreads) => {
+					_ => {
+					let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 						use rayon::prelude::*;
 						let nthreads = nthreads.get();
-						spindle::for_each(
+						crate::utils::thread::for_each(par, 
 							nthreads,
 							A22.rb_mut()
 								.par_col_partition_mut(nthreads)

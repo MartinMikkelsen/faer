@@ -933,8 +933,33 @@ pub enum Par {
 	/// different platforms
 	#[cfg(feature = "rayon")]
 	Rayon(NonZeroUsize),
+	/// experimental: parallelized on the threadteam team installed on the calling
+	/// thread with [`utils::team::with_team`], using at most this many participants
+	/// (the leader included). Without an installed team, or with a width of one,
+	/// the operation runs sequentially.
+	#[cfg(feature = "threadteam")]
+	Team(NonZeroUsize),
 }
 impl Par {
+	/// returns `Par::Team(nthreads)`, with zero treated as one
+	#[inline]
+	#[cfg(feature = "threadteam")]
+	pub fn team(nthreads: usize) -> Self {
+		Self::Team(NonZeroUsize::new(nthreads.max(1)).unwrap())
+	}
+
+	/// the same kind of parallelism with `nthreads` threads (`Seq` stays `Seq`)
+	#[inline]
+	pub fn with_degree(&self, nthreads: usize) -> Self {
+		match *self {
+			Par::Seq => Par::Seq,
+			#[cfg(feature = "rayon")]
+			Par::Rayon(_) => Par::Rayon(NonZeroUsize::new(nthreads.max(1)).unwrap()),
+			#[cfg(feature = "threadteam")]
+			Par::Team(_) => Par::Team(NonZeroUsize::new(nthreads.max(1)).unwrap()),
+		}
+	}
+
 	/// returns `Par::Rayon(nthreads)` if `nthreads` is non-zero, or
 	/// `Par::Rayon(rayon::current_num_threads())` otherwise
 	#[inline]
@@ -1129,6 +1154,9 @@ pub fn set_global_parallelism(par: Par) {
 		Par::Seq => 1,
 		#[cfg(feature = "rayon")]
 		Par::Rayon(n) => n.get().saturating_add(2),
+		// a team is installed per thread and cannot be a process wide default
+		#[cfg(feature = "threadteam")]
+		Par::Team(_) => 1,
 	};
 	GLOBAL_PARALLELISM.store(value, core::sync::atomic::Ordering::Relaxed);
 }

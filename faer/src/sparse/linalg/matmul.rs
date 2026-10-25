@@ -167,7 +167,8 @@ pub fn sparse_sparse_matmul_numeric<
 			job(0);
 		},
 		#[cfg(feature = "rayon")]
-		Par::Rayon(nthreads) => {
+		_ => {
+		let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 			use rayon::prelude::*;
 			(0..nthreads.get()).into_par_iter().for_each(|tid| {
 				job(tid);

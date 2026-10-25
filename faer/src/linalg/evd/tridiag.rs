@@ -373,7 +373,8 @@ pub fn tridiag_in_place<T: ComplexField>(
 							);
 						},
 						#[cfg(feature = "rayon")]
-						Par::Rayon(nthreads) => {
+						_ => {
+						let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 							use rayon::prelude::*;
 							let nthreads = nthreads.get();
 							let mut z2 = z2.rb_mut().subcols_mut(0, nthreads);
@@ -390,7 +391,7 @@ pub fn tridiag_in_place<T: ComplexField>(
 								let A22 = A22.rb();
 								let y2 = y2.rb();
 								let ref f = tau_inv.to_cplx::<T>();
-								spindle::for_each(
+								crate::utils::thread::for_each(par, 
 									nthreads,
 									z2.rb_mut().par_col_iter_mut().enumerate(),
 									|(idx, mut z2)| {

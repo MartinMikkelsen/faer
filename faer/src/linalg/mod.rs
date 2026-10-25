@@ -88,10 +88,13 @@ pub(crate) fn copy_across_layouts<T: ComplexField>(
 		)
 		.max(1);
 		if n_tasks > 1 {
-			dst.rb_mut()
-				.par_col_partition_mut(n_tasks)
-				.zip_eq(src.par_col_partition(n_tasks))
-				.for_each(|(mut d, s)| copy_across_layouts_block(d.rb_mut(), s));
+			crate::utils::thread::par_for_each(
+				par,
+				dst.rb_mut()
+					.par_col_partition_mut(n_tasks)
+					.zip_eq(src.par_col_partition(n_tasks)),
+				|(mut d, s)| copy_across_layouts_block(d.rb_mut(), s),
+			);
 			return;
 		}
 	}

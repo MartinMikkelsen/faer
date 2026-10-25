@@ -261,10 +261,11 @@ fn qr_in_place_unblocked<'out, I: Index, T: ComplexField>(
 							);
 						},
 						#[cfg(feature = "rayon")]
-						Par::Rayon(nthreads) => {
+						_ => {
+						let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 							let nthreads = nthreads.get();
 							use rayon::prelude::*;
-							spindle::for_each(
+							crate::utils::thread::for_each(par, 
 								nthreads,
 								norm.par_partition_mut(nthreads)
 									.zip(dot.par_partition_mut(nthreads))

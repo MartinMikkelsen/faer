@@ -94,6 +94,7 @@ gate has changed and two kinds of adoption are now in the ledger.
 | Scratch / plan reuse | Hold workspaces, scratch, and plans across calls. | TODO | — | Decide whether to file an issue when work starts. |
 | Strided / batched views | Accept general strides and batches directly, without packing. | TODO | — | — |
 | c64 planar | Accept a split real/imaginary complex layout directly. | TODO | — | — |
+| Team route (`Par::Team`) | Feature `threadteam`: `Par::Team(n)` runs the parallel regions on a threadteam team installed on the calling thread (`utils::team::with_team`) instead of spindle or raw Rayon. aarch64 GEMM is a 2D tile grid of sequential `gemm::gemm` calls, one tile per member; `join_raw`, the spindle `for_each` sites and the raw Rayon partial-sum sites of the Householder code and `copy_across_layouts` go through team sections or sub-team splits. Prototype: the team is a thread local, not a `Par<'team>` lifetime. | EXPERIMENT (`exp/team-par`, draft) | faer-benchmark#24, tensor4all-meta#48 | Rayon routes are unchanged. Not measured on Linux. Stage 2, rough M5 numbers in faer-benchmark#24. |
 
 ## Ground rules
 

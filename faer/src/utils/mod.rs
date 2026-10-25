@@ -1,6 +1,9 @@
 #![allow(missing_docs)]
 /// compile-time bound-checked indexing types
 pub mod bound;
+/// experimental route of the parallel regions onto a threadteam team
+#[cfg(feature = "threadteam")]
+pub mod team;
 #[doc(hidden)]
 pub mod thread {
 	use crate::*;
@@ -40,6 +43,26 @@ pub mod thread {
 						);
 					}
 				},
+				#[cfg(feature = "threadteam")]
+				Par::Team(n_threads) => {
+					let n_threads = super::team::available(n_threads.get());
+					if n_threads == 1 {
+						(op_a(Par::Seq), op_b(Par::Seq));
+					} else {
+						// same split as the Rayon route; each half runs on the leader of
+						// a sub-team of its width
+						let half = n_threads / 2;
+						let ops = [
+							std::sync::Mutex::new(op_a),
+							std::sync::Mutex::new(op_b),
+						];
+						super::team::split(&[n_threads - half, half], &|c, width| {
+							(ops[c].lock().unwrap())(Par::Team(
+								core::num::NonZeroUsize::new(width).unwrap(),
+							))
+						});
+					}
+				},
 			};
 		}
 		let mut op_a = Some(op_a);
@@ -69,6 +92,66 @@ pub mod thread {
 			Par::Seq => 1,
 			#[cfg(feature = "rayon")]
 			Par::Rayon(n_threads) => n_threads.get(),
+			#[cfg(feature = "threadteam")]
+			Par::Team(n_threads) => n_threads.get(),
+		}
+	}
+
+	/// the raw Rayon `iter.for_each(f)` of the regions that never used spindle, with `Team`
+	/// routed to the installed team instead (items dealt in static blocks, one part per member)
+	#[cfg(feature = "rayon")]
+	pub fn par_for_each<
+		T: Send,
+		I: rayon::iter::IntoParallelIterator<Item = T>,
+	>(
+		par: Par,
+		iter: I,
+		f: impl Send + Sync + Fn(T),
+	) where
+		I::Iter: rayon::iter::IndexedParallelIterator,
+	{
+		match par {
+			#[cfg(feature = "threadteam")]
+			Par::Team(n) => super::team::for_each(n.get(), iter, f),
+			_ => {
+				use rayon::iter::ParallelIterator;
+				iter.into_par_iter().for_each(f)
+			},
+		}
+	}
+
+	/// `spindle::for_each` on the backend of `par`: the spindle group for `Rayon`, the installed
+	/// team for `Team`, the caller for `Seq`
+	#[cfg(feature = "rayon")]
+	pub fn for_each<
+		T: Send,
+		I: rayon::iter::IntoParallelIterator<Item = T>,
+	>(
+		par: Par,
+		n_jobs: usize,
+		iter: I,
+		f: impl Sync + Fn(T),
+	) where
+		I::Iter: rayon::iter::IndexedParallelIterator,
+	{
+		match par {
+			Par::Seq => {
+				use rayon::iter::plumbing::{Producer, ProducerCallback};
+				struct Each<F>(F);
+				impl<T, F: Fn(T)> ProducerCallback<T> for Each<F> {
+					type Output = ();
+					fn callback<P: Producer<Item = T>>(self, p: P) {
+						p.into_iter().for_each(self.0);
+					}
+				}
+				rayon::iter::IndexedParallelIterator::with_producer(
+					iter.into_par_iter(),
+					Each(f),
+				);
+			},
+			Par::Rayon(_) => spindle::for_each(n_jobs, iter, f),
+			#[cfg(feature = "threadteam")]
+			Par::Team(_) => super::team::for_each(n_jobs, iter, f),
 		}
 	}
 	/// returns the start and length of a subsegment of `0..n`, split between
