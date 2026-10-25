@@ -93,31 +93,78 @@ const TRAILING_UPDATE_SECTIONS: u32 = 2;
 const SWAP_STAGE_SECTIONS: u32 = 4;
 use crate::utils::cost::{NS_PER_SWAP, gemm_ns_per_mac, serial_time};
 
+/// Floor of the parallel regions of the blocked $LU$ factorization.
+///
+/// The default is [`ParThreshold::Derived`]: each region is decided by its serial time
+/// against the dispatch cost of the parallelism it would use ([`ParShape::dispatch_cost`]),
+/// the trailing update of a recursion level counting 2 sections and the swap stage 4.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub enum ParThreshold {
+	/// Derive the floor of every region from its serial time and the dispatch cost.
+	#[default]
+	Derived,
+	/// A fixed floor, counted in `f64` elements of the submatrix that would be threaded (a
+	/// complex element is four real MACs, so it reaches the same floor at a quarter of the
+	/// area). `Fixed(0)` and `Fixed(1)` make every region parallel that has any work.
+	Fixed(usize),
+	/// Never run a region in parallel.
+	Never,
+}
+
+/// The integer form used by the C API: `0` is [`Derived`](ParThreshold::Derived),
+/// `usize::MAX` is [`Never`](ParThreshold::Never), any other value is
+/// [`Fixed`](ParThreshold::Fixed).
+impl From<usize> for ParThreshold {
+	fn from(value: usize) -> Self {
+		match value {
+			0 => ParThreshold::Derived,
+			usize::MAX => ParThreshold::Never,
+			n => ParThreshold::Fixed(n),
+		}
+	}
+}
+
+/// See [`From<usize>`](ParThreshold#impl-From<usize>-for-ParThreshold); `Fixed(0)` is
+/// written as `1`, the same behaviour, because `0` means derived.
+impl From<ParThreshold> for usize {
+	fn from(value: ParThreshold) -> Self {
+		match value {
+			ParThreshold::Derived => 0,
+			ParThreshold::Fixed(n) => n.max(1),
+			ParThreshold::Never => usize::MAX,
+		}
+	}
+}
+
 /// Whether the trailing update (`b x cols` solve, `rows x cols x b` product) of a level runs
-/// parallel. `par_threshold == 0` (the default) derives the answer from the serial time and
-/// the dispatch cost of `shape`; any other value is an explicit floor in `f64` elements of the
-/// updated block, counted in flops (a complex element carries four times the arithmetic), and
-/// `usize::MAX` disables parallelism.
+/// parallel. [`ParThreshold::Derived`] derives the answer from the serial time and the
+/// dispatch cost of `shape`; [`Fixed`](ParThreshold::Fixed) is an explicit floor in `f64`
+/// elements of the updated block, counted in flops (a complex element carries four times the
+/// arithmetic).
 fn trailing_update_pays<T: ComplexField>(
 	shape: ParShape,
-	par_threshold: usize,
+	par_threshold: ParThreshold,
 	rows: usize,
 	cols: usize,
 	b: usize,
 ) -> bool {
-	if par_threshold == 0 {
-		let macs = cols.saturating_mul(
-			b.saturating_mul(b) / 2 + rows.saturating_mul(b),
-		);
-		return shape.pays_full(
-			serial_time(macs, gemm_ns_per_mac::<T>()),
-			TRAILING_UPDATE_SECTIONS,
-		);
-	}
+	let floor = match par_threshold {
+		ParThreshold::Never => return false,
+		ParThreshold::Fixed(n) => n,
+		ParThreshold::Derived => {
+			let macs = cols.saturating_mul(
+				b.saturating_mul(b) / 2 + rows.saturating_mul(b),
+			);
+			return shape.pays_full(
+				serial_time(macs, gemm_ns_per_mac::<T>()),
+				TRAILING_UPDATE_SECTIONS,
+			);
+		},
+	};
 	let work = rows
 		.saturating_mul(cols)
 		.saturating_mul(if T::IS_REAL { 2 } else { 8 });
-	work > par_threshold.saturating_mul(2)
+	work > floor.saturating_mul(2)
 }
 
 /// Whether the swap stage (`n` row swaps over `cols` columns of an `m` row matrix) runs
@@ -125,18 +172,19 @@ fn trailing_update_pays<T: ComplexField>(
 /// `m * cols` elements.
 fn swap_stage_pays<T: ComplexField>(
 	shape: ParShape,
-	par_threshold: usize,
+	par_threshold: ParThreshold,
 	m: usize,
 	n: usize,
 	cols: usize,
 ) -> bool {
-	if par_threshold == 0 {
-		return shape.pays_full(
+	match par_threshold {
+		ParThreshold::Never => false,
+		ParThreshold::Fixed(floor) => m.saturating_mul(cols) > floor,
+		ParThreshold::Derived => shape.pays_full(
 			serial_time(n.saturating_mul(cols), NS_PER_SWAP),
 			SWAP_STAGE_SECTIONS,
-		);
+		),
 	}
-	m.saturating_mul(cols) > par_threshold
 }
 pub(crate) fn lu_in_place_recursion<I: Index, T: ComplexField>(
 	A: MatMut<'_, T>,
@@ -307,14 +355,13 @@ pub struct PartialPivLuParams {
 	pub recursion_threshold: usize,
 	/// blocking variant step size
 	pub block_size: usize,
-	/// explicit floor of the parallel regions; `0` (the default) derives them from the serial
-	/// time of each region and the dispatch cost of the parallelism
+	/// floor of the parallel regions; [`ParThreshold::Derived`] (the default) derives them from
+	/// the serial time of each region and the dispatch cost of the parallelism
 	/// ([`ParShape::dispatch_cost`]), per region: the trailing update of a recursion level
-	/// (2 sections) and the swap stage (4 sections). Any other value restores a fixed floor,
-	/// counted in `f64` elements of the submatrix that would be threaded (a complex element is
-	/// four real MACs, so it reaches the same floor at a quarter of the area); `usize::MAX`
-	/// disables parallelism. The trailing update and the swap stage keep separate rules.
-	pub par_threshold: usize,
+	/// (2 sections) and the swap stage (4 sections). [`ParThreshold::Fixed`] restores a fixed
+	/// floor, [`ParThreshold::Never`] disables parallelism. The trailing update and the swap
+	/// stage keep separate rules.
+	pub par_threshold: ParThreshold,
 	#[doc(hidden)]
 	pub non_exhaustive: NonExhaustive,
 }
@@ -336,7 +383,7 @@ impl<T: ComplexField> Auto<T> for PartialPivLuParams {
 		Self {
 			recursion_threshold: 16,
 			block_size: 64,
-			par_threshold: 0,
+			par_threshold: ParThreshold::Derived,
 			non_exhaustive: NonExhaustive(()),
 		}
 	}
@@ -455,25 +502,25 @@ mod tests {
 		use core::num::NonZeroUsize;
 		let seq = ParShape::Seq;
 		// sequential never pays, whatever the size
-		assert!(!trailing_update_pays::<f64>(seq, 0, 4096, 4096, 256));
-		assert!(!swap_stage_pays::<f64>(seq, 0, 4096, 256, 4096));
+		assert!(!trailing_update_pays::<f64>(seq, ParThreshold::Derived, 4096, 4096, 256));
+		assert!(!swap_stage_pays::<f64>(seq, ParThreshold::Derived, 4096, 256, 4096));
 		#[cfg(feature = "rayon")]
 		{
 			let par = ParShape::Rayon(NonZeroUsize::new(6).unwrap());
 			// tiny regions stay serial, huge ones go parallel
-			assert!(!trailing_update_pays::<f64>(par, 0, 16, 16, 8));
-			assert!(trailing_update_pays::<f64>(par, 0, 2048, 2048, 128));
-			assert!(!swap_stage_pays::<f64>(par, 0, 64, 16, 48));
-			assert!(swap_stage_pays::<f64>(par, 0, 4096, 256, 4096));
+			assert!(!trailing_update_pays::<f64>(par, ParThreshold::Derived, 16, 16, 8));
+			assert!(trailing_update_pays::<f64>(par, ParThreshold::Derived, 2048, 2048, 128));
+			assert!(!swap_stage_pays::<f64>(par, ParThreshold::Derived, 64, 16, 48));
+			assert!(swap_stage_pays::<f64>(par, ParThreshold::Derived, 4096, 256, 4096));
 			// a complex trailing update reaches the floor at fewer elements than a real one
 			let (r, c) = (160, 160);
-			let real = trailing_update_pays::<f64>(par, 0, r, c, 32);
-			let cplx = trailing_update_pays::<c64>(par, 0, r, c, 32);
+			let real = trailing_update_pays::<f64>(par, ParThreshold::Derived, r, c, 32);
+			let cplx = trailing_update_pays::<c64>(par, ParThreshold::Derived, r, c, 32);
 			assert!(cplx >= real);
 			// an explicit floor restores the fixed rule and `usize::MAX` disables
-			assert!(trailing_update_pays::<f64>(par, 1, 64, 64, 8));
-			assert!(!trailing_update_pays::<f64>(par, usize::MAX, 4096, 4096, 256));
-			assert!(!swap_stage_pays::<f64>(par, usize::MAX, 4096, 256, 4096));
+			assert!(trailing_update_pays::<f64>(par, ParThreshold::Fixed(1), 64, 64, 8));
+			assert!(!trailing_update_pays::<f64>(par, ParThreshold::Never, 4096, 4096, 256));
+			assert!(!swap_stage_pays::<f64>(par, ParThreshold::Never, 4096, 256, 4096));
 		}
 	}
 

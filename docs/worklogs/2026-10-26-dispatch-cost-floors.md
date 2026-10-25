@@ -15,9 +15,12 @@
 - **Throughput per dtype** (`utils::cost::ns_per_mac`): f64 0.037, c64 0.165 per complex MAC (design data);
   f32 0.0185 and c32 0.0825 by halving (measured on one thread: 0.019 and 0.084). Swap: 0.55 ns per row swap of
   one column (random pivots, columns of 64 to 1024, one thread, range 0.31 to 1.0).
-- **`PartialPivLuParams::par_threshold`**: `0` (the new default) derives the two LU regions from the rule; any
-  other value restores the old fixed floors and `usize::MAX` disables parallelism. `0` no longer means "always
-  parallel" (use 1); a harness that set it to 0 to remove the gate now gets the derived rule.
+- **`PartialPivLuParams::par_threshold`** is `ParThreshold { Derived, Fixed(usize), Never }` (default `Derived`),
+  replacing the `usize` sentinels (0 derived, 1 always, `usize::MAX` never). `Derived` derives the two LU regions from
+  the rule; `Fixed(n)` restores the old fixed floors (`Fixed(0)` and `Fixed(1)` are always parallel); `Never` disables
+  parallelism. API break: a caller that wrote `par_threshold: usize::MAX` writes `ParThreshold::Never`, one that wrote
+  `1` writes `Fixed(1)`, and one that wrote `0` to remove the gate now gets the derived rule. The excluded `faer-ffi`
+  keeps its `size_t` field through `From<usize>`/`From<ParThreshold>` (0 derived, `usize::MAX` never).
 
 ## Fixed bug
 
