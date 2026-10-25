@@ -926,7 +926,7 @@ impl Conj {
 }
 /// determines the parallelization configuration
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Par {
+pub enum Par<'team> {
 	/// sequential, non portable across different platforms
 	Seq,
 	/// parallelized using the global rayon threadpool, non portable across
@@ -939,6 +939,8 @@ pub enum Par {
 	/// the operation runs sequentially.
 	#[cfg(feature = "threadteam")]
 	Team(NonZeroUsize),
+	#[doc(hidden)]
+	__Lifetime(core::convert::Infallible, core::marker::PhantomData<&'team ()>),
 }
 /// the shape of a [`Par`]: which kind of parallelism and how many threads, without the
 /// right to run anything. `Copy`, so workspace queries and thresholds can use it freely; it
@@ -990,7 +992,7 @@ impl ParShape {
 		}
 	}
 }
-impl Par {
+impl Par<'_> {
 	/// the shape of this parallelism, without the right to execute with it
 	#[inline]
 	pub fn shape(&self) -> ParShape {
@@ -1000,6 +1002,7 @@ impl Par {
 			Par::Rayon(n) => ParShape::Rayon(n),
 			#[cfg(feature = "threadteam")]
 			Par::Team(n) => ParShape::Team(n),
+			Par::__Lifetime(never, _) => match never {},
 		}
 	}
 
@@ -1217,7 +1220,7 @@ pub fn set_global_parallelism(par: Par) {
 /// # panics
 /// panics if global parallelism is disabled.
 #[track_caller]
-pub fn get_global_parallelism() -> Par {
+pub fn get_global_parallelism() -> Par<'static> {
 	let value = GLOBAL_PARALLELISM.load(core::sync::atomic::Ordering::Relaxed);
 	match value {
 		0 => panic!("Global parallelism is disabled."),
