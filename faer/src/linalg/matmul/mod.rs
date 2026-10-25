@@ -1367,6 +1367,7 @@ fn matmul_imp<'M, 'N, 'K, T: ComplexField>(
 								M.unbound(),
 								N.unbound(),
 								K.unbound(),
+								$crate::utils::cost::gemm_ns_per_mac::<T>(),
 								dst.as_ptr_mut(),
 								dst.col_stride(),
 								dst.row_stride(),
@@ -1440,25 +1441,18 @@ fn matmul_imp<'M, 'N, 'K, T: ComplexField>(
 									&raw const alpha as *const (),
 									// The kernel below (`private_gemm_x86`) threads whenever it is
 									// handed more than one thread and has no work floor of its own,
-									// so the decision is faer's. It is made in *flops*, not in the
-									// dtype's byte width: a complex MAC is four real MACs, and the
-									// work a region has to buy is the same either way. The floor
-									// is the one the `gemm` crate applies to its own kernels
-									// (`48 * 48 * 256` MACs, f64) expressed in flops, so a shape
-									// the generic kernel would run sequentially is not handed a
-									// budget here either. Below it a region costs more than the
-									// multiplication: f64 `32^3` (65 ki flops) is 2.3 us serial
-									// and 12.0 us at eight threads, `64^3` (524 ki flops) keeps
-									// its best time but pays 1.2-1.4x in the median; `96^3`
-									// (1.8 Mflops) is 2x faster at eight threads, and c64 `64^3`
-									// (2.1 Mflops) 2x, which is why the floor cannot be a MAC
-									// count alone.
-									if (*M)
-										.saturating_mul(*N)
-										.saturating_mul(*K)
-										.saturating_mul(if T::IS_REAL { 2 } else { 8 })
-										>= 2 * gemm::get_threading_threshold()
-									{
+									// so the decision is faer's: the serial time of the product
+									// (its MACs at the dtype's rate, `utils::cost::ns_per_mac`)
+									// against `PAYS` times the cost of one section of this shape
+									// (`ParShape::dispatch_cost`). One section: the kernel cuts
+									// the product into one grid of tiles.
+									if par.shape().pays_full(
+										$crate::utils::cost::serial_time(
+											(*M).saturating_mul(*N).saturating_mul(*K),
+											$crate::utils::cost::gemm_ns_per_mac::<T>(),
+										),
+										1,
+									) {
 										par.degree()
 									} else {
 										1
@@ -1494,9 +1488,24 @@ fn matmul_imp<'M, 'N, 'K, T: ComplexField>(
 								conj_rhs == Conj::Yes,
 								match par {
 									Par::Seq => gemm::Parallelism::None,
+									// the `gemm` crate keeps its own, lower, floor under this
+									// one: the decision is the serial time against the cost
+									// of a section of this shape
 									#[cfg(feature = "rayon")]
 									Par::Rayon(nthreads) => {
-										gemm::Parallelism::Rayon(nthreads.get())
+										if par.shape().pays_full(
+											$crate::utils::cost::serial_time(
+												M.unbound()
+													.saturating_mul(N.unbound())
+													.saturating_mul(K.unbound()),
+												$crate::utils::cost::gemm_ns_per_mac::<T>(),
+											),
+											1,
+										) {
+											gemm::Parallelism::Rayon(nthreads.get())
+										} else {
+											gemm::Parallelism::None
+										}
 									},
 									#[cfg(feature = "threadteam")]
 									Par::Team(_) => gemm::Parallelism::None,

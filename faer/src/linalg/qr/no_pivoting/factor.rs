@@ -113,8 +113,6 @@ pub fn recommended_block_size<T: ComplexField>(
 pub struct QrParams {
 	/// threshold at which blocking algorithms should be disabled
 	pub blocking_threshold: usize,
-	/// threshold at which the parallelism should be disabled
-	pub par_threshold: usize,
 	#[doc(hidden)]
 	pub non_exhaustive: NonExhaustive,
 }
@@ -123,7 +121,6 @@ impl<T: ComplexField> Auto<T> for QrParams {
 	fn auto() -> Self {
 		Self {
 			blocking_threshold: 48 * 48,
-			par_threshold: 192 * 256,
 			non_exhaustive: NonExhaustive(()),
 		}
 	}

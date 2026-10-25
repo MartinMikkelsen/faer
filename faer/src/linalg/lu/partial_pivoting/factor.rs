@@ -83,6 +83,61 @@ fn lu_in_place_unblocked<I: Index, T: ComplexField>(
 	}
 	n_trans
 }
+/// Sections of the trailing update of one recursion level: the triangular solve and the
+/// product, each a join; the second runs on caches the first filled or evicted, so the two
+/// are counted as the cold-region rule of the thresholds design (provisional).
+const TRAILING_UPDATE_SECTIONS: u32 = 2;
+/// Sections of the swap stage of one level: a split of the left and right blocks over the
+/// parallelism, then a split of the columns of each; memory bound, so a section costs more
+/// than its share of the work (provisional, from the thresholds design).
+const SWAP_STAGE_SECTIONS: u32 = 4;
+use crate::utils::cost::{NS_PER_SWAP, gemm_ns_per_mac, serial_time};
+
+/// Whether the trailing update (`b x cols` solve, `rows x cols x b` product) of a level runs
+/// parallel. `par_threshold == 0` (the default) derives the answer from the serial time and
+/// the dispatch cost of `shape`; any other value is an explicit floor in `f64` elements of the
+/// updated block, counted in flops (a complex element carries four times the arithmetic), and
+/// `usize::MAX` disables parallelism.
+fn trailing_update_pays<T: ComplexField>(
+	shape: ParShape,
+	par_threshold: usize,
+	rows: usize,
+	cols: usize,
+	b: usize,
+) -> bool {
+	if par_threshold == 0 {
+		let macs = cols.saturating_mul(
+			b.saturating_mul(b) / 2 + rows.saturating_mul(b),
+		);
+		return shape.pays_full(
+			serial_time(macs, gemm_ns_per_mac::<T>()),
+			TRAILING_UPDATE_SECTIONS,
+		);
+	}
+	let work = rows
+		.saturating_mul(cols)
+		.saturating_mul(if T::IS_REAL { 2 } else { 8 });
+	work > par_threshold.saturating_mul(2)
+}
+
+/// Whether the swap stage (`n` row swaps over `cols` columns of an `m` row matrix) runs
+/// parallel; `par_threshold` as in [`trailing_update_pays`], where an explicit value counts
+/// `m * cols` elements.
+fn swap_stage_pays<T: ComplexField>(
+	shape: ParShape,
+	par_threshold: usize,
+	m: usize,
+	n: usize,
+	cols: usize,
+) -> bool {
+	if par_threshold == 0 {
+		return shape.pays_full(
+			serial_time(n.saturating_mul(cols), NS_PER_SWAP),
+			SWAP_STAGE_SECTIONS,
+		);
+	}
+	m.saturating_mul(cols) > par_threshold
+}
 pub(crate) fn lu_in_place_recursion<I: Index, T: ComplexField>(
 	A: MatMut<'_, T>,
 	start: usize,
@@ -121,20 +176,20 @@ pub(crate) fn lu_in_place_recursion<I: Index, T: ComplexField>(
 		// The panel solve and the trailing product below are this level's whole
 		// parallel work, and the block size halves every level of the recursion, so
 		// past a few levels they are a fork and a join around a handful of thousands
-		// of flops. Below the work floor the swap stage already uses, take
-		// `Par::Seq`; the recursion keeps the caller's `par`, so every level decides
-		// for its own trailing update. The crossover comes from a sweep over 256x256,
-		// 512x512 and 1024x1024 threaded `f64`, not from one shape, so it is a
-		// statement about *flops*: `par_threshold` counts `f64` elements, and a
-		// complex element carries four times the arithmetic. Comparing raw areas
-		// made the floor four times too high for `c64`, which left its `128x128`
-		// trailing update sequential at the size where the `f64` one is already
-		// threaded. The comparison saturates, so `usize::MAX` still disables it.
-		let work = A11
-			.nrows()
-			.saturating_mul(A11.ncols())
-			.saturating_mul(if T::IS_REAL { 2 } else { 8 });
-		let mut par_here = if work > params.par_threshold.saturating_mul(2) {
+		// of flops. The region is decided by its serial time against the cost of its
+		// sections: the solve (`b * b / 2` MACs per column of `A01`) and the product
+		// (`b` MACs per element of `A11`) at the dtype's GEMM rate, two sections
+		// (one join for the solve, one for the product), the second of them on
+		// cold caches. Below it take `Par::Seq`; the recursion keeps the caller's
+		// `par`, so every level decides for its own trailing update.
+		let (rows1, cols1, b) = (A11.nrows(), A11.ncols(), A10.ncols());
+		let mut par_here = if trailing_update_pays::<T>(
+			par.shape(),
+			params.par_threshold,
+			rows1,
+			cols1,
+			b,
+		) {
 			par.reborrow()
 		} else {
 			Par::Seq
@@ -180,7 +235,13 @@ pub(crate) fn lu_in_place_recursion<I: Index, T: ComplexField>(
 	};
 	let (A_left, A_right) = A.rb_mut().split_at_col_mut(start);
 	let A_right = A_right.get_mut(.., end - start..ncols - start);
-	let par = if m * (ncols - n) > params.par_threshold {
+	let par = if swap_stage_pays::<T>(
+		par.shape(),
+		params.par_threshold,
+		m,
+		n,
+		ncols - n,
+	) {
 		par
 	} else {
 		Par::Seq
@@ -246,9 +307,13 @@ pub struct PartialPivLuParams {
 	pub recursion_threshold: usize,
 	/// blocking variant step size
 	pub block_size: usize,
-	/// threshold at which size parallelism should be disabled, counted in `f64`
-	/// elements of the submatrix that would be threaded: a complex element is
-	/// four real MACs, so it reaches the same floor at a quarter of the area
+	/// explicit floor of the parallel regions; `0` (the default) derives them from the serial
+	/// time of each region and the dispatch cost of the parallelism
+	/// ([`ParShape::dispatch_cost`]), per region: the trailing update of a recursion level
+	/// (2 sections) and the swap stage (4 sections). Any other value restores a fixed floor,
+	/// counted in `f64` elements of the submatrix that would be threaded (a complex element is
+	/// four real MACs, so it reaches the same floor at a quarter of the area); `usize::MAX`
+	/// disables parallelism. The trailing update and the swap stage keep separate rules.
 	pub par_threshold: usize,
 	#[doc(hidden)]
 	pub non_exhaustive: NonExhaustive,
@@ -271,7 +336,7 @@ impl<T: ComplexField> Auto<T> for PartialPivLuParams {
 		Self {
 			recursion_threshold: 16,
 			block_size: 64,
-			par_threshold: 128 * 128,
+			par_threshold: 0,
 			non_exhaustive: NonExhaustive(()),
 		}
 	}
@@ -385,6 +450,64 @@ mod tests {
 	use crate::utils::approx::*;
 	use crate::{Mat, assert, c32, c64};
 	use dyn_stack::MemBuffer;
+	#[test]
+	fn region_rules_follow_the_serial_time() {
+		use core::num::NonZeroUsize;
+		let seq = ParShape::Seq;
+		// sequential never pays, whatever the size
+		assert!(!trailing_update_pays::<f64>(seq, 0, 4096, 4096, 256));
+		assert!(!swap_stage_pays::<f64>(seq, 0, 4096, 256, 4096));
+		#[cfg(feature = "rayon")]
+		{
+			let par = ParShape::Rayon(NonZeroUsize::new(6).unwrap());
+			// tiny regions stay serial, huge ones go parallel
+			assert!(!trailing_update_pays::<f64>(par, 0, 16, 16, 8));
+			assert!(trailing_update_pays::<f64>(par, 0, 2048, 2048, 128));
+			assert!(!swap_stage_pays::<f64>(par, 0, 64, 16, 48));
+			assert!(swap_stage_pays::<f64>(par, 0, 4096, 256, 4096));
+			// a complex trailing update reaches the floor at fewer elements than a real one
+			let (r, c) = (160, 160);
+			let real = trailing_update_pays::<f64>(par, 0, r, c, 32);
+			let cplx = trailing_update_pays::<c64>(par, 0, r, c, 32);
+			assert!(cplx >= real);
+			// an explicit floor restores the fixed rule and `usize::MAX` disables
+			assert!(trailing_update_pays::<f64>(par, 1, 64, 64, 8));
+			assert!(!trailing_update_pays::<f64>(par, usize::MAX, 4096, 4096, 256));
+			assert!(!swap_stage_pays::<f64>(par, usize::MAX, 4096, 256, 4096));
+		}
+	}
+
+	#[cfg(feature = "rayon")]
+	#[test]
+	fn derived_gates_keep_the_factorization() {
+		let rng = &mut StdRng::seed_from_u64(7);
+		for n in [96, 200, 384] {
+			let A = CwiseMatDistribution {
+				nrows: n,
+				ncols: n,
+				dist: StandardNormal,
+			}
+			.rand::<Mat<f64>>(rng);
+			let mut want = A.clone();
+			let mut got = A.clone();
+			let mut perm_a = vec![0usize; n];
+			let mut perm_ai = vec![0usize; n];
+			let mut perm_b = vec![0usize; n];
+			let mut perm_bi = vec![0usize; n];
+			let mut mem = MemBuffer::new(lu_in_place_scratch::<usize, f64>(n, n, Par::Seq.shape(), default()));
+			lu_in_place(want.as_mut(), &mut perm_a, &mut perm_ai, Par::Seq, MemStack::new(&mut mem), default());
+			lu_in_place(got.as_mut(), &mut perm_b, &mut perm_bi, Par::rayon(4), MemStack::new(&mut mem), default());
+			assert_eq!(perm_a, perm_b, "n = {n}");
+			let mut d: f64 = 0.0;
+			for j in 0..n {
+				for i in 0..n {
+					d = d.max((want[(i, j)] - got[(i, j)]).abs());
+				}
+			}
+			assert!(d < 1e-9, "n = {n}: {d}");
+		}
+	}
+
 	#[test]
 	fn test_plu() {
 		let rng = &mut StdRng::seed_from_u64(0);

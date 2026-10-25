@@ -1,6 +1,8 @@
 #![allow(missing_docs)]
 /// compile-time bound-checked indexing types
 pub mod bound;
+/// the parallel rule: dispatch cost of a shape against the serial time of a region
+pub mod cost;
 /// experimental route of the parallel regions onto a threadteam team
 #[cfg(feature = "threadteam")]
 pub mod team;

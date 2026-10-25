@@ -237,6 +237,7 @@ pub(crate) unsafe fn gemm_tiled<E: 'static + Copy + Send + Sync>(
 	m: usize,
 	n: usize,
 	k: usize,
+	ns_per_mac: f64,
 	dst: *mut E,
 	dst_cs: isize,
 	dst_rs: isize,
@@ -276,8 +277,11 @@ pub(crate) unsafe fn gemm_tiled<E: 'static + Copy + Send + Sync>(
 		)
 	};
 	let nt = team.size().get();
-	let work = m.saturating_mul(n).saturating_mul(k);
-	if nt <= 1 || work < gemm::get_threading_threshold() {
+	// The floor is time, not a count: the serial time of the product (its MACs at the dtype's
+	// rate) against `PAYS` times the cost of one section of this team. A complex MAC is 4.5
+	// real ones, so the floor of a complex product is that much lower in MACs.
+	let estimate = crate::utils::cost::serial_time(m.saturating_mul(n).saturating_mul(k), ns_per_mac);
+	if nt <= 1 || !team.pays(estimate, 1, team.size()) {
 		stats::bump(&stats::GEMM_BELOW_FLOOR);
 		return seq(dst, lhs, rhs, m, n);
 	}
@@ -419,6 +423,43 @@ mod tests {
 				}
 			}
 			assert!(d < 1e-9);
+		});
+	}
+
+	/// The floor is the serial time against the cost of a section, per dtype: a complex product
+	/// reaches it at a quarter (4.5 times fewer MACs) of the real one. The old team floor counted
+	/// MACs of every dtype against the real one and kept `c64` `64^3` (43 us serial) sequential.
+	#[test]
+	fn the_team_floor_is_per_dtype() {
+		let before = |m: usize, n: usize, k: usize, par: &mut Par<'_>, cplx: bool| {
+			stats::enable(true);
+			let _ = stats::take();
+			if cplx {
+				let a = Mat::<c64>::from_fn(m, k, |i, j| c64::new((i + j) as f64, 1.0));
+				let b = Mat::<c64>::from_fn(k, n, |i, j| c64::new(i as f64, j as f64));
+				let mut d = Mat::<c64>::zeros(m, n);
+				matmul(d.as_mut(), Accum::Replace, a.as_ref(), b.as_ref(), c64::new(1.0, 0.0), par.reborrow());
+			} else {
+				let a = rand_mat(m, k, 1);
+				let b = rand_mat(k, n, 2);
+				let mut d = Mat::<f64>::zeros(m, n);
+				matmul(d.as_mut(), Accum::Replace, a.as_ref(), b.as_ref(), 1.0, par.reborrow());
+			}
+			let st = stats::take();
+			stats::enable(false);
+			st
+		};
+		with_par(6, |mut par| {
+			// c64 64^3: 43 us serial, far above 3 sections' worth on every host table
+			let st = before(64, 64, 64, &mut par, true);
+			assert_eq!(st.gemm_below_floor, 0, "{st:?}");
+			assert_eq!(st.gemm_tiled, 1, "{st:?}");
+			// f64 20^3 (8 ki MACs, 0.3 us) is below any floor
+			let st = before(20, 20, 20, &mut par, false);
+			assert_eq!(st.gemm_tiled, 0, "{st:?}");
+			// f64 192^3 (7 M MACs, 262 us) is above every floor
+			let st = before(192, 192, 192, &mut par, false);
+			assert_eq!(st.gemm_tiled, 1, "{st:?}");
 		});
 	}
 

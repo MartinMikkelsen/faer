@@ -1002,9 +1002,10 @@ pub enum ParShape {
 	/// the global rayon threadpool with this many threads
 	#[cfg(feature = "rayon")]
 	Rayon(NonZeroUsize),
-	/// a threadteam team of this many participants
+	/// a threadteam team of this many participants, with the dispatch costs of the pool it
+	/// belongs to (see [`ParShape::dispatch_cost`])
 	#[cfg(feature = "threadteam")]
-	Team(NonZeroUsize),
+	Team(NonZeroUsize, threadteam::DispatchCosts),
 }
 impl ParShape {
 	/// sequential
@@ -1023,11 +1024,14 @@ impl ParShape {
 		}
 	}
 
-	/// `Team(nthreads)`, with zero treated as one
+	/// `Team(nthreads)` with the host default dispatch costs, zero treated as one
 	#[inline]
 	#[cfg(feature = "threadteam")]
 	pub fn team(nthreads: usize) -> Self {
-		Self::Team(NonZeroUsize::new(nthreads.max(1)).unwrap())
+		Self::Team(
+			NonZeroUsize::new(nthreads.max(1)).unwrap(),
+			threadteam::DispatchCosts::host_default(),
+		)
 	}
 
 	/// the number of threads that should ideally execute an operation of this shape
@@ -1038,7 +1042,7 @@ impl ParShape {
 			#[cfg(feature = "rayon")]
 			Self::Rayon(n) => n.get(),
 			#[cfg(feature = "threadteam")]
-			Self::Team(n) => n.get(),
+			Self::Team(n, _) => n.get(),
 		}
 	}
 }
@@ -1066,7 +1070,7 @@ impl Par<'_> {
 			#[cfg(feature = "rayon")]
 			Par::Rayon(n) => ParShape::Rayon(*n),
 			#[cfg(feature = "threadteam")]
-			Par::Team(team) => ParShape::Team(team.size()),
+			Par::Team(team) => ParShape::Team(team.size(), team.dispatch_costs()),
 			#[cfg(not(feature = "threadteam"))]
 			Par::__Lifetime(never, _) => match *never {},
 		}
