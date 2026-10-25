@@ -38,7 +38,7 @@ reaches it at 4.5 times fewer MACs. Test: `utils::team::tests::the_team_floor_is
   workspace, still mirrors it).
 - threadteam pinned at `5afe0b4` (`feat/dispatch-cost` HEAD; adds `Exec::carries_team` to `b99e913`), so that downstream crates that patch `threadteam` to the same rev share one `TeamExec` type.
 
-## Remaining (thresholds unchanged)
+## Remaining (done in [2026-10-26-remaining-gates.md](2026-10-26-remaining-gates.md))
 
 Full pivoting LU, Bunch-Kaufman, column-pivoting QR, bidiagonal SVD, Hessenberg and tridiagonal EVD
 `par_threshold`s; `householder.rs` (`8192` and `gemm::get_threading_threshold`); matvec, triangular and internal

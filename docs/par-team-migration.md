@@ -18,7 +18,7 @@ pub enum Par<'team> {
     __Lifetime(Infallible, PhantomData<&'team ()>),
 }
 
-pub enum ParShape { Seq, Rayon(NonZeroUsize), Team(NonZeroUsize) } // Copy, no authority
+pub enum ParShape { Seq, Rayon(NonZeroUsize), Team(NonZeroUsize, DispatchCosts) } // Copy, no authority
 ```
 
 * `Par` is not `Copy`, not `Clone`, not `PartialEq`, for every variant. The borrow checker must
@@ -113,6 +113,47 @@ parallelism setting is removed entirely:
   always run sequentially as a convenience. Parallel callers use the explicit functions, for
   example `matmul(.., par)`.
 * `GlobalPar` is the interim state until the explicit `par` arguments land.
+
+## Parallel floors: one rule
+
+Every cost gate of the library is the same decision, `ParShape::pays(estimate, sections, width)`:
+a region runs in parallel when `estimate >= PAYS * sections * dispatch_cost(width)` with `PAYS = 3`.
+
+* The **dispatch cost** belongs to the token. `ParShape::Team(n, costs)` carries the costs of its
+  team token (threadteam `DispatchCosts`, steady state: team 1.4 us at width 6 on the M5 table);
+  `Rayon(n)` is entered from outside the pool and uses the `Outside` cost (19 us at width 6 on the
+  M5, 40 us generic); `Seq` never pays. `ParShape::dispatch_cost(width)` and `pays_full` (the full
+  degree) are the queries. A build without the `threadteam` feature keeps the same numbers in
+  `utils::cost`.
+* The **estimate** is units of work times the serial throughput of the kernel family
+  (`utils::cost::rate`, `Rate { real, cplx }` in ns per unit: GEMM per multiply-add, the
+  reductions per element of the trailing block, matvec per matrix element, the rank-one Householder
+  apply per target element; `f32` and `c32` are half of `f64` and `c64`). One constant per family,
+  measured with one thread (table in the threadteam `thresholds.md`, section 2.3).
+* **`sections`** is the real number of parallel dispatches the region performs, read from the
+  code of the gate and never tuned: one for a fused step, two for a step that runs two products
+  (bidiagonalization, Hessenberg), two for the trailing update of an LU level, four for its swap
+  stage (memory bound, provisional), one per join level of the triangular product into a full
+  matrix and two per level for the product into a triangle.
+* **`ParThreshold { Derived, Fixed(n), Never }`** is the type of every `par_threshold` field
+  (partial and full pivoting LU, Bunch-Kaufman with full pivoting, QR with column pivoting,
+  bidiagonalization, Hessenberg, tridiagonalization). `Derived` (the default) is the rule; `Fixed(n)`
+  is an explicit floor in the unit the field documents (`units >= n`; for the partial pivoting LU
+  the earlier area and flop floors); `Never` stays serial. The integer form of the C API maps `0`
+  to `Derived` and `usize::MAX` to `Never`. `QrParams` (no pivoting) has no such field: its
+  factorization delegates to the Householder and product gates.
+* **Shape conditions stay when they state another concern than cost** and are documented as such
+  at the gate: the reduction depth `rows >= 2 * n` and the rows per task `rows >= 4 * threads` of
+  the Householder reductions, the chunk that must cover the unit block of the row split, and the
+  split of the right hand sides of a triangular solve (`k > 64 && n <= 128`, taken for any
+  parallelism; only its join is a cost).
+
+## API break list entries for the floors
+
+| change | who sees it |
+| --- | --- |
+| `par_threshold: usize` of `FullPivLuParams`, `LbltParams`, `ColPivQrParams`, `BidiagParams`, `HessenbergParams`, `TridiagParams` and `PartialPivLuParams` is `ParThreshold` | callers that set it: `usize::MAX` is `Never`, an old floor `n` is `Fixed(n)` (in the unit the field documents), and the removed `0` ("always parallel") is `Fixed(1)`; callers that leave it at `auto!` get `Derived` |
+| `QrParams::par_threshold` is removed (it was never read) | callers that named it; the `faer-ffi` mirror drops it too |
 
 ## Verification
 
