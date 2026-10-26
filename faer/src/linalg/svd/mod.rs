@@ -937,9 +937,121 @@ pub fn pseudoinverse_from_svd_with_tolerance<T: ComplexField>(
 }
 #[cfg(test)]
 mod tests {
-	mod lapack;
-	mod svd_views;
-
+	// Instantiate the same cases and checks at each native precision.
+	mod lapack_svd_f64 {
+		type Real = f64;
+		type Scalar = Real;
+		const GUARD: Scalar = -12345.0;
+		const ROTATION_PHASE: Scalar = 1.0;
+		fn diagonal_phase(i: usize) -> Scalar {
+			if i % 2 == 0 { 1.0 } else { -1.0 }
+		}
+		use super::super::{
+			bidiag_real_svd_scratch as bidiagonal_scratch,
+			compute_bidiag_real_svd as compute_bidiagonal,
+		};
+		mod lapack {
+			include!("tests/lapack.rs");
+		}
+		mod svd_views {
+			include!("tests/svd_views.rs");
+		}
+	}
+	mod lapack_svd_f32 {
+		type Real = f32;
+		type Scalar = Real;
+		const GUARD: Scalar = -12345.0;
+		const ROTATION_PHASE: Scalar = 1.0;
+		fn diagonal_phase(i: usize) -> Scalar {
+			if i % 2 == 0 { 1.0 } else { -1.0 }
+		}
+		use super::super::{
+			bidiag_real_svd_scratch as bidiagonal_scratch,
+			compute_bidiag_real_svd as compute_bidiagonal,
+		};
+		mod lapack {
+			include!("tests/lapack.rs");
+		}
+		mod svd_views {
+			include!("tests/svd_views.rs");
+		}
+		#[test]
+		fn f32_fixtures_use_single_precision_limits() {
+			let (_, large) = lapack::diagonal_case(2, 2, 6);
+			assert_eq!(large[0] as f64, f32::MAX.sqrt() as f64);
+			let (_, small) = lapack::diagonal_case(2, 2, 7);
+			assert_eq!(small[0] as f64, f32::MIN_POSITIVE.sqrt() as f64);
+			let (_, geometric) = lapack::diagonal_case(3, 3, 4);
+			assert_eq!(geometric[2] as f64, f32::EPSILON as f64);
+			let (_, cluster) = lapack::diagonal_case(4, 4, 9);
+			assert_eq!(cluster[3] as f64, (1.0 - 24.0 * f32::EPSILON) as f64);
+		}
+	}
+	mod lapack_svd_c64 {
+		type Real = f64;
+		type Scalar = crate::c64;
+		const GUARD: Scalar = Scalar::new(-12345.0, 6789.0);
+		const ROTATION_PHASE: Scalar = Scalar::new(0.0, 1.0);
+		fn diagonal_phase(i: usize) -> Scalar {
+			match i % 4 {
+				0 => Scalar::new(0.0, 1.0),
+				1 => Scalar::new(0.6, 0.8),
+				2 => Scalar::new(-0.8, 0.6),
+				_ => Scalar::new(-1.0, 0.0),
+			}
+		}
+		use super::super::{
+			bidiag_cplx_svd_scratch as bidiagonal_scratch,
+			compute_bidiag_cplx_svd as compute_bidiagonal,
+		};
+		mod lapack {
+			include!("tests/lapack.rs");
+		}
+		mod svd_views {
+			include!("tests/svd_views.rs");
+		}
+		mod complex_tests {
+			include!("tests/complex.rs");
+		}
+	}
+	mod lapack_svd_c32 {
+		type Real = f32;
+		type Scalar = crate::c32;
+		const GUARD: Scalar = Scalar::new(-12345.0, 6789.0);
+		const ROTATION_PHASE: Scalar = Scalar::new(0.0, 1.0);
+		fn diagonal_phase(i: usize) -> Scalar {
+			match i % 4 {
+				0 => Scalar::new(0.0, 1.0),
+				1 => Scalar::new(0.6, 0.8),
+				2 => Scalar::new(-0.8, 0.6),
+				_ => Scalar::new(-1.0, 0.0),
+			}
+		}
+		use super::super::{
+			bidiag_cplx_svd_scratch as bidiagonal_scratch,
+			compute_bidiag_cplx_svd as compute_bidiagonal,
+		};
+		mod lapack {
+			include!("tests/lapack.rs");
+		}
+		mod svd_views {
+			include!("tests/svd_views.rs");
+		}
+		mod complex_tests {
+			include!("tests/complex.rs");
+		}
+		#[test]
+		fn c32_fixtures_use_single_precision_limits() {
+			let (_, large) = lapack::diagonal_case(2, 2, 6);
+			assert_eq!(large[0] as f64, f32::MAX.sqrt() as f64);
+			let (_, small) = lapack::diagonal_case(2, 2, 7);
+			assert_eq!(small[0] as f64, f32::MIN_POSITIVE.sqrt() as f64);
+			let (_, geometric) = lapack::diagonal_case(3, 3, 4);
+			assert_eq!(geometric[2] as f64, f32::EPSILON as f64);
+			let (_, cluster) = lapack::diagonal_case(4, 4, 9);
+			assert_eq!(cluster[3] as f64, (1.0 - 24.0 * f32::EPSILON) as f64);
+		}
+	}
 	use super::*;
 	use crate::assert;
 	use crate::stats::prelude::*;

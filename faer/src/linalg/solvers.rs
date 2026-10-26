@@ -3120,3 +3120,7 @@ mod tests {
 		assert_eq!(x[(1, 0)], 0.0);
 	}
 }
+
+#[cfg(test)]
+#[path = "tests/lapack_lstsq.rs"]
+mod lapack;

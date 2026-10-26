@@ -1,140 +1,203 @@
-//! Selected LAPACK SVD test families and numerical checks, adapted to faer.
-//! The validation groups are ignored in ordinary test runs; the scheduled SVD
-//! workflow runs them.
-//!
-//! Reference: LAPACK 3.12.0, distributed in OpenMathLib/OpenBLAS commit
-//! 791b02a1a00c996b66a894f6df93421c53b62d80, lapack-netlib/TESTING/EIG/
-//! {dchkbd.f,ddrvbd.f,dbdt03.f}, and TESTING/svd.in (threshold 50).
-//! Matrix construction and safely scaled checks are implemented in Rust;
-//! this is a bounded adaptation, not a translation of the Fortran drivers.
-//!
-//! Copyright (c) 1992-2023 The University of Tennessee and The University
-//! of Tennessee Research Foundation. All rights reserved.
-//! Copyright (c) 2000-2023 The University of California Berkeley.
-//! All rights reserved.
-//! Copyright (c) 2006-2023 The University of Colorado Denver.
-//! All rights reserved.
-//! SPDX-License-Identifier: BSD-3-Clause
-//! See COPYING.LAPACK.BSD in the crate root for the license terms.
+// Selected LAPACK SVD test families and numerical checks, adapted to faer.
+// Heavy opt-in validation; the scheduled SVD workflow includes ignored tests.
+//
+// Reference: LAPACK 3.12.0, distributed in OpenMathLib/OpenBLAS commit
+// 791b02a1a00c996b66a894f6df93421c53b62d80, lapack-netlib/TESTING/EIG/
+// {dchkbd.f,ddrvbd.f,dbdt03.f,schkbd.f,sdrvbd.f,sbdt03.f,
+// zchkbd.f,zdrvbd.f,zbdt03.f,zunt01.f,cchkbd.f,cdrvbd.f,cbdt03.f,cunt01.f},
+// and TESTING/svd.in (threshold 50).
+// Scalar/Real are the enclosing f32/f64/c32/c64 storage/precision aliases.
+// Complex phase adapters extend DCHKBD 15-19; C/ZCHKBD have tests 1-14.
+// Matrix construction and safely scaled checks are implemented in Rust;
+// this is a bounded adaptation, not a translation of the Fortran drivers.
+//
+// Copyright (c) 1992-2023 The University of Tennessee and The University
+// of Tennessee Research Foundation. All rights reserved.
+// Copyright (c) 2000-2023 The University of California Berkeley.
+// All rights reserved.
+// Copyright (c) 2006-2023 The University of Colorado Denver.
+// All rights reserved.
+// SPDX-License-Identifier: BSD-3-Clause
+// See COPYING.LAPACK.BSD in the crate root for the license terms.
 
-use super::super::*;
+use super::super::super::*;
+use super::{
+	ROTATION_PHASE, Real, Scalar, bidiagonal_scratch, compute_bidiagonal,
+	diagonal_phase,
+};
 use crate::assert;
 use crate::stats::prelude::*;
 use dyn_stack::MemBuffer;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
-const THRESHOLD: f64 = 50.0;
+const THRESHOLD: Real = 50.0;
 const BIDIAGONAL_SEED: u64 = 0x4C41_5041_434B;
 
-fn reconstruction_ratio(
-	a: MatRef<'_, f64>,
-	s: &[f64],
-	u: MatRef<'_, f64>,
-	v: MatRef<'_, f64>,
-) -> f64 {
+pub(super) fn check_svd_call(
+	failures: &mut Vec<String>,
+	context: &str,
+	call: impl FnOnce() -> Result<(), SvdError>,
+) -> bool {
+	let message = match catch_unwind(AssertUnwindSafe(call)) {
+		Ok(Ok(())) => return true,
+		Ok(Err(error)) => format!("{error:?}"),
+		Err(payload) => {
+			let message = payload
+				.downcast_ref::<&str>()
+				.copied()
+				.or_else(|| {
+					payload.downcast_ref::<String>().map(String::as_str)
+				})
+				.unwrap_or("non-string panic");
+			format!("panic: {message}")
+		},
+	};
+	failures.push(format!("call failure: {context}: {message}"));
+	false
+}
+
+#[test]
+fn panics_and_errors_do_not_skip_later_cases() {
+	let mut failures = Vec::new();
+	let mut successes = 0;
+	for case in 0..4 {
+		if check_svd_call(&mut failures, &format!("case {case}"), || match case
+		{
+			0 => Err(SvdError::NoConvergence),
+			1 => panic!("scratch panic"),
+			2 => std::panic::panic_any(String::from("owned panic")),
+			_ => Ok(()),
+		}) {
+			successes += 1;
+		}
+	}
+	assert_eq!(successes, 1);
+	assert_eq!(failures.len(), 3);
+	assert!(failures[0].contains("case 0: NoConvergence"));
+	assert!(failures[1].contains("case 1: panic: scratch panic"));
+	assert!(failures[2].contains("case 2: panic: owned panic"));
+}
+
+fn scalar_norm(value: Scalar) -> Real {
+	real(&value).hypot(imag(&value))
+}
+
+pub(super) fn reconstruction_ratio(
+	a: MatRef<'_, Scalar>,
+	s: &[Real],
+	u: MatRef<'_, Scalar>,
+	v: MatRef<'_, Scalar>,
+) -> Real {
 	let (m, n) = a.shape();
-	let mut scale = 0.0f64;
+	let mut scale = 0.0 as Real;
 	for j in 0..n {
 		for i in 0..m {
-			if !a[(i, j)].is_finite() {
-				return f64::INFINITY;
+			let magnitude = scalar_norm(a[(i, j)]);
+			if !magnitude.is_finite() {
+				return Real::INFINITY;
 			}
-			scale = scale.max(a[(i, j)].abs());
+			scale = scale.max(magnitude);
 		}
 	}
 	if scale == 0.0 {
 		scale = 1.0;
 	}
-	let mut anorm = 0.0f64;
-	let mut residual = 0.0f64;
+	let mut anorm = 0.0 as Real;
+	let mut residual = 0.0 as Real;
 	// Normalize before multiplying: neither extreme-scale A nor S is squared.
 	for j in 0..n {
 		let mut a_column = 0.0;
 		let mut error_column = 0.0;
 		for i in 0..m {
-			let mut reconstructed = 0.0;
+			let mut reconstructed = zero::<Scalar>();
 			for k in 0..s.len() {
-				reconstructed += u[(i, k)] * (s[k] / scale) * v[(j, k)];
+				reconstructed += u[(i, k)] * (s[k] / scale) * conj(&v[(j, k)]);
 			}
 			let value = a[(i, j)] / scale;
-			if !reconstructed.is_finite() {
-				return f64::INFINITY;
+			if !is_finite(&reconstructed) {
+				return Real::INFINITY;
 			}
-			a_column += value.abs();
-			error_column += (value - reconstructed).abs();
+			a_column += scalar_norm(value);
+			error_column += scalar_norm(value - reconstructed);
 		}
 		anorm = anorm.max(a_column);
 		residual = residual.max(error_column);
 	}
 	if anorm == 0.0 {
-		if residual == 0.0 { 0.0 } else { f64::INFINITY }
+		if residual == 0.0 { 0.0 } else { Real::INFINITY }
 	} else {
-		(residual / anorm) / (m.max(n).max(1) as f64 * f64::EPSILON)
+		(residual / anorm) / (m.max(n).max(1) as Real * Real::EPSILON)
 	}
 }
 
-fn orthogonality_ratio(q: MatRef<'_, f64>) -> f64 {
-	let mut error = 0.0f64;
+pub(super) fn orthogonality_ratio(q: MatRef<'_, Scalar>) -> Real {
+	let mut error = 0.0 as Real;
 	for j in 0..q.ncols() {
 		let mut column = 0.0;
 		for i in 0..q.ncols() {
-			let mut dot = 0.0;
+			let mut dot = zero::<Scalar>();
 			for k in 0..q.nrows() {
-				dot += q[(k, i)] * q[(k, j)];
+				dot += conj(&q[(k, i)]) * q[(k, j)];
 			}
-			if !dot.is_finite() {
-				return f64::INFINITY;
+			if !is_finite(&dot) {
+				return Real::INFINITY;
 			}
-			column += (dot - if i == j { 1.0 } else { 0.0 }).abs();
+			column += scalar_norm(
+				dot - if i == j {
+					one::<Scalar>()
+				} else {
+					zero::<Scalar>()
+				},
+			);
 		}
 		error = error.max(column);
 	}
-	error / (q.nrows().max(1) as f64 * f64::EPSILON)
+	error / (q.nrows().max(1) as Real * Real::EPSILON)
 }
 
-fn valid_spectrum(s: &[f64]) -> bool {
+fn valid_spectrum(s: &[Real]) -> bool {
 	s.iter().all(|x| x.is_finite() && *x >= 0.0)
 		&& s.windows(2).all(|pair| pair[0] >= pair[1])
 }
 
-pub(super) fn spectrum_ratio(
-	s: &[f64],
-	expected: &[f64],
-	dimension: usize,
-) -> f64 {
+fn spectrum_ratio(s: &[Real], expected: &[Real], dimension: usize) -> Real {
 	assert_eq!(s.len(), expected.len());
 	if !s.iter().chain(expected).all(|x| x.is_finite()) {
-		return f64::INFINITY;
+		return Real::INFINITY;
 	}
-	let scale = expected.iter().fold(0.0f64, |max, x| max.max(x.abs()));
+	let scale = expected.iter().fold(0.0 as Real, |max, x| max.max(x.abs()));
 	if scale == 0.0 {
 		return if s.iter().all(|x| *x == 0.0) {
 			0.0
 		} else {
-			f64::INFINITY
+			Real::INFINITY
 		};
 	}
-	let mut error = 0.0f64;
+	let mut error = 0.0 as Real;
 	for (&actual, &reference) in s.iter().zip(expected) {
 		let difference = (actual / scale - reference / scale).abs();
 		if !difference.is_finite() {
-			return f64::INFINITY;
+			return Real::INFINITY;
 		}
 		error = error.max(difference);
 	}
-	error / (dimension.max(1) as f64 * f64::EPSILON)
+	error / (dimension.max(1) as Real * Real::EPSILON)
 }
 
-fn dchkbd_spectrum_ratio(with_vectors: &[f64], without_vectors: &[f64]) -> f64 {
+fn dchkbd_spectrum_ratio(
+	with_vectors: &[Real],
+	without_vectors: &[Real],
+) -> Real {
 	assert_eq!(with_vectors.len(), without_vectors.len());
 	if !valid_spectrum(with_vectors) || !valid_spectrum(without_vectors) {
-		return f64::INFINITY;
+		return Real::INFINITY;
 	}
 	let Some(&largest) = with_vectors.first() else {
 		return 0.0;
 	};
 	// DCHKBD test 19 uses a safe-minimum floor and no dimension factor.
-	let denominator = (f64::MIN_POSITIVE.sqrt() * largest.max(1.0))
-		.max(f64::EPSILON * largest.max(without_vectors[0]));
+	let denominator = (Real::MIN_POSITIVE.sqrt() * largest.max(1.0))
+		.max(Real::EPSILON * largest.max(without_vectors[0]));
 	with_vectors
 		.iter()
 		.zip(without_vectors)
@@ -143,11 +206,11 @@ fn dchkbd_spectrum_ratio(with_vectors: &[f64], without_vectors: &[f64]) -> f64 {
 		})
 }
 
-pub(super) fn check_ratio(
+fn check_ratio(
 	failures: &mut Vec<String>,
 	context: &str,
 	check: &str,
-	ratio: f64,
+	ratio: Real,
 ) {
 	if !ratio.is_finite() || ratio >= THRESHOLD {
 		failures.push(format!(
@@ -156,16 +219,31 @@ pub(super) fn check_ratio(
 	}
 }
 
+pub(super) fn real_spectrum(
+	failures: &mut Vec<String>,
+	context: &str,
+	s: &[Scalar],
+) -> Vec<Real> {
+	if s.iter().any(|value| imag(value) != 0.0) {
+		failures.push(format!(
+			"{context}: singular values have nonzero or nonfinite imaginary parts"
+		));
+	}
+	s.iter().map(real).collect()
+}
+
 pub(super) fn check_driver_output(
 	failures: &mut Vec<String>,
 	context: &str,
-	a: MatRef<'_, f64>,
-	s: &[f64],
-	u: MatRef<'_, f64>,
-	v: MatRef<'_, f64>,
-	expected: Option<&[f64]>,
-	reference: Option<&[f64]>,
+	a: MatRef<'_, Scalar>,
+	s: &[Scalar],
+	u: MatRef<'_, Scalar>,
+	v: MatRef<'_, Scalar>,
+	expected: Option<&[Real]>,
+	reference: Option<&[Real]>,
 ) {
+	let real_s = real_spectrum(failures, context, s);
+	let s = real_s.as_slice();
 	if !valid_spectrum(s) {
 		failures.push(format!(
 			"{context}: spectrum is not finite, nonnegative and decreasing: {s:?}"
@@ -215,20 +293,21 @@ pub(super) fn check_driver_output(
 
 fn run_case(
 	failures: &mut Vec<String>,
+	attempted: &mut usize,
 	name: &str,
-	a: MatRef<'_, f64>,
-	expected: Option<&[f64]>,
+	a: MatRef<'_, Scalar>,
+	expected: Option<&[Real]>,
 	threshold: usize,
-	prefill: f64,
+	prefill: Real,
 ) {
 	let (m, n) = a.shape();
 	let rank = m.min(n);
 	let params = Spec::new(SvdParams {
 		recursion_threshold: threshold,
-		..auto!(f64)
+		..auto!(Scalar)
 	});
 	use ComputeSvdVectors::{Full, No, Thin};
-	let mut reference: Option<Vec<f64>> = None;
+	let mut reference: Option<Vec<Real>> = None;
 	for (left, right) in
 		[(Full, Full), (Thin, Thin), (Thin, No), (No, Thin), (No, No)]
 	{
@@ -240,10 +319,12 @@ fn run_case(
 			Thin => rank,
 			No => 0,
 		};
-		let mut u = Mat::<f64>::full(m, columns(left, m), prefill);
-		let mut v = Mat::<f64>::full(n, columns(right, n), prefill);
-		let mut s = Col::<f64>::full(rank, f64::NAN);
-		let mut memory = MemBuffer::new(svd_scratch::<f64>(
+		let mut u =
+			Mat::<Scalar>::full(m, columns(left, m), Scalar::from(prefill));
+		let mut v =
+			Mat::<Scalar>::full(n, columns(right, n), Scalar::from(prefill));
+		let mut s = Col::<Scalar>::zeros(rank);
+		let mut memory = MemBuffer::new(svd_scratch::<Scalar>(
 			m,
 			n,
 			left,
@@ -251,19 +332,21 @@ fn run_case(
 			Par::Seq,
 			params,
 		));
-		if let Err(error) = svd(
-			a,
-			s.as_mut().as_diagonal_mut(),
-			if left == No { None } else { Some(u.as_mut()) },
-			if right == No { None } else { Some(v.as_mut()) },
-			Par::Seq,
-			MemStack::new(&mut memory),
-			params,
-		) {
-			failures.push(format!("{context}: {error:?}"));
+		*attempted += 1;
+		if !check_svd_call(failures, &context, || {
+			svd(
+				a,
+				s.as_mut().as_diagonal_mut(),
+				if left == No { None } else { Some(u.as_mut()) },
+				if right == No { None } else { Some(v.as_mut()) },
+				Par::Seq,
+				MemStack::new(&mut memory),
+				params,
+			)
+		}) {
 			continue;
 		}
-		let s: Vec<f64> = s.iter().copied().collect();
+		let s: Vec<Scalar> = s.iter().copied().collect();
 		check_driver_output(
 			failures,
 			&context,
@@ -275,7 +358,7 @@ fn run_case(
 			reference.as_deref(),
 		);
 		if reference.is_none() {
-			reference = Some(s.clone());
+			reference = Some(s.iter().map(real).collect());
 		}
 	}
 }
@@ -284,28 +367,28 @@ pub(super) fn diagonal_case(
 	m: usize,
 	n: usize,
 	kind: usize,
-) -> (Mat<f64>, Vec<f64>) {
+) -> (Mat<Scalar>, Vec<Real>) {
 	// Kinds 1–7 follow DCHKBD; 8/9 add repeated and tightly clustered spectra.
 	let rank = m.min(n);
 	let scale = match kind {
-		6 => f64::MAX.sqrt(),
-		7 => f64::MIN_POSITIVE.sqrt(),
+		6 => Real::MAX.sqrt(),
+		7 => Real::MIN_POSITIVE.sqrt(),
 		_ => 1.0,
 	};
 	let spectrum: Vec<_> = (0..rank)
 		.map(|i| {
-			let fraction = i as f64 / rank.saturating_sub(1).max(1) as f64;
+			let fraction = i as Real / rank.saturating_sub(1).max(1) as Real;
 			scale
 				* match kind {
 					1 => 0.0,
 					2 => 1.0,
-					3 | 6 | 7 => 1.0 - fraction * (1.0 - f64::EPSILON),
-					4 => f64::EPSILON.powf(fraction),
+					3 | 6 | 7 => 1.0 - fraction * (1.0 - Real::EPSILON),
+					4 => Real::EPSILON.powf(fraction),
 					5 => {
 						if i == 0 {
 							1.0
 						} else {
-							f64::EPSILON
+							Real::EPSILON
 						}
 					},
 					8 => {
@@ -315,68 +398,79 @@ pub(super) fn diagonal_case(
 							1.0
 						}
 					},
-					9 => 1.0 - 8.0 * f64::EPSILON * i as f64,
+					9 => 1.0 - 8.0 * Real::EPSILON * i as Real,
 					_ => unreachable!(),
 				}
 		})
 		.collect();
 	let a = Mat::from_fn(m, n, |i, j| {
 		if i == j {
-			spectrum[i] * if i % 2 == 0 { 1.0 } else { -1.0 }
+			Scalar::from(spectrum[i]) * diagonal_phase(i)
 		} else {
-			0.0
+			zero::<Scalar>()
 		}
 	});
 	(a, spectrum)
 }
 
-pub(super) fn rotate(a: &mut Mat<f64>) {
-	// Fixed orthogonal rotations replace DLATMS; no faer factorization generates inputs.
+pub(super) fn rotate(a: &mut Mat<Scalar>) {
+	// Fixed orthogonal/unitary rotations replace DLATMS without a faer factorization.
 	for i in 1..a.nrows() {
 		for j in 0..a.ncols() {
 			let (x, y) = (a[(i - 1, j)], a[(i, j)]);
-			a[(i - 1, j)] = 0.6 * x - 0.8 * y;
-			a[(i, j)] = 0.8 * x + 0.6 * y;
+			a[(i - 1, j)] = 0.6 * x - conj(&(0.8 * ROTATION_PHASE)) * y;
+			a[(i, j)] = (0.8 * ROTATION_PHASE) * x + 0.6 * y;
 		}
 	}
 	for j in 1..a.ncols() {
 		for i in 0..a.nrows() {
 			let (x, y) = (a[(i, j - 1)], a[(i, j)]);
-			a[(i, j - 1)] = 0.8 * x - 0.6 * y;
-			a[(i, j)] = 0.6 * x + 0.8 * y;
+			a[(i, j - 1)] = 0.8 * x - conj(&(0.6 * ROTATION_PHASE)) * y;
+			a[(i, j)] = (0.6 * ROTATION_PHASE) * x + 0.8 * y;
 		}
 	}
 }
 
-fn logarithmic_bidiagonal(n: usize) -> Mat<f64> {
+fn complex_phase(index: usize) -> Scalar {
+	if <Scalar as ComplexField>::IS_REAL {
+		one::<Scalar>()
+	} else {
+		diagonal_phase(index)
+	}
+}
+
+fn logarithmic_bidiagonal(n: usize) -> Mat<Scalar> {
 	let mut rng = StdRng::seed_from_u64(BIDIAGONAL_SEED);
 	Mat::from_fn(n, n, |i, j| {
 		if i == j || i == j + 1 {
-			f64::EPSILON.powf(rng.random_range(-2.0..2.0))
+			Scalar::from(Real::EPSILON.powf(rng.random_range(-2.0..2.0)))
+				* complex_phase(i + 2 * j)
 		} else {
-			0.0
+			zero::<Scalar>()
 		}
 	})
 }
 
 fn run_bidiagonal_case(
 	failures: &mut Vec<String>,
+	attempted: &mut usize,
 	name: &str,
-	b: MatRef<'_, f64>,
-	expected: Option<&[f64]>,
+	b: MatRef<'_, Scalar>,
+	expected: Option<&[Real]>,
 	threshold: usize,
 ) {
 	let n = b.ncols();
 	assert_eq!(b.nrows(), n);
 	assert!(n > 0);
 	// The private solver stores a square lower bidiagonal with an extra zero row.
-	let padded =
-		Mat::from_fn(n + 1, n, |i, j| if i < n { b[(i, j)] } else { 0.0 });
+	let padded = Mat::from_fn(n + 1, n, |i, j| {
+		if i < n { b[(i, j)] } else { zero::<Scalar>() }
+	});
 	let params = SvdParams {
 		recursion_threshold: threshold,
-		..auto!(f64)
+		..auto!(Scalar)
 	};
-	let mut reference: Option<Vec<f64>> = None;
+	let mut reference: Option<Vec<Real>> = None;
 	for (want_u, want_v) in
 		[(true, true), (true, false), (false, true), (false, false)]
 	{
@@ -384,30 +478,39 @@ fn run_bidiagonal_case(
 			"direct bidiagonal {name}, n={n}, threshold={threshold}, U={want_u}, V={want_v}"
 		);
 		let mut d = Col::from_fn(n, |i| b[(i, i)]);
-		let mut e =
-			Col::from_fn(n, |i| if i + 1 < n { b[(i + 1, i)] } else { 0.0 });
-		let mut u = Mat::full(n + 1, if want_u { n + 1 } else { 0 }, f64::NAN);
-		let mut v = Mat::full(n, if want_v { n } else { 0 }, f64::NAN);
-		let mut memory = MemBuffer::new(bidiag_real_svd_scratch::<f64>(
+		let mut e = Col::from_fn(n, |i| {
+			if i + 1 < n {
+				b[(i + 1, i)]
+			} else {
+				zero::<Scalar>()
+			}
+		});
+		let mut u =
+			Mat::full(n + 1, if want_u { n + 1 } else { 0 }, one::<Scalar>());
+		let mut v = Mat::full(n, if want_v { n } else { 0 }, one::<Scalar>());
+		let mut memory = MemBuffer::new(bidiagonal_scratch::<Scalar>(
 			n,
 			want_u,
 			want_v,
 			Par::Seq,
 			params,
 		));
-		if let Err(error) = compute_bidiag_real_svd(
-			d.as_mut().try_as_col_major_mut().unwrap(),
-			e.as_mut().try_as_col_major_mut().unwrap(),
-			if want_u { Some(u.as_mut()) } else { None },
-			if want_v { Some(v.as_mut()) } else { None },
-			params,
-			Par::Seq,
-			MemStack::new(&mut memory),
-		) {
-			failures.push(format!("{context}: {error:?}"));
+		*attempted += 1;
+		if !check_svd_call(failures, &context, || {
+			compute_bidiagonal(
+				d.as_mut().try_as_col_major_mut().unwrap(),
+				e.as_mut().try_as_col_major_mut().unwrap(),
+				if want_u { Some(u.as_mut()) } else { None },
+				if want_v { Some(v.as_mut()) } else { None },
+				params,
+				Par::Seq,
+				MemStack::new(&mut memory),
+			)
+		}) {
 			continue;
 		}
-		let s: Vec<_> = d.iter().copied().collect();
+		let scalar_s: Vec<_> = d.iter().copied().collect();
+		let s = real_spectrum(failures, &context, &scalar_s);
 		if !valid_spectrum(&s) {
 			failures.push(format!(
 				"{context}: DCHKBD test 18: invalid spectrum {s:?}"
@@ -432,7 +535,7 @@ fn run_bidiagonal_case(
 			reference = Some(s.clone());
 		}
 		// Keep DCHKBD's denominator n despite the extra zero row in B.
-		let padding_correction = (n + 1) as f64 / n as f64;
+		let padding_correction = (n + 1) as Real / n as Real;
 		if want_u {
 			check_ratio(
 				failures,
@@ -467,14 +570,16 @@ fn run_bidiagonal_case(
 
 #[test]
 #[ignore = "opt-in LAPACK numerical validation (#31)"]
-fn lapack_svd_f64_dchkbd_15_to_19() {
+fn dchkbd_15_to_19() {
 	let mut failures = Vec::new();
+	let mut attempted = 0;
 	for n in [1, 7, 8, 9, 127, 128, 129] {
 		for threshold in [8, 128] {
-			for kind in 1..=7 {
+			for kind in [1, 2, 4, 5, 6, 7] {
 				let (b, expected) = diagonal_case(n, n, kind);
 				run_bidiagonal_case(
 					&mut failures,
+					&mut attempted,
 					&format!("DCHKBD type {kind}"),
 					b.as_ref(),
 					Some(&expected),
@@ -484,6 +589,7 @@ fn lapack_svd_f64_dchkbd_15_to_19() {
 			let b = logarithmic_bidiagonal(n);
 			run_bidiagonal_case(
 				&mut failures,
+				&mut attempted,
 				&format!("DCHKBD type 16, seed={BIDIAGONAL_SEED:#x}"),
 				b.as_ref(),
 				None,
@@ -491,22 +597,34 @@ fn lapack_svd_f64_dchkbd_15_to_19() {
 			);
 		}
 	}
-	let mut split = Mat::<f64>::zeros(8, 8);
-	split[(4, 4)] = 1.0;
+	let mut split = Mat::<Scalar>::zeros(8, 8);
+	split[(4, 4)] = complex_phase(4);
 	run_bidiagonal_case(
 		&mut failures,
+		&mut attempted,
 		"rank one (#33), pivot=4",
 		split.as_ref(),
 		Some(&[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
 		4,
 	);
+	eprintln!(
+		"LAPACK_CASES family=svd_dchkbd_15_to_19 dtype={} planned=396 attempted={attempted} call_failures={} diagnostics={}",
+		core::any::type_name::<Scalar>(),
+		failures
+			.iter()
+			.filter(|f| f.starts_with("call failure:"))
+			.count(),
+		failures.len()
+	);
+	assert_eq!(attempted, 396, "SVD case execution incomplete");
 	assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]
 #[ignore = "opt-in LAPACK numerical validation (#31)"]
-fn lapack_svd_f64_diagonal_families() {
+fn diagonal_families() {
 	let mut failures = Vec::new();
+	let mut attempted = 0;
 	for (m, n) in [
 		(0, 0),
 		(0, 3),
@@ -524,22 +642,34 @@ fn lapack_svd_f64_diagonal_families() {
 			for threshold in [8, 128] {
 				run_case(
 					&mut failures,
+					&mut attempted,
 					&format!("DCHKBD type {kind}"),
 					a.as_ref(),
 					Some(&expected),
 					threshold,
-					f64::NAN,
+					0.0,
 				);
 			}
 		}
 	}
+	eprintln!(
+		"LAPACK_CASES family=svd_diagonal_families dtype={} planned=700 attempted={attempted} call_failures={} diagnostics={}",
+		core::any::type_name::<Scalar>(),
+		failures
+			.iter()
+			.filter(|f| f.starts_with("call failure:"))
+			.count(),
+		failures.len()
+	);
+	assert_eq!(attempted, 700, "SVD case execution incomplete");
 	assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]
 #[ignore = "opt-in LAPACK numerical validation (#31)"]
-fn lapack_svd_f64_rotated_families() {
+fn rotated_families() {
 	let mut failures = Vec::new();
+	let mut attempted = 0;
 	for (m, n) in [(3, 3), (7, 7), (8, 8), (9, 9), (10, 16), (16, 10)] {
 		for (kind, source) in [(3, 8), (4, 9), (5, 10), (6, 11), (7, 12)] {
 			let (mut a, expected) = diagonal_case(m, n, kind);
@@ -547,81 +677,119 @@ fn lapack_svd_f64_rotated_families() {
 			for threshold in [8, 128] {
 				run_case(
 					&mut failures,
+					&mut attempted,
 					&format!("DCHKBD type {source}, fixed rotations"),
 					a.as_ref(),
 					Some(&expected),
 					threshold,
-					f64::NAN,
+					0.0,
 				);
 			}
 		}
 	}
+	eprintln!(
+		"LAPACK_CASES family=svd_rotated_families dtype={} planned=300 attempted={attempted} call_failures={} diagnostics={}",
+		core::any::type_name::<Scalar>(),
+		failures
+			.iter()
+			.filter(|f| f.starts_with("call failure:"))
+			.count(),
+		failures.len()
+	);
+	assert_eq!(attempted, 300, "SVD case execution incomplete");
 	assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]
 #[ignore = "opt-in LAPACK numerical validation (#31)"]
-fn lapack_svd_f64_bidiagonal_family() {
+fn bidiagonal_family() {
 	let mut failures = Vec::new();
+	let mut attempted = 0;
 	for n in [7, 8, 9, 127, 128, 129] {
 		let a = logarithmic_bidiagonal(n);
 		for threshold in [8, 128] {
 			run_case(
 				&mut failures,
+				&mut attempted,
 				&format!(
 					"DCHKBD type 16, lower bidiagonal, seed={BIDIAGONAL_SEED:#x}"
 				),
 				a.as_ref(),
 				None,
 				threshold,
-				f64::NAN,
+				0.0,
 			);
 			run_case(
 				&mut failures,
+				&mut attempted,
 				&format!(
 					"DCHKBD type 16, upper bidiagonal, seed={BIDIAGONAL_SEED:#x}"
 				),
 				a.transpose(),
 				None,
 				threshold,
-				f64::NAN,
+				0.0,
 			);
 		}
 	}
+	eprintln!(
+		"LAPACK_CASES family=svd_bidiagonal_family dtype={} planned=120 attempted={attempted} call_failures={} diagnostics={}",
+		core::any::type_name::<Scalar>(),
+		failures
+			.iter()
+			.filter(|f| f.starts_with("call failure:"))
+			.count(),
+		failures.len()
+	);
+	assert_eq!(attempted, 120, "SVD case execution incomplete");
 	assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]
 #[ignore = "opt-in LAPACK numerical validation (#31)"]
-fn lapack_svd_f64_rank_one_at_recursion_splits() {
+fn rank_one_at_recursion_splits() {
 	let mut failures = Vec::new();
+	let mut attempted = 0;
 	for (n, threshold) in [(8, 4), (127, 128), (128, 128), (129, 128)] {
 		let mut expected = vec![0.0; n];
 		expected[0] = 1.0;
 		for pivot in [0, n / 2, n - 1] {
-			let mut a = Mat::<f64>::zeros(n, n);
-			a[(pivot, pivot)] = 1.0;
+			let mut a = Mat::<Scalar>::zeros(n, n);
+			a[(pivot, pivot)] = complex_phase(pivot);
 			run_case(
 				&mut failures,
+				&mut attempted,
 				&format!("rank one (#33), pivot={pivot}"),
 				a.as_ref(),
 				Some(&expected),
 				threshold,
-				f64::NAN,
+				0.0,
 			);
 		}
 	}
+	eprintln!(
+		"LAPACK_CASES family=svd_rank_one_at_recursion_splits dtype={} planned=60 attempted={attempted} call_failures={} diagnostics={}",
+		core::any::type_name::<Scalar>(),
+		failures
+			.iter()
+			.filter(|f| f.starts_with("call failure:"))
+			.count(),
+		failures.len()
+	);
+	assert_eq!(attempted, 60, "SVD case execution incomplete");
 	assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]
 #[ignore = "opt-in LAPACK numerical validation (#31)"]
-fn lapack_svd_f64_prefilled_outputs() {
+fn prefilled_outputs() {
 	let mut failures = Vec::new();
+	let mut attempted = 0;
 	for (m, n) in [(4, 2), (2, 4), (4, 4)] {
 		let (a, expected) = diagonal_case(m, n, 2);
 		run_case(
 			&mut failures,
+			&mut attempted,
 			"identity, reused outputs (#41)",
 			a.as_ref(),
 			Some(&expected),
@@ -629,6 +797,16 @@ fn lapack_svd_f64_prefilled_outputs() {
 			1.0,
 		);
 	}
+	eprintln!(
+		"LAPACK_CASES family=svd_prefilled_outputs dtype={} planned=15 attempted={attempted} call_failures={} diagnostics={}",
+		core::any::type_name::<Scalar>(),
+		failures
+			.iter()
+			.filter(|f| f.starts_with("call failure:"))
+			.count(),
+		failures.len()
+	);
+	assert_eq!(attempted, 15, "SVD case execution incomplete");
 	assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
@@ -636,17 +814,17 @@ fn lapack_svd_f64_prefilled_outputs() {
 fn checkers_dchkbd_mode_agreement_has_no_dimension_factor() {
 	let with_vectors = [1.0; 128];
 	let mut without_vectors = with_vectors;
-	without_vectors[127] -= 64.0 * f64::EPSILON;
+	without_vectors[127] -= 64.0 * Real::EPSILON;
 	assert_eq!(dchkbd_spectrum_ratio(&with_vectors, &without_vectors), 64.0);
 	assert_eq!(
-		dchkbd_spectrum_ratio(&[0.0], &[f64::MIN_POSITIVE.sqrt()]),
+		dchkbd_spectrum_ratio(&[0.0], &[Real::MIN_POSITIVE.sqrt()]),
 		1.0,
 	);
 	assert_eq!(dchkbd_spectrum_ratio(&[], &[]), 0.0);
-	for scale in [0.0, 1e-300, 1.0, 1e300] {
+	for scale in [0.0, Real::MIN_POSITIVE, 1.0, Real::MAX] {
 		assert_eq!(dchkbd_spectrum_ratio(&[scale], &[scale]), 0.0);
 	}
-	for invalid in [f64::NAN, f64::INFINITY, -1.0] {
+	for invalid in [Real::NAN, Real::INFINITY, -1.0] {
 		assert!(!dchkbd_spectrum_ratio(&[1.0], &[invalid]).is_finite());
 		assert!(!dchkbd_spectrum_ratio(&[invalid], &[1.0]).is_finite());
 	}
@@ -654,10 +832,11 @@ fn checkers_dchkbd_mode_agreement_has_no_dimension_factor() {
 
 #[test]
 fn checkers_handle_zero_and_extreme_scales() {
-	let q = Mat::<f64>::identity(2, 2);
-	for scale in [0.0, 1.0, 1e-300, 1e300] {
-		let a =
-			Mat::<f64>::from_fn(2, 2, |i, j| if i == j { scale } else { 0.0 });
+	let q = Mat::<Scalar>::identity(2, 2);
+	for scale in [0.0, 1.0, Real::MIN_POSITIVE, Real::MAX] {
+		let a = Mat::<Scalar>::from_fn(2, 2, |i, j| {
+			Scalar::from(if i == j { scale } else { 0.0 })
+		});
 		assert_eq!(
 			reconstruction_ratio(
 				a.as_ref(),
@@ -669,28 +848,28 @@ fn checkers_handle_zero_and_extreme_scales() {
 		);
 	}
 	assert_eq!(orthogonality_ratio(q.as_ref()), 0.0);
-	for scale in [0.0, 1.0, 1e-300, 1e300] {
+	for scale in [0.0, 1.0, Real::MIN_POSITIVE, Real::MAX] {
 		assert_eq!(spectrum_ratio(&[scale, scale], &[scale, scale], 2), 0.0);
 	}
 }
 
 #[test]
 fn checkers_reject_corrupted_outputs() {
-	let a = Mat::<f64>::identity(4, 2);
-	let v = Mat::<f64>::identity(2, 2);
-	let mut u = Mat::<f64>::identity(4, 4);
+	let a = Mat::<Scalar>::identity(4, 2);
+	let v = Mat::<Scalar>::identity(2, 2);
+	let mut u = Mat::<Scalar>::identity(4, 4);
 	assert!(
 		reconstruction_ratio(a.as_ref(), &[2.0, 1.0], u.as_ref(), v.as_ref())
 			>= THRESHOLD
 	);
 	// Reconstruction cannot see corruption in the unused full-factor columns.
-	u[(0, 3)] = 1.0;
+	u[(0, 3)] = one::<Scalar>();
 	assert_eq!(
 		reconstruction_ratio(a.as_ref(), &[1.0, 1.0], u.as_ref(), v.as_ref()),
 		0.0
 	);
 	assert!(orthogonality_ratio(u.as_ref()) >= THRESHOLD);
-	u[(0, 0)] = f64::NAN;
+	u[(0, 0)] = nan::<Scalar>();
 	assert!(!orthogonality_ratio(u.as_ref()).is_finite());
 	assert!(
 		!reconstruction_ratio(a.as_ref(), &[1.0, 1.0], u.as_ref(), v.as_ref())
@@ -700,12 +879,12 @@ fn checkers_reject_corrupted_outputs() {
 	for s in [
 		[1.0, 2.0],
 		[1.0, -1.0],
-		[1.0, f64::NAN],
-		[f64::INFINITY, 1.0],
+		[1.0, Real::NAN],
+		[Real::INFINITY, 1.0],
 	] {
 		assert!(!valid_spectrum(&s));
 	}
 	assert!(spectrum_ratio(&[1.0, 0.0], &[1.0, 1.0], 2) >= THRESHOLD);
-	assert!(!spectrum_ratio(&[f64::NAN], &[1.0], 1).is_finite());
+	assert!(!spectrum_ratio(&[Real::NAN], &[1.0], 1).is_finite());
 	assert!(!spectrum_ratio(&[1.0], &[0.0], 1).is_finite());
 }

@@ -2640,3 +2640,7 @@ mod tridiagonal_range_tests {
 		}
 	}
 }
+
+#[cfg(test)]
+#[path = "tests/mod.rs"]
+mod lapack;

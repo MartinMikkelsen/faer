@@ -22,13 +22,13 @@ terms and their notices ship alongside the crate:
   faer/COPYING.EIGEN.MPL2               divide-and-conquer SVD (Eigen)
   faer/COPYING.LAPACK.BSD               jacobi/givens, LLT full pivoting,
                                         column-pivoting QR, Schur, Hessenberg,
-                                        Schur reordering, selected LAPACK SVD
-                                        validation tests
+                                        Schur reordering,
+                                        selected LAPACK EIG/LIN numerical validation tests
   faer/COPYING.SUITE_SPARSE.AMD.BSD     AMD ordering
   faer/COPYING.SUITE_SPARSE.COLAMD.BSD  COLAMD ordering
 
 The faer package's `license = "MIT AND BSD-3-Clause"` metadata includes the
-LAPACK SVD test adaptation. It does not relicense the other ported files;
+LAPACK numerical test adaptations. It does not relicense the other ported files;
 read the COPYING files for their actual terms.
 
 The packages published from this repository are the temporary tensor4all fork

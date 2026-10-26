@@ -1,0 +1,63 @@
+name: Scheduled LAPACK numerical validation
+
+on:
+  schedule:
+    - cron: '23 3 * * 1' # Mondays, 03:23 UTC / 12:23 JST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-lapack-validation
+  cancel-in-progress: false
+
+jobs:
+  validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Check validation selection and reporting logic offline
+        run: |
+          python3 scripts/test-lapack-validation.py
+          node --test scripts/test-lapack-reporter.cjs
+      - name: Build once and run all numerical families
+        timeout-minutes: 44 # build <=20m; family limits sum to 20m; setup/headroom
+        run: scripts/run-lapack-validation.sh
+      - name: Preserve validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lapack-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/lapack-validation/
+          retention-days: 14
+
+  report-failure:
+    needs: validation
+    if: ${{ always() && (needs.validation.result == 'failure' || needs.validation.result == 'cancelled') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update the scheduled validation issue
+        uses: actions/github-script@v9
+        env:
+          VALIDATION_RESULT: ${{ needs.validation.result }}
+        with:
+          script: |
+            const report = require(`${process.env.GITHUB_WORKSPACE}/scripts/report-lapack-failure.cjs`);
+            await report({github, context, result: process.env.VALIDATION_RESULT, server: process.env.GITHUB_SERVER_URL});

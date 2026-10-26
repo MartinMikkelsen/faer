@@ -633,3 +633,7 @@ mod tests {
 		check(1e-44f32);
 	}
 }
+
+#[cfg(test)]
+#[path = "tests/lapack_triangular.rs"]
+mod lapack;
