@@ -1,4 +1,6 @@
 //! Selected LAPACK SVD test families and numerical checks, adapted to faer.
+//! The validation groups are ignored in ordinary test runs; the scheduled SVD
+//! workflow runs them.
 //!
 //! Reference: LAPACK 3.12.0, distributed in OpenMathLib/OpenBLAS commit
 //! 791b02a1a00c996b66a894f6df93421c53b62d80, lapack-netlib/TESTING/EIG/

@@ -2,6 +2,8 @@
 //! SVD pilot. The cases here are faer's own; the known-spectrum generators and
 //! numerical checks come from `super::lapack`, which records the LAPACK/OpenBLAS
 //! provenance and license notices of the adapted material.
+//! The validation groups are ignored in ordinary test runs; the scheduled SVD
+//! workflow runs them.
 
 use super::super::*;
 use super::lapack::{

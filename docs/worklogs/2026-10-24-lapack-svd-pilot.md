@@ -43,6 +43,15 @@
 - Keep LAPACK copyright notices in `lapack.rs`, which holds the adapted
   material; `svd_views.rs` holds faer's own cases and points to it.
 
+- Run all SVD tests, including the ignored validation groups, in a separate
+  weekly Ubuntu workflow with a manual trigger. Local timing supports a
+  two-minute execution limit; reserve 30 minutes for the job because clean
+  hosted setup and dependency compilation are unmeasured. Keep the push/PR gate
+  unchanged. Save dependencies even on failure, retain logs for 30 days, and
+  use a separate two-minute job that opens one labeled issue on the first
+  failure or timeout of a default-branch run and comments on it for each later
+  one.
+
 ## Verification conclusions and constraints
 
 - On `main` at `5a27bcece2f9f0d1c1b94c9b42dd7bfc4a94dc39`, all 4,599
@@ -70,11 +79,22 @@
 - The crate's `license` metadata is changed to `MIT AND BSD-3-Clause` for the
   adapted LAPACK test file. Existing LAPACK ports in production code kept the
   metadata unchanged, so this needs a maintainer decision.
+- The workflow's build and test commands, run locally on the same revision
+  and profile settings, built the test binary in 41.11 seconds with
+  dependencies cached and passed all 26 selected tests in 7.29–7.34 seconds of
+  test execution over three runs. These are local observations, not hosted or
+  cold-build timings or a performance comparison. A failing exit status
+  survives the workflow's `tee` under its `-eo pipefail` shell. The failure
+  reporting script was run against a mocked GitHub API: first failure, comment
+  on an existing issue, exclusion of pull requests and unrelated issues, the
+  cancelled-result note, and an API error that fails the job.
+- The workflow has not yet run on GitHub. Its first hosted run, after merge,
+  sets the measured basis for the budget and cadence.
 - [Coverage, adaptations, reproduction instructions, and measured results](../lapack-svd-pilot.md)
   are the detailed reference. Local runtime observations do not
   establish comparative performance. No upstream faer revision was tested.
 - The checks are normwise; they do not establish relative accuracy of tiny
   singular values. The direct group's LAPACK families other than 16 have a
   zero off-diagonal and do not make the solver iterate. Full LAPACK
-  fixtures/generators, other precisions, arbitrary stride/thread/shape
-  combinations, and scheduled CI remain outside this pilot.
+  fixtures/generators, other precisions, and arbitrary stride/thread/shape
+  combinations remain outside this pilot.

@@ -23,6 +23,62 @@ self-tests run in ordinary tests; to run them with the existing SVD tests:
 CARGO_PROFILE_DEV_DEBUG=0 cargo test -p t4a-faer --lib linalg::svd::tests -- --test-threads=1
 ```
 
+## Scheduled validation and budget
+
+[`svd-validation.yml`](../.github/workflows/svd-validation.yml) runs the entire
+SVD test module with `--include-ignored`: the eight validation groups plus the
+ordinary SVD and self-tests, 26 tests in all. New tests under that module are
+selected without editing the workflow. It runs weekly on Mondays at 03:23 UTC
+(12:23 JST), with a manual `workflow_dispatch` trigger. Weekly is the initial
+cadence until a hosted run has measured the clean dependency build; the test
+execution itself is a few seconds. The regular push/PR build gate is
+unchanged; there is one Ubuntu runner and no OS, precision, or feature matrix.
+
+The limits are **two minutes for test execution**, **30 minutes for the
+validation job**, and **two minutes for a separate failure-reporting job**.
+The larger validation limit reserves room for toolchain setup, dependency
+compilation, cache handling, and log upload; it is not an expected runtime.
+
+The workflow's build and test commands were measured locally on 2026-10-26 on
+macOS arm64 with Rust 1.98.1 and the repository's optimized development profile
+(`opt-level = 3`), with debug information and incremental compilation disabled
+as in the workflow, on `main` at `5a27bcece2f9f0d1c1b94c9b42dd7bfc4a94dc39`
+plus the test-only additions:
+
+| Phase | Wall seconds, including Cargo | Test execution seconds | Result |
+| --- | ---: | ---: | --- |
+| Build test binary, dependencies already cached | 41.11 | — | Passed |
+| SVD test run 1 | 8.65 | 7.34 | 26 passed, 0 failed; exit 0 |
+| SVD test run 2 | 7.70 | 7.30 | 26 passed, 0 failed; exit 0 |
+| SVD test run 3 | 7.69 | 7.29 | 26 passed, 0 failed; exit 0 |
+
+The hosted runner is x86_64, so it also takes faer's x86 SIMD kernels rather
+than the arm64 kernels measured here. An explicit `shell: bash` runs each step
+with `-eo pipefail`, so a failing `cargo test` fails its step even though the
+output is piped through `tee`. The cache is saved on failure so a failing run
+does not force repeated dependency builds. Environment, build timing, and test
+logs are uploaded with 30-day retention.
+
+Scheduled failures are reported to maintainers through one open issue titled
+`Scheduled SVD validation is failing`, under the label
+`scheduled-svd-validation`, in the repository running the workflow. A separate
+job creates it on the first failure and adds a comment with the run, event,
+ref, commit, and job result on each later one. A job that exceeds its time
+limit ends as `cancelled` and is reported too; so is a manual cancel, which the
+comment marks as such. Manual runs on branches other than the default branch
+are not reported. The job does not suppress the failed run, create a new issue
+on every failure, write to the upstream tracker, or close the issue; maintainers
+close it after a green run.
+
+This is an initial budget from local observations, not a hosted timing
+measurement or a performance comparison. The workflow has not yet run on
+GitHub. Both the schedule and the manual trigger need the file on the default
+branch ([scheduled-workflow rules](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)),
+so the first hosted run happens after merge; dispatching it once manually then
+measures the clean build and the x86_64 test time. Inspect those logs before
+adding a matrix or changing the cadence, and investigate overruns rather than
+raising the limits.
+
 ## Source and adaptation
 
 Original project: LAPACK 3.12.0, distributed in OpenMathLib/OpenBLAS revision
@@ -252,8 +308,8 @@ pass `rustfmt --check`, and the diff has no whitespace errors.
 
 Not covered yet: other scalar types, all LAPACK generators and fixtures
 (including the random dense families 13–15), the independent DSVDCH spectral
-check, selected-value algorithms, invalid-argument/workspace sweeps, or
-scheduled CI. Within the f64 cases, 4 of the 9 U/V output-mode combinations
+check, selected-value algorithms, or invalid-argument/workspace sweeps.
+Within the f64 cases, 4 of the 9 U/V output-mode combinations
 are not exercised; the layout and parallel groups are selected cases, not a
 full shape/stride/thread sweep, and the parallel group requests no full
 factors. The direct group tests lower bidiagonals only, through the private
