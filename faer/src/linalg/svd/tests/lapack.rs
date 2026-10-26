@@ -2,7 +2,7 @@
 //!
 //! Reference: LAPACK 3.12.0, distributed in OpenMathLib/OpenBLAS commit
 //! 791b02a1a00c996b66a894f6df93421c53b62d80, lapack-netlib/TESTING/EIG/
-//! {dchkbd.f,ddrvbd.f}, and TESTING/svd.in (threshold 50).
+//! {dchkbd.f,ddrvbd.f,dbdt03.f}, and TESTING/svd.in (threshold 50).
 //! Matrix construction and safely scaled checks are implemented in Rust;
 //! this is a bounded adaptation, not a translation of the Fortran drivers.
 //!
@@ -21,6 +21,7 @@ use crate::stats::prelude::*;
 use dyn_stack::MemBuffer;
 
 const THRESHOLD: f64 = 50.0;
+const BIDIAGONAL_SEED: u64 = 0x4C41_5041_434B;
 
 fn reconstruction_ratio(
 	a: MatRef<'_, f64>,
@@ -117,6 +118,25 @@ fn spectrum_ratio(s: &[f64], expected: &[f64], dimension: usize) -> f64 {
 	error / (dimension.max(1) as f64 * f64::EPSILON)
 }
 
+fn dchkbd_spectrum_ratio(with_vectors: &[f64], without_vectors: &[f64]) -> f64 {
+	assert_eq!(with_vectors.len(), without_vectors.len());
+	if !valid_spectrum(with_vectors) || !valid_spectrum(without_vectors) {
+		return f64::INFINITY;
+	}
+	let Some(&largest) = with_vectors.first() else {
+		return 0.0;
+	};
+	// DCHKBD test 19 uses a safe-minimum floor and no dimension factor.
+	let denominator = (f64::MIN_POSITIVE.sqrt() * largest.max(1.0))
+		.max(f64::EPSILON * largest.max(without_vectors[0]));
+	with_vectors
+		.iter()
+		.zip(without_vectors)
+		.fold(0.0, |error, (&a, &b)| {
+			error.max((a - b).abs() / denominator)
+		})
+}
+
 fn check_ratio(
 	failures: &mut Vec<String>,
 	context: &str,
@@ -159,7 +179,7 @@ fn run_case(
 		};
 		let mut u = Mat::<f64>::full(m, columns(left, m), prefill);
 		let mut v = Mat::<f64>::full(n, columns(right, n), prefill);
-		let mut s = Col::<f64>::zeros(rank);
+		let mut s = Col::<f64>::full(rank, f64::NAN);
 		let mut memory = MemBuffer::new(svd_scratch::<f64>(
 			m,
 			n,
@@ -243,13 +263,6 @@ fn diagonal_case(m: usize, n: usize, kind: usize) -> (Mat<f64>, Vec<f64>) {
 			let fraction = i as f64 / rank.saturating_sub(1).max(1) as f64;
 			scale
 				* match kind {
-					0 => {
-						if i == 0 {
-							1.0
-						} else {
-							0.0
-						}
-					},
 					1 => 0.0,
 					2 => 1.0,
 					3 | 6 | 7 => 1.0 - fraction * (1.0 - f64::EPSILON),
@@ -293,6 +306,161 @@ fn rotate(a: &mut Mat<f64>) {
 	}
 }
 
+fn logarithmic_bidiagonal(n: usize) -> Mat<f64> {
+	let mut rng = StdRng::seed_from_u64(BIDIAGONAL_SEED);
+	Mat::from_fn(n, n, |i, j| {
+		if i == j || i == j + 1 {
+			f64::EPSILON.powf(rng.random_range(-2.0..2.0))
+		} else {
+			0.0
+		}
+	})
+}
+
+fn run_bidiagonal_case(
+	failures: &mut Vec<String>,
+	name: &str,
+	b: MatRef<'_, f64>,
+	expected: Option<&[f64]>,
+	threshold: usize,
+) {
+	let n = b.ncols();
+	assert_eq!(b.nrows(), n);
+	assert!(n > 0);
+	// The private solver stores a square lower bidiagonal with an extra zero row.
+	let padded =
+		Mat::from_fn(n + 1, n, |i, j| if i < n { b[(i, j)] } else { 0.0 });
+	let params = SvdParams {
+		recursion_threshold: threshold,
+		..auto!(f64)
+	};
+	let mut reference: Option<Vec<f64>> = None;
+	for (want_u, want_v) in
+		[(true, true), (true, false), (false, true), (false, false)]
+	{
+		let context = format!(
+			"direct bidiagonal {name}, n={n}, threshold={threshold}, U={want_u}, V={want_v}"
+		);
+		let mut d = Col::from_fn(n, |i| b[(i, i)]);
+		let mut e =
+			Col::from_fn(n, |i| if i + 1 < n { b[(i + 1, i)] } else { 0.0 });
+		let mut u = Mat::full(n + 1, if want_u { n + 1 } else { 0 }, f64::NAN);
+		let mut v = Mat::full(n, if want_v { n } else { 0 }, f64::NAN);
+		let mut memory = MemBuffer::new(bidiag_real_svd_scratch::<f64>(
+			n,
+			want_u,
+			want_v,
+			Par::Seq,
+			params,
+		));
+		if let Err(error) = compute_bidiag_real_svd(
+			d.as_mut().try_as_col_major_mut().unwrap(),
+			e.as_mut().try_as_col_major_mut().unwrap(),
+			if want_u { Some(u.as_mut()) } else { None },
+			if want_v { Some(v.as_mut()) } else { None },
+			params,
+			Par::Seq,
+			MemStack::new(&mut memory),
+		) {
+			failures.push(format!("{context}: {error:?}"));
+			continue;
+		}
+		let s: Vec<_> = d.iter().copied().collect();
+		if !valid_spectrum(&s) {
+			failures.push(format!(
+				"{context}: DCHKBD test 18: invalid spectrum {s:?}"
+			));
+		}
+		if let Some(expected) = expected {
+			check_ratio(
+				failures,
+				&context,
+				"known spectrum",
+				spectrum_ratio(&s, expected, n),
+			);
+		}
+		if let Some(reference) = &reference {
+			check_ratio(
+				failures,
+				&context,
+				"DCHKBD test 19 (mode agreement)",
+				dchkbd_spectrum_ratio(reference, &s),
+			);
+		} else {
+			reference = Some(s.clone());
+		}
+		// Keep DCHKBD's denominator n despite the extra zero row in B.
+		let padding_correction = (n + 1) as f64 / n as f64;
+		if want_u {
+			check_ratio(
+				failures,
+				&context,
+				"DCHKBD test 16 (U orthogonality)",
+				orthogonality_ratio(u.as_ref()) * padding_correction,
+			);
+		}
+		if want_v {
+			check_ratio(
+				failures,
+				&context,
+				"DCHKBD test 17 (V orthogonality)",
+				orthogonality_ratio(v.as_ref()),
+			);
+		}
+		if want_u && want_v {
+			check_ratio(
+				failures,
+				&context,
+				"DCHKBD test 15 (reconstruction)",
+				reconstruction_ratio(
+					padded.as_ref(),
+					&s,
+					u.as_ref(),
+					v.as_ref(),
+				) * padding_correction,
+			);
+		}
+	}
+}
+
+#[test]
+#[ignore = "opt-in LAPACK numerical validation (#31)"]
+fn lapack_svd_f64_dchkbd_15_to_19() {
+	let mut failures = Vec::new();
+	for n in [1, 7, 8, 9, 127, 128, 129] {
+		for threshold in [8, 128] {
+			for kind in 1..=7 {
+				let (b, expected) = diagonal_case(n, n, kind);
+				run_bidiagonal_case(
+					&mut failures,
+					&format!("DCHKBD type {kind}"),
+					b.as_ref(),
+					Some(&expected),
+					threshold,
+				);
+			}
+			let b = logarithmic_bidiagonal(n);
+			run_bidiagonal_case(
+				&mut failures,
+				&format!("DCHKBD type 16, seed={BIDIAGONAL_SEED:#x}"),
+				b.as_ref(),
+				None,
+				threshold,
+			);
+		}
+	}
+	let mut split = Mat::<f64>::zeros(8, 8);
+	split[(4, 4)] = 1.0;
+	run_bidiagonal_case(
+		&mut failures,
+		"rank one (#33), pivot=4",
+		split.as_ref(),
+		Some(&[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+		4,
+	);
+	assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
 #[test]
 #[ignore = "opt-in LAPACK numerical validation (#31)"]
 fn lapack_svd_f64_diagonal_families() {
@@ -318,7 +486,7 @@ fn lapack_svd_f64_diagonal_families() {
 					a.as_ref(),
 					Some(&expected),
 					threshold,
-					0.0,
+					f64::NAN,
 				);
 			}
 		}
@@ -341,7 +509,7 @@ fn lapack_svd_f64_rotated_families() {
 					a.as_ref(),
 					Some(&expected),
 					threshold,
-					0.0,
+					f64::NAN,
 				);
 			}
 		}
@@ -352,33 +520,29 @@ fn lapack_svd_f64_rotated_families() {
 #[test]
 #[ignore = "opt-in LAPACK numerical validation (#31)"]
 fn lapack_svd_f64_bidiagonal_family() {
-	const SEED: u64 = 0x4C41_5041_434B;
 	let mut failures = Vec::new();
 	for n in [7, 8, 9, 127, 128, 129] {
-		let mut rng = StdRng::seed_from_u64(SEED);
-		let a = Mat::from_fn(n, n, |i, j| {
-			if i == j || i == j + 1 {
-				f64::EPSILON.powf(rng.random_range(-2.0..2.0))
-			} else {
-				0.0
-			}
-		});
+		let a = logarithmic_bidiagonal(n);
 		for threshold in [8, 128] {
 			run_case(
 				&mut failures,
-				&format!("DCHKBD type 16, lower bidiagonal, seed={SEED:#x}"),
+				&format!(
+					"DCHKBD type 16, lower bidiagonal, seed={BIDIAGONAL_SEED:#x}"
+				),
 				a.as_ref(),
 				None,
 				threshold,
-				0.0,
+				f64::NAN,
 			);
 			run_case(
 				&mut failures,
-				&format!("DCHKBD type 16, upper bidiagonal, seed={SEED:#x}"),
+				&format!(
+					"DCHKBD type 16, upper bidiagonal, seed={BIDIAGONAL_SEED:#x}"
+				),
 				a.transpose(),
 				None,
 				threshold,
-				0.0,
+				f64::NAN,
 			);
 		}
 	}
@@ -387,18 +551,23 @@ fn lapack_svd_f64_bidiagonal_family() {
 
 #[test]
 #[ignore = "opt-in LAPACK numerical validation (#31)"]
-fn lapack_svd_f64_rank_one_at_default_boundary() {
+fn lapack_svd_f64_rank_one_at_recursion_splits() {
 	let mut failures = Vec::new();
-	for n in [127, 128, 129] {
-		let (a, expected) = diagonal_case(n, n, 0);
-		run_case(
-			&mut failures,
-			"rank one (#33)",
-			a.as_ref(),
-			Some(&expected),
-			128,
-			0.0,
-		);
+	for (n, threshold) in [(8, 4), (127, 128), (128, 128), (129, 128)] {
+		let mut expected = vec![0.0; n];
+		expected[0] = 1.0;
+		for pivot in [0, n / 2, n - 1] {
+			let mut a = Mat::<f64>::zeros(n, n);
+			a[(pivot, pivot)] = 1.0;
+			run_case(
+				&mut failures,
+				&format!("rank one (#33), pivot={pivot}"),
+				a.as_ref(),
+				Some(&expected),
+				threshold,
+				f64::NAN,
+			);
+		}
 	}
 	assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
@@ -419,6 +588,26 @@ fn lapack_svd_f64_prefilled_outputs() {
 		);
 	}
 	assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn checkers_dchkbd_mode_agreement_has_no_dimension_factor() {
+	let with_vectors = [1.0; 128];
+	let mut without_vectors = with_vectors;
+	without_vectors[127] -= 64.0 * f64::EPSILON;
+	assert_eq!(dchkbd_spectrum_ratio(&with_vectors, &without_vectors), 64.0);
+	assert_eq!(
+		dchkbd_spectrum_ratio(&[0.0], &[f64::MIN_POSITIVE.sqrt()]),
+		1.0,
+	);
+	assert_eq!(dchkbd_spectrum_ratio(&[], &[]), 0.0);
+	for scale in [0.0, 1e-300, 1.0, 1e300] {
+		assert_eq!(dchkbd_spectrum_ratio(&[scale], &[scale]), 0.0);
+	}
+	for invalid in [f64::NAN, f64::INFINITY, -1.0] {
+		assert!(!dchkbd_spectrum_ratio(&[1.0], &[invalid]).is_finite());
+		assert!(!dchkbd_spectrum_ratio(&[invalid], &[1.0]).is_finite());
+	}
 }
 
 #[test]

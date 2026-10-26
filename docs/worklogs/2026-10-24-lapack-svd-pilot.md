@@ -14,32 +14,46 @@
   Keep the validation groups explicitly selectable as required by #31; their
   checker self-tests run ordinarily. Known failures remain failures in the
   explicit suite, with no tolerance relaxation or expected-failure assertion.
-- Separate the test port from production fixes. The full-factor reused-buffer
-  defect is already tracked by #41 and is reproduced here.
+- Test the bidiagonal adapter directly with DCHKBD checks 15–19, including
+  the source's safe-minimum spectrum-comparison denominator without a dimension
+  factor. Adapt faer's extra zero row explicitly while preserving the source's
+  denominator n. Direct tests cover all four U/V-presence combinations.
+- Put rank-one entries at the first, middle, and last diagonal positions,
+  including the documented size-8 / threshold-4 case. The initial first-entry
+  case did not expose the zero-child merge from #33; a passing first-entry
+  case is not evidence that the split-position defect is fixed.
+- Fill U, V and S with NaN before every call except in the reused-output
+  group, so an unwritten output entry fails a check rather than passing as a
+  zero.
+- Separate the test port from production fixes. The split-position defect and
+  the full-factor reused-buffer defect are tracked by #33 and #41; their cases
+  stay as regression coverage.
 
 ## Verification conclusions and constraints
 
-- At fork revision `d3215290618aa49a1e246c7c2d8989915688c594`, four of the
-  five validation groups passed and the reused-output group reproduced #41 in
-  tall U and wide V orthogonality. Rebased on `main` at
-  `5a27bcece2f9f0d1c1b94c9b42dd7bfc4a94dc39`, which includes the #41 fix from
-  #47, all 1,150 configured SVD calls pass. The largest of the 3,785 check
-  ratios is 1.77 against the threshold of 50, so the checkers' own rounding is
-  not close to deciding any result. Checker self-tests establish
-  zero/extreme-scale handling and rejection of corrupted factors, nonfinite
-  values, and invalid spectra.
+- On `main` at `5a27bcece2f9f0d1c1b94c9b42dd7bfc4a94dc39`, all 1,647
+  configured calls pass. The largest of the 5,237 check ratios is 1.77 against
+  the threshold of 50, so the checkers' own rounding is not close to deciding
+  any result. The same source against fork revision
+  `d3215290618aa49a1e246c7c2d8989915688c594`, before the #33 fix (#39) and the
+  #41 fix (#47), fails the split-position rank-one cases through both the
+  driver and the direct solver, and the reused full factors; the direct group
+  isolates #33 without the driver's reduction. Checker self-tests establish
+  zero/extreme-scale handling, the source's test-19 normalization, and
+  rejection of corrupted factors, nonfinite values, and invalid spectra.
 - The `linalg::svd` tests and the new checker tests pass. The ordinary
   workspace run has three triangular-matmul failures, the same three that
   `PATCHSET.md` records as failing on `main`; their names are listed with the
-  detailed results. All 55 workspace doctests pass; formatting, whitespace, and
-  inclusion of the test source and LAPACK license in the package were checked.
+  detailed results. All 55 workspace doctests pass; formatting and whitespace
+  were checked.
 - The crate's `license` metadata is changed to `MIT AND BSD-3-Clause` for the
   adapted LAPACK test file. Existing LAPACK ports in production code kept the
   metadata unchanged, so this needs a maintainer decision.
 - [Coverage, adaptations, reproduction instructions, and measured results](../lapack-svd-pilot.md)
-  are the detailed reference. The single local runtime observation does not
+  are the detailed reference. Local runtime observations do not
   establish comparative performance. No upstream faer revision was tested.
 - The checks are normwise; they do not establish relative accuracy of tiny
-  singular values. Full LAPACK fixtures/generators, other precisions, broader
-  layouts/threading, direct bidiagonal entrypoints, and scheduled CI remain
-  outside this pilot.
+  singular values. The direct group's LAPACK families other than 16 have a
+  zero off-diagonal and do not make the solver iterate. Full LAPACK
+  fixtures/generators, other precisions, broader layouts/threading, and
+  scheduled CI remain outside this pilot.
