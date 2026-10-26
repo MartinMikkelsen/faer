@@ -677,26 +677,23 @@ fn apply_block_householder_on_the_left_in_place_generic<
 			if row_split { 4 } else { threads },
 		);
 		// The column split is one section over `n_tasks` participants; its work is the two
-		// products of the update, `2 * M * N * K` multiply-adds at the block apply rate (one of
-		// them when the row split already did the reduction). The block apply rate is GEMM's with
-		// the narrow and short shapes included; at the GEMM rate this estimate was 0.6 to 0.8 of
-		// the measured serial time of a `N = 8` block (`QR 128`).
+		// products of the update, `2 * M * N * K` multiply-adds (one of them when the row split
+		// already did the reduction), plus the streaming of the `M * K` target
+		// (`cost::block_apply_estimate`). With the multiply-adds alone this estimate was 0.6 to
+		// 0.8 of the measured serial time of an `N = 8` block (`QR 128`).
 		if n_tasks > 1 {
-			let macs = M
-				.unbound()
-				.saturating_mul(N.unbound())
-				.saturating_mul(K.unbound())
-				.saturating_mul(if row_split { 1 } else { 2 });
 			let width = core::num::NonZeroUsize::new(n_tasks).unwrap();
+			let est = crate::utils::cost::block_apply_estimate::<T>(
+				M.unbound(),
+				N.unbound(),
+				K.unbound(),
+				if row_split { 1 } else { 2 },
+			);
 			#[cfg(feature = "par-trace")]
 			{
-				let est = crate::utils::cost::serial_time(
-					macs,
-					crate::utils::cost::rate::BLOCK_APPLY.of::<T>(),
-				);
 				crate::utils::cost::trace::shape("n_tasks", M.unbound(), N.unbound(), K.unbound());
 				crate::utils::cost::trace_pub(
-					macs,
+					M.unbound() * N.unbound() * K.unbound(),
 					1,
 					est,
 					par.shape().dispatch_cost(width),
@@ -704,14 +701,7 @@ fn apply_block_householder_on_the_left_in_place_generic<
 					core::panic::Location::caller(),
 				);
 			}
-			let pays = par.shape().pays(
-				crate::utils::cost::serial_time(
-					macs,
-					crate::utils::cost::rate::BLOCK_APPLY.of::<T>(),
-				),
-				1,
-				width,
-			);
+			let pays = par.shape().pays(est, 1, width);
 			#[cfg(feature = "par-trace")]
 			let pays = match crate::utils::cost::trace::N_TASKS_MODE.load(core::sync::atomic::Ordering::Relaxed) {
 				1 => (M.unbound() * K.unbound()).saturating_mul(4 * M.unbound()) >= gemm::get_threading_threshold(),

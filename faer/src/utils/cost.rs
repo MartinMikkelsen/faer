@@ -221,12 +221,6 @@ pub mod rate {
 	pub const TRIDIAG: Rate = Rate { real: 0.339, cplx: 1.16 };
 	/// Matrix-vector product, per matrix element.
 	pub const MATVEC: Rate = Rate { real: 0.1, cplx: 0.34 };
-	/// Block Householder apply near the parallel floor (`M` 64 to 128, basis width `N` 2 to 32),
-	/// per multiply-add of the two products of the update, `2*M*N*K`. Above GEMM's rate because
-	/// a narrow product streams its target and a short one pays the fixed cost of the
-	/// triangular and temporary steps (`QR 128`, `N = 8`: 0.048 to 0.053 against 0.036); the
-	/// per-shape values are in `faer-benchmark` `data/probes/20261026-qr128-regions`.
-	pub const BLOCK_APPLY: Rate = Rate { real: 0.054, cplx: 0.206 };
 	/// Divide and conquer bidiagonal SVD (`bidiag_svd`, both singular vectors, non deflating
 	/// data), the whole serial solve of size `m` per `m^2`; the join of size `n` has the two
 	/// halves as work, `2 (n/2)^2`. The time is `45 m^2 + 0.023 m^3` ns (fit over `m` 64 to 512,
@@ -408,6 +402,24 @@ pub(crate) fn halves_pays<T: crate::ComplexField>(
 	join_pays::<T>(par, h.saturating_pow(power).saturating_mul(2), rate)
 }
 
+/// Estimated serial time of a block Householder apply with an `m x n` basis on an `m x k`
+/// target: the two products of the update, `products * m * n * k` multiply-adds at the GEMM rate
+/// (`products` is 2, or 1 when the row split already did the reduction), plus a streaming term
+/// per target element (the temporaries and the triangular steps, `m * k` elements at the rank one
+/// apply rate). Fitted over `m` 24 to 512, `n` 2 to 32 with one thread: the median error is 7
+/// percent (f64), 4 percent (c64); a single rate per multiply-add was 1.0 to 2.7 times too low
+/// for the narrow bases (`n` 2 to 8).
+pub(crate) fn block_apply_estimate<T: crate::ComplexField>(
+	m: usize,
+	n: usize,
+	k: usize,
+	products: usize,
+) -> Duration {
+	let macs = m.saturating_mul(n).saturating_mul(k).saturating_mul(products);
+	serial_time(macs, rate::GEMM_MAC.of::<T>())
+		+ serial_time(m.saturating_mul(k), rate::HOUSEHOLDER_RANK_ONE.of::<T>())
+}
+
 /// Serial time of `count` units at `ns` nanoseconds each.
 pub(crate) fn serial_time(count: usize, ns: f64) -> Duration {
 	Duration::from_secs_f64(count as f64 * ns * 1e-9)
@@ -563,7 +575,6 @@ mod tests {
 		("matvec", rate::MATVEC, 1),
 		("householder_rank_one", rate::HOUSEHOLDER_RANK_ONE, 1),
 		("gemm_mac", rate::GEMM_MAC, 1),
-		("block_apply", rate::BLOCK_APPLY, 1),
 		("sparse_matmul", rate::SPARSE_MATMUL, 1),
 	];
 
@@ -883,21 +894,31 @@ mod tests {
 	}
 
 	/// The column split of the block apply at the shapes of a `128 x 128` QR (block 8, target
-	/// `K = M - 8`) on a team of 6: serial times measured with one thread are 2.75 us (`M = 56`)
-	/// to 11.9 us (`M = 128`); the estimate is within 0.8 to 1.2 of them and the split starts at
-	/// `M = 80`, where the estimate first reaches `3 * 1.4 us`.
+	/// `K = M - 8`) on a team of 6. The serial time of the apply is the GEMM work at the GEMM rate
+	/// plus a streaming term per target element (temporaries, triangular steps) at the rank one
+	/// apply rate; measured with one thread: 2.75 us (`M = 56`) to 11.9 us (`M = 128`), the
+	/// estimate is 0.78 to 1.03 of it. The split starts at `M = 80`, where the estimate first
+	/// reaches `3 * 1.4 us`.
 	#[cfg(feature = "threadteam")]
 	#[test]
 	fn block_apply_split_starts_where_the_estimate_pays() {
 		use threadteam::DispatchCosts;
 		let team = ParShape::Team(nz(6), DispatchCosts::apple_m5());
 		let pays = |m: usize| {
-			ParThreshold::Derived.region_pays::<f64>(team, 2 * m * 8 * (m - 8), rate::BLOCK_APPLY, 1)
+			let (n, k) = (8, m - 8);
+			pays_at(block_apply_estimate::<f64>(m, n, k, 2), 1, team.dispatch_cost(nz(6)))
 		};
 		assert!(!pays(72));
 		assert!(pays(80));
-		// at the GEMM rate the estimate was 0.6 to 0.8 of the measured time and started at 96
-		assert!(!ParThreshold::Derived.region_pays::<f64>(team, 2 * 88 * 8 * 80, rate::GEMM_MAC, 1));
+		// the GEMM term alone was 0.6 to 0.8 of the measured time and started at M = 96
+		let gemm_only = |m: usize| {
+			pays_at(serial_time(2 * m * 8 * (m - 8), rate::GEMM_MAC.real), 1, team.dispatch_cost(nz(6)))
+		};
+		assert!(!gemm_only(88) && gemm_only(96));
+		// complex values: the streaming term is 0.54 ns per element, the GEMM 0.162 per multiply-add
+		let c = block_apply_estimate::<c64>(100, 8, 92, 2).as_secs_f64() * 1e9;
+		let want = 2.0 * 100.0 * 8.0 * 92.0 * rate::GEMM_MAC.cplx + 100.0 * 92.0 * rate::HOUSEHOLDER_RANK_ONE.cplx;
+		assert!((c - want).abs() < 2.0, "{c} {want}");
 	}
 
 	#[cfg(feature = "threadteam")]
