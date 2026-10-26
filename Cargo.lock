@@ -2743,8 +2743,8 @@ dependencies = [
 
 [[package]]
 name = "t4a-private-gemm-x86"
-version = "0.1.25"
-source = "git+https://github.com/tensor4all/t4a-private-gemm-x86?rev=4f51ae9a83a851fad46fba13aa3d92bf136cf49d#4f51ae9a83a851fad46fba13aa3d92bf136cf49d"
+version = "0.1.26"
+source = "git+https://github.com/tensor4all/t4a-private-gemm-x86?rev=212cacf5b4a2f79f5e1a409542ff0e91930caa1f#212cacf5b4a2f79f5e1a409542ff0e91930caa1f"
 dependencies = [
  "crossbeam",
  "defer",

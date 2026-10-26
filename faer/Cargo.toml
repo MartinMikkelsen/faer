@@ -46,7 +46,7 @@ nano-gemm = { version = "0.2.2", default-features = false }
 # name `private_gemm_x86`, so no `use` changes). exp/team-gemm-executor: git rev of 0.1.25
 # (tensor4all/t4a-private-gemm-x86#1), which adds `gemm_with(.., &dyn Fork)` so a `Par::Team`
 # runs the kernel on its own members; the registry release has no `Fork`
-t4a-private-gemm-x86 = { git = "https://github.com/tensor4all/t4a-private-gemm-x86", rev = "4f51ae9a83a851fad46fba13aa3d92bf136cf49d", default-features = false, optional = true }
+t4a-private-gemm-x86 = { git = "https://github.com/tensor4all/t4a-private-gemm-x86", rev = "212cacf5b4a2f79f5e1a409542ff0e91930caa1f", default-features = false, optional = true }
 
 [features]
 default = [
