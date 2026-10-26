@@ -83,6 +83,14 @@ pub fn cholesky_in_place<'out, I: Index, T: ComplexField>(
 					pvt = i;
 				}
 			}
+			// The pivot loop compares only later pivots with `tol`, which is
+			// zero when the largest diagonal entry is: that matrix has rank zero,
+			// as LAPACK `dpstrf` reports.
+			if ajj == zero::<T::Real>() {
+				rank = 0;
+				a.fill(zero());
+				break 'exit;
+			}
 			let tol = eps::<T::Real>() * from_f64::<T::Real>(n as f64) * &ajj;
 			let mut k = 0usize;
 			while k < n {
