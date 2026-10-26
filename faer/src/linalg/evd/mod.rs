@@ -2539,3 +2539,104 @@ mod scale_and_empty_tests {
 		assert_eq!(eig.S().dim(), 0);
 	}
 }
+#[cfg(test)]
+mod tridiagonal_range_tests {
+	//! Regression tests for `tensor4all/faer#57`: the tridiagonal backend
+	//! normalized by the reciprocal of the largest entry, which has no finite
+	//! value for a subnormal spectrum, and the divide-and-conquer backend did
+	//! not normalize at all, so a spectrum near the top of the range overflowed
+	//! instead. Both spectra below are finite and exactly representable.
+	use super::*;
+	use crate::assert;
+	use crate::diag::{DiagMut, DiagRef};
+	use crate::dyn_stack::MemBuffer;
+
+	fn tridiagonal_evd(
+		diag: &[f64],
+		offdiag: &[f64],
+		threshold: usize,
+	) -> Result<Vec<f64>, EvdError> {
+		let n = diag.len();
+		let mut s = vec![0.0; n];
+		let mut u = Mat::<f64>::zeros(n, n);
+		let mut params = Spec::<SelfAdjointEvdParams, f64>::default();
+		params.recursion_threshold = threshold;
+		let mut mem =
+			MemBuffer::new(tridiagonal_self_adjoint_evd_scratch::<f64>(
+				n,
+				ComputeEigenvectors::Yes,
+				Par::Seq,
+				params,
+			));
+		tridiagonal_self_adjoint_evd(
+			DiagRef::from_slice(diag),
+			DiagRef::from_slice(offdiag),
+			DiagMut::from_slice_mut(&mut s),
+			Some(u.as_mut()),
+			Par::Seq,
+			MemStack::new(&mut mem),
+			params,
+		)?;
+		Ok(s)
+	}
+
+	/// the reported matrix, and the same 2x2 with a coupling that is not
+	/// negligible
+	#[test]
+	fn two_by_two_at_the_range_limit() {
+		let s = tridiagonal_evd(&[-1e308, 1e308], &[0.0], usize::MAX).unwrap();
+		assert_eq!(s, [-1e308, 1e308]);
+		let s =
+			tridiagonal_evd(&[-1e308, 1e308], &[1e308], usize::MAX).unwrap();
+		let sqrt2 = 2.0f64.sqrt();
+		assert_eq!(s[0], -sqrt2 * 1e308);
+		assert_eq!(s[1], sqrt2 * 1e308);
+	}
+
+	/// the reported subnormal matrix, whose spectrum is `s * (2 - sqrt2, 2,
+	/// 2 + sqrt2)`
+	#[test]
+	fn subnormal_three_by_three() {
+		let s = 1e-310f64;
+		let sqrt2 = 2.0f64.sqrt();
+		let got =
+			tridiagonal_evd(&[2.0 * s; 3], &[-s, -s], usize::MAX).unwrap();
+		for (got, exact) in
+			got.iter()
+				.zip([s * (2.0 - sqrt2), 2.0 * s, s * (2.0 + sqrt2)])
+		{
+			assert!(
+				(got - exact).abs() <= 1e-13 * s,
+				"got {got:e}, exact {exact:e}"
+			);
+		}
+	}
+
+	/// both backends, at both ends of the range, against the closed form of a
+	/// constant tridiagonal matrix
+	#[test]
+	fn spectrum_at_both_range_limits() {
+		let n = 5;
+		for scale in [1e308f64, 1e-310] {
+			let diag = vec![scale; n];
+			let offdiag = vec![0.3 * scale; n - 1];
+			// `usize::MAX` keeps the QR fallback in charge, `4` recurses
+			for threshold in [usize::MAX, 4] {
+				let s = tridiagonal_evd(&diag, &offdiag, threshold).unwrap();
+				for (k, x) in s.iter().enumerate() {
+					let exact = scale
+						* (1.0
+							+ 0.6
+								* (core::f64::consts::PI * (n - k) as f64
+									/ (n + 1) as f64)
+									.cos());
+					assert!(x.is_finite());
+					assert!(
+						(x - exact).abs() <= 1e-13 * scale,
+						"threshold {threshold}: got {x:e}, exact {exact:e}"
+					);
+				}
+			}
+		}
+	}
+}

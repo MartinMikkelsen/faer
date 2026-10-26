@@ -6,6 +6,33 @@ use linalg::householder::*;
 use linalg::jacobi::JacobiRotation;
 use linalg::matmul::{dot, matmul};
 use linalg::svd::bidiag_svd::secular_eq_root_finder;
+/// Scales `(diag, offdiag)` into the range where the algorithm's squares and
+/// reciprocals stay finite, and returns the factor that takes the computed
+/// eigenvalues back to the input scale. LAPACK's `dsteqr` rescales `anorm` the
+/// same way: a spectrum that is finite can still overflow a shift or underflow
+/// a reciprocal.
+fn normalize_range<T: RealField>(
+	diag: &mut ColMut<'_, T, usize, ContiguousFwd>,
+	offdiag: &mut ColMut<'_, T, usize, ContiguousFwd>,
+) -> T {
+	let ref anorm = diag.rb().norm_max().fmax(offdiag.rb().norm_max());
+	// below `lo` the square of an entry of size `eps * anorm` underflows, above
+	// `hi` an entry squared overflows
+	let ref lo = min_positive::<T>().sqrt() / eps::<T>();
+	let ref hi = max_positive::<T>().sqrt();
+	if *anorm == zero() || (*anorm > *lo && *anorm < *hi) {
+		return one();
+	}
+	// dividing by `anorm` also works where its reciprocal has no finite value,
+	// which is what a subnormal norm would ask for
+	for x in diag.rb_mut().iter_mut() {
+		*x = x.copy() / anorm;
+	}
+	for x in offdiag.rb_mut().iter_mut() {
+		*x = x.copy() / anorm;
+	}
+	anorm.copy()
+}
 pub(crate) fn qr_algorithm<T: RealField>(
 	diag: ColMut<'_, T, usize, ContiguousFwd>,
 	offdiag: ColMut<'_, T, usize, ContiguousFwd>,
@@ -24,6 +51,7 @@ pub(crate) fn qr_algorithm<T: RealField>(
 	}
 	let ref eps = eps::<T>();
 	let ref sml = min_positive::<T>();
+	let ref scale = normalize_range(&mut diag, &mut offdiag);
 	if n == 2 {
 		let ref a = diag[0].copy();
 		let ref d = diag[1].copy();
@@ -85,20 +113,9 @@ pub(crate) fn qr_algorithm<T: RealField>(
 				}
 			}
 		}
-		diag[0] = r0.copy();
-		diag[1] = r1.copy();
+		diag[0] = r0 * scale;
+		diag[1] = r1 * scale;
 		return Ok(());
-	}
-	let ref max = diag.norm_max().fmax(offdiag.norm_max());
-	if *max == zero() {
-		return Ok(());
-	}
-	let ref max_inv = max.recip();
-	for x in diag.rb_mut().iter_mut() {
-		*x *= max_inv;
-	}
-	for x in offdiag.rb_mut().iter_mut() {
-		*x *= max_inv;
 	}
 	let mut end = n - 1;
 	let mut start = 0;
@@ -121,10 +138,10 @@ pub(crate) fn qr_algorithm<T: RealField>(
 		}
 		if iter + 1 == max_iters {
 			for x in diag.rb_mut().iter_mut() {
-				*x *= max;
+				*x *= scale;
 			}
 			for x in offdiag.rb_mut().iter_mut() {
-				*x *= max;
+				*x *= scale;
 			}
 			return Err(EvdError::NoConvergence);
 		}
@@ -193,7 +210,7 @@ pub(crate) fn qr_algorithm<T: RealField>(
 		}
 	}
 	for x in diag.rb_mut().iter_mut() {
-		*x *= max;
+		*x *= scale;
 	}
 	Ok(())
 }
@@ -635,14 +652,15 @@ fn divide_and_conquer_recurse<T: RealField>(
 	Ok(())
 }
 pub(crate) fn divide_and_conquer<T: RealField>(
-	diag: ColMut<'_, T, usize, ContiguousFwd>,
-	offdiag: ColMut<'_, T, usize, ContiguousFwd>,
+	mut diag: ColMut<'_, T, usize, ContiguousFwd>,
+	mut offdiag: ColMut<'_, T, usize, ContiguousFwd>,
 	u: MatMut<'_, T, usize, usize>,
 	par: Par,
 	stack: &mut MemStack,
 	qr_fallback_threshold: usize,
 ) -> Result<(), EvdError> {
 	let n = diag.nrows();
+	let ref scale = normalize_range(&mut diag, &mut offdiag);
 	let (mut pl_before, stack) = stack.make_with(n, |_| 0usize);
 	let (mut pl_after, stack) = stack.make_with(n, |_| 0usize);
 	let (mut pr, stack) = stack.make_with(n, |_| 0usize);
@@ -655,9 +673,9 @@ pub(crate) fn divide_and_conquer<T: RealField>(
 	let (mut shifts, stack) = unsafe { temp_mat_uninit(n, 1, stack) };
 	let (mut repaired_u, stack) = unsafe { temp_mat_uninit(n, n, stack) };
 	let (mut tmp, _) = unsafe { temp_mat_uninit(n, n, stack) };
-	divide_and_conquer_recurse(
-		diag,
-		offdiag,
+	let res = divide_and_conquer_recurse(
+		diag.rb_mut(),
+		offdiag.rb_mut(),
 		u,
 		par,
 		&mut pl_before,
@@ -689,7 +707,11 @@ pub(crate) fn divide_and_conquer<T: RealField>(
 		repaired_u.as_mat_mut().try_as_col_major_mut().unwrap(),
 		tmp.as_mat_mut().try_as_col_major_mut().unwrap(),
 		qr_fallback_threshold,
-	)
+	);
+	for x in diag.iter_mut() {
+		*x *= scale;
+	}
+	res
 }
 pub(crate) fn divide_and_conquer_scratch<T: ComplexField>(
 	n: usize,
