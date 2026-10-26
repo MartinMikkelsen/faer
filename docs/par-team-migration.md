@@ -187,3 +187,4 @@ a region runs in parallel when `estimate >= PAYS * sections * dispatch_cost(widt
   the sparse numeric matmul forks the team; the LU swap stage splits it in two.
 * Build matrix: default features, `--no-default-features --features std,linalg`, and
   `--features threadteam`, each with `--all-targets`.
+* x86_64: a `Team` never hands its size to `private_gemm_x86` (`thread::outside_threads`), and `gemm_tiled` runs the kernel per tile with one thread; tests in `utils::team::tests` (record: `docs/worklogs/2026-10-26-team-authority-x86.md`).

@@ -226,7 +226,8 @@ pub fn spicy_matmul<I: Index, T: ComplexField>(
 					B.col_stride(),
 					conj_B == Conj::Yes,
 					&raw const alpha as _,
-					par.degree(),
+					// a `Team` token never threads outside its team: one thread per participant
+					crate::utils::thread::outside_threads(&par),
 				);
 				return;
 			}

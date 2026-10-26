@@ -219,8 +219,35 @@ fn grain_range(len: usize, parts: usize, idx: usize, grain: usize) -> (usize, us
 	(edge(idx), edge(idx + 1))
 }
 
+/// The instruction set and dtype of the `private_gemm_x86` kernel for `E`, if it has one here.
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+fn x86_kernel<E: 'static>() -> Option<(private_gemm_x86::InstrSet, private_gemm_x86::DType)> {
+	use core::any::TypeId;
+	use private_gemm_x86::*;
+	let id = TypeId::of::<E>();
+	let dtype = if id == TypeId::of::<f64>() {
+		DType::F64
+	} else if id == TypeId::of::<f32>() {
+		DType::F32
+	} else if id == TypeId::of::<num_complex::Complex<f64>>() {
+		DType::C64
+	} else if id == TypeId::of::<num_complex::Complex<f32>>() {
+		DType::C32
+	} else {
+		return None;
+	};
+	if std::arch::is_x86_feature_detected!("avx512f") {
+		Some((InstrSet::Avx512, dtype))
+	} else if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma") {
+		Some((InstrSet::Avx256, dtype))
+	} else {
+		None
+	}
+}
+
 /// `dst := alpha * dst + beta * lhs * rhs` (the contract of `gemm::gemm`) with the output cut
-/// into a `pm x pn` grid of tiles, one sequential `gemm::gemm` per team member. The depth `k`
+/// into a `pm x pn` grid of tiles, one sequential `gemm::gemm` (on x86_64 the single threaded
+/// `private_gemm_x86` kernel, as the plain entry) per team member. The depth `k`
 /// is never split, so no reduction and no partial buffer is needed. Each member's call blocks
 /// for the caches by itself (the `gemm` crate chooses `kc`, `mc` and `nc` from the cache sizes),
 /// so a tile is the unit of work of a member and the blocking inside it is unchanged.
@@ -253,7 +280,46 @@ pub(crate) unsafe fn gemm_tiled<E: 'static + Copy + Send + Sync>(
 	conj_lhs: bool,
 	conj_rhs: bool,
 ) {
+	// On x86_64 the plain entry runs the `private_gemm_x86` kernel (for `Seq` and `Rayon`), so a
+	// tile does too, with one thread: the team is the parallelism, and the kernel starts no job
+	// outside it. Elsewhere, and below AVX2, the `gemm` crate with `Parallelism::None`.
+	#[cfg(all(target_arch = "x86_64", feature = "std"))]
+	let x86 = x86_kernel::<E>();
 	let seq = |dst: *mut E, lhs: *const E, rhs: *const E, m: usize, n: usize| unsafe {
+		#[cfg(all(target_arch = "x86_64", feature = "std"))]
+		if let Some((feat, dtype)) = x86 {
+			use private_gemm_x86::*;
+			// `gemm::gemm` is `dst := alpha * dst + beta * lhs * rhs`, the kernel's
+			// `dst := (beta == Add ? dst : 0) + alpha * lhs * rhs`: `alpha` of the call is the
+			// identity whenever `read_dst` holds (the plain entry only passes 0 or 1)
+			return private_gemm_x86::gemm(
+				dtype,
+				IType::U64,
+				feat,
+				m,
+				n,
+				k,
+				dst as *mut (),
+				dst_rs,
+				dst_cs,
+				core::ptr::null(),
+				core::ptr::null(),
+				DstKind::Full,
+				if read_dst { Accum::Add } else { Accum::Replace },
+				lhs as *const (),
+				lhs_rs,
+				lhs_cs,
+				conj_lhs,
+				core::ptr::null(),
+				0,
+				rhs as *const (),
+				rhs_rs,
+				rhs_cs,
+				conj_rhs,
+				&raw const beta as *const (),
+				1,
+			);
+		}
 		gemm::gemm(
 			m,
 			n,
@@ -696,5 +762,147 @@ mod tests {
 			);
 			assert!(peak.load(Ordering::Relaxed) <= 6, "left = {left}");
 		}
+	}
+	#[test]
+	fn a_team_token_hands_no_threads_to_an_outside_runtime() {
+		with_par(4, |par| {
+			assert_eq!(crate::utils::thread::parallelism_degree(&par), 4);
+			assert_eq!(crate::utils::thread::outside_threads(&par), 1);
+			assert!(crate::utils::thread::is_team(&par));
+		});
+		assert_eq!(crate::utils::thread::outside_threads(&Par::Seq), 1);
+		assert!(!crate::utils::thread::is_team(&Par::Seq));
+	}
+
+	/// The triangular products (the Cholesky trailing update) used to pass the team size to the
+	/// `private_gemm_x86` kernel, outside the team. A team that pays now recurses on the team,
+	/// its rectangular blocks reaching `gemm_tiled`.
+	#[test]
+	fn triangular_products_on_the_team_match_sequential_and_stay_on_it() {
+		use crate::linalg::matmul::triangular::{matmul as tri_matmul, BlockStructure};
+		let (n, k) = (768, 768);
+		let a = rand_mat(n, k, 5);
+		let b = rand_mat(k, n, 6);
+		let lower = |par: Par| {
+			let mut c = rand_mat(n, n, 7);
+			tri_matmul(c.as_mut(), BlockStructure::TriangularLower, Accum::Add, a.as_ref(), BlockStructure::Rectangular, b.as_ref(), BlockStructure::Rectangular, 0.5, par);
+			c
+		};
+		let upper = |par: Par| {
+			let mut c = rand_mat(n, n, 8);
+			tri_matmul(c.as_mut(), BlockStructure::TriangularUpper, Accum::Replace, a.as_ref(), BlockStructure::Rectangular, b.as_ref(), BlockStructure::Rectangular, 1.0, par);
+			c
+		};
+		let (want_l, want_u) = (lower(Par::Seq), upper(Par::Seq));
+		let ((got_l, got_u), st) = counted(6, |mut par| (lower(par.reborrow()), upper(par.reborrow())));
+		let tri = |m: &Mat<f64>, w: &Mat<f64>, lo: bool| {
+			let mut d: f64 = 0.0;
+			for j in 0..n {
+				for i in 0..n {
+					if (lo && i >= j) || (!lo && i <= j) {
+						d = d.max((m[(i, j)] - w[(i, j)]).abs());
+					}
+				}
+			}
+			d
+		};
+		assert!(tri(&got_l, &want_l, true) < 1e-9);
+		assert!(tri(&got_u, &want_u, false) < 1e-9);
+		// the work ran as team sections, not as an outside job
+		assert!(st.gemm_tiled > 0 || st.split.iter().skip(2).any(|&c| c > 0), "{st:?}");
+	}
+
+	/// `spicy_matmul` (LDLT, supernodal Cholesky) on a team token: one thread per participant
+	/// through the x86 kernel, the same result as sequential.
+	#[test]
+	fn spicy_matmul_on_a_team_matches_sequential() {
+		use crate::linalg::matmul::internal::spicy_matmul;
+		use crate::linalg::matmul::triangular::BlockStructure;
+		if !crate::linalg::matmul::internal::has_spicy_matmul::<f64>() {
+			return;
+		}
+		let (n, k) = (768, 512);
+		let a = rand_mat(n, k, 9);
+		let b = rand_mat(k, n, 10);
+		let run = |par: Par| {
+			let mut c = rand_mat(n, n, 11);
+			spicy_matmul::<usize, f64>(c.as_mut(), BlockStructure::TriangularLower, None, None, Accum::Add, a.as_ref(), crate::Conj::No, b.as_ref(), crate::Conj::No, None, 0.5, par, dyn_stack::MemStack::new(&mut []));
+			c
+		};
+		let want = run(Par::Seq);
+		let got = with_par(6, |par| run(par));
+		let mut d: f64 = 0.0;
+		for j in 0..n {
+			for i in j..n {
+				d = d.max((want[(i, j)] - got[(i, j)]).abs());
+			}
+		}
+		assert!(d < 1e-9, "{d}");
+	}
+
+	/// `gemm_tiled` (cut into tiles, through the x86 kernel where there is one) against the `gemm` crate, for the four dtypes and
+	/// both accumulation modes.
+	#[test]
+	fn gemm_tiled_matches_the_gemm_crate_for_every_dtype() {
+		use num_complex::Complex;
+		#[cfg(all(target_arch = "x86_64", feature = "std"))]
+		assert_eq!(
+			x86_kernel::<f64>().is_some(),
+			std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma")
+		);
+		fn check<E: 'static + Copy + Send + Sync + core::fmt::Debug>(
+			par: &mut Par<'_>,
+			one: E,
+			from: impl Fn(f64) -> E,
+			err: impl Fn(E, E) -> f64,
+			cplx: bool,
+		) {
+			let (m, n, k) = (301, 263, 190);
+			let gen = |len: usize, seed: u64| -> Vec<E> {
+				let mut x = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+				(0..len)
+					.map(|_| {
+						x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+						from(((x >> 11) as f64 / (1u64 << 53) as f64) - 0.5)
+					})
+					.collect()
+			};
+			let (a, b) = (gen(m * k, 1), gen(k * n, 2));
+			let zero = from(0.0);
+			let alpha = from(1.25);
+			for read_dst in [false, true] {
+				for conj in [false, true] {
+					if conj && !cplx {
+						continue;
+					}
+					let base = gen(m * n, 3);
+					let (mut want, mut got) = (base.clone(), base);
+					let acc = if read_dst { one } else { zero };
+					unsafe {
+						gemm::gemm(
+							m, n, k, want.as_mut_ptr(), m as isize, 1, read_dst,
+							a.as_ptr(), m as isize, 1, b.as_ptr(), k as isize, 1,
+							acc, alpha, false, conj, conj, gemm::Parallelism::None,
+						);
+						let Par::Team(team) = par.reborrow() else { unreachable!() };
+						gemm_tiled::<E>(
+							team, m, n, k, 1e3, got.as_mut_ptr(), m as isize, 1, read_dst,
+							a.as_ptr(), m as isize, 1, b.as_ptr(), k as isize, 1,
+							acc, alpha, conj, conj,
+						);
+					}
+					let d = want.iter().zip(&got).map(|(&w, &g)| err(w, g)).fold(0.0, f64::max);
+					assert!(d < 1e-3, "read_dst {read_dst} conj {conj}: {d}");
+				}
+			}
+		}
+		with_par(5, |mut par| {
+			check::<f64>(&mut par, 1.0, |x| x, |w, g| (w - g).abs(), false);
+			check::<f32>(&mut par, 1.0, |x| x as f32, |w, g| (w - g).abs() as f64, false);
+			check::<Complex<f64>>(&mut par, Complex::new(1.0, 0.0), |x| Complex::new(x, 0.5 - x), |w, g| (w - g).norm(), true);
+			check::<Complex<f32>>(&mut par, Complex::new(1.0, 0.0), |x| Complex::new(x as f32, 0.5 - x as f32), |w, g| (w - g).norm() as f64, true);
+		});
+		let (_, st) = counted(5, |mut par| check::<f64>(&mut par, 1.0, |x| x, |w, g| (w - g).abs(), false));
+		assert!(st.gemm_tiled >= 2 && st.gemm_below_floor == 0, "{st:?}");
 	}
 }

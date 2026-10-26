@@ -100,6 +100,29 @@ pub mod thread {
 		}
 	}
 
+	/// the thread count to hand to a threading runtime that lives outside `par` (the
+	/// `private_gemm_x86` kernel starts spindle jobs when it is given more than one thread).
+	/// A `Team` token is the authority over its members only, so it never hands its size to an
+	/// outside runtime: the call stays on the calling participant.
+	#[inline]
+	pub fn outside_threads(parallelism: &Par) -> usize {
+		match parallelism {
+			#[cfg(feature = "threadteam")]
+			Par::Team(_) => 1,
+			other => parallelism_degree(other),
+		}
+	}
+
+	/// whether `par` is a `Team` token
+	#[inline]
+	pub fn is_team(parallelism: &Par) -> bool {
+		match parallelism {
+			#[cfg(feature = "threadteam")]
+			Par::Team(_) => true,
+			_ => false,
+		}
+	}
+
 	/// the raw Rayon `iter.for_each(f)` of the regions that never used spindle, with `Team`
 	/// consuming the team of a `Team` (items dealt in static blocks, one part per member)
 	#[cfg(feature = "rayon")]

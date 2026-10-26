@@ -617,8 +617,20 @@ fn mat_x_mat_into_lower_impl_unchecked<'N, 'K, T: ComplexField>(
 	conj_rhs: Conj,
 	par: Par,
 ) {
+	// Two sections per level (the outer join and the join nested in its second half); the
+	// unit is a multiply-add of the product into one triangle, `n*n*k/2`, at the GEMM rate.
+	let pays = crate::utils::cost::join_pays::<T>(
+		&par,
+		dst.nrows().unbound().saturating_mul(dst.nrows().unbound()).saturating_mul(lhs.ncols().unbound()) / 2,
+		crate::utils::cost::rate::GEMM_MAC,
+		2,
+	);
+	// The `private_gemm_x86` kernel threads outside the caller, which a `Team` token must not
+	// do. A team that pays runs the recursion below on the team (its rectangular products reach
+	// `gemm_tiled`); a team that does not pay takes the kernel with one thread.
+	let team_recurses = pays && crate::utils::thread::is_team(&par);
 	#[cfg(all(target_arch = "x86_64", feature = "std"))]
-	if const {
+	if !team_recurses && const {
 		T::IS_NATIVE_F64
 			|| T::IS_NATIVE_F32
 			|| T::IS_NATIVE_C64
@@ -683,7 +695,8 @@ fn mat_x_mat_into_lower_impl_unchecked<'N, 'K, T: ComplexField>(
 						rhs.col_stride(),
 						conj_rhs == Conj::Yes,
 						alpha as *const T as *const (),
-						par.degree(),
+						// a `Team` token never threads outside its team
+						crate::utils::thread::outside_threads(&par),
 					);
 					return;
 				}
@@ -691,25 +704,12 @@ fn mat_x_mat_into_lower_impl_unchecked<'N, 'K, T: ComplexField>(
 		}
 	}
 	let N = dst.nrows();
-	let K = lhs.ncols();
 	let n = N.unbound();
-	let k = K.unbound();
 	debug_assert!(dst.nrows() == dst.ncols());
 	debug_assert!(dst.nrows() == lhs.nrows());
 	debug_assert!(dst.ncols() == rhs.ncols());
 	debug_assert!(lhs.ncols() == rhs.nrows());
-	// Two sections per level (the outer join and the join nested in its second half); the
-	// unit is a multiply-add of the product into one triangle, `n*n*k/2`, at the GEMM rate.
-	let par = if crate::utils::cost::join_pays::<T>(
-		&par,
-		n.saturating_mul(n).saturating_mul(k) / 2,
-		crate::utils::cost::rate::GEMM_MAC,
-		2,
-	) {
-		par
-	} else {
-		Par::Seq
-	};
+	let par = if pays { par } else { Par::Seq };
 	if n <= 16 {
 		let op = {
 			#[inline(never)]
