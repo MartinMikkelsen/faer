@@ -28,24 +28,45 @@
 - Separate the test port from production fixes. The split-position defect and
   the full-factor reused-buffer defect are tracked by #33 and #41; their cases
   stay as regression coverage.
+- Reuse the numerical checks in a sibling test module for layout and lifecycle
+  coverage. Extend known spectra with repeated and tightly clustered values,
+  verify the fixtures against literals, and exercise extreme scales through
+  padded/reversed inputs and both output orientations. Border guards and
+  input snapshots distinguish wrong numerics from unintended writes.
+- Reuse output and scratch buffers across A and -A/2 in the same strided
+  layout, rather than treating initial prefill alone as proof of buffer reuse.
+  Use dedicated 2-/4-thread pools and default algorithm thresholds on sizes
+  that reach the parallel branches, and require each parallel spectrum to
+  agree with the sequential one. Restrict those larger cases to thin/omitted
+  factors so independent scalar checks stay inexpensive; do not compare
+  non-unique vector entries.
+- Keep LAPACK copyright notices in `lapack.rs`, which holds the adapted
+  material; `svd_views.rs` holds faer's own cases and points to it.
 
 ## Verification conclusions and constraints
 
-- On `main` at `5a27bcece2f9f0d1c1b94c9b42dd7bfc4a94dc39`, all 1,647
-  configured calls pass. The largest of the 5,237 check ratios is 1.77 against
-  the threshold of 50, so the checkers' own rounding is not close to deciding
-  any result. The same source against fork revision
+- On `main` at `5a27bcece2f9f0d1c1b94c9b42dd7bfc4a94dc39`, all 4,599
+  configured calls pass. The largest of the 12,625 check ratios is 2.30
+  against the threshold of 50, so the checkers' own rounding is not close to
+  deciding any result; parallel and sequential spectra differ by at most 0.16
+  on the same scale. The same source against fork revision
   `d3215290618aa49a1e246c7c2d8989915688c594`, before the #33 fix (#39) and the
-  #41 fix (#47), fails the split-position rank-one cases through both the
-  driver and the direct solver, and the reused full factors; the direct group
-  isolates #33 without the driver's reduction. Checker self-tests establish
-  zero/extreme-scale handling, the source's test-19 normalization, and
-  rejection of corrupted factors, nonfinite values, and invalid spectra.
-- The `linalg::svd` tests and the new checker tests pass. The ordinary
-  workspace run has three triangular-matmul failures, the same three that
-  `PATCHSET.md` records as failing on `main`; their names are listed with the
-  detailed results. All 55 workspace doctests pass; formatting and whitespace
-  were checked.
+  #41 fix (#47), fails four groups: the split-position rank-one cases through
+  both the driver and the direct solver, the reused full factors, and 480
+  full-factor orthogonality checks in the layout group on the QR side of the
+  aspect-ratio boundary. No guard write, input change, convergence error or
+  panic occurs at either revision. Checker and fixture self-tests establish
+  zero/extreme-scale handling, the source's test-19 normalization, the guard
+  checker, the literal new spectra, and rejection of corrupted factors,
+  nonfinite values, and invalid spectra.
+- The `linalg::svd` tests and the new self-tests pass. The ordinary workspace
+  run has three triangular-matmul failures, the same three that `PATCHSET.md`
+  records as failing on `main`; their names are listed with the detailed
+  results. All 55 workspace doctests pass; formatting and whitespace were
+  checked.
+- At 512×128 and 128×512 the bidiagonal reduction of the 128×128 R factor is
+  below its parallel-work floor, so those shapes run parallel code only outside
+  the reduction; only 257×256 reaches the parallel reduction.
 - The crate's `license` metadata is changed to `MIT AND BSD-3-Clause` for the
   adapted LAPACK test file. Existing LAPACK ports in production code kept the
   metadata unchanged, so this needs a maintainer decision.
@@ -55,5 +76,5 @@
 - The checks are normwise; they do not establish relative accuracy of tiny
   singular values. The direct group's LAPACK families other than 16 have a
   zero off-diagonal and do not make the solver iterate. Full LAPACK
-  fixtures/generators, other precisions, broader layouts/threading, and
-  scheduled CI remain outside this pilot.
+  fixtures/generators, other precisions, arbitrary stride/thread/shape
+  combinations, and scheduled CI remain outside this pilot.

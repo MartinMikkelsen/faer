@@ -94,7 +94,11 @@ fn valid_spectrum(s: &[f64]) -> bool {
 		&& s.windows(2).all(|pair| pair[0] >= pair[1])
 }
 
-fn spectrum_ratio(s: &[f64], expected: &[f64], dimension: usize) -> f64 {
+pub(super) fn spectrum_ratio(
+	s: &[f64],
+	expected: &[f64],
+	dimension: usize,
+) -> f64 {
 	assert_eq!(s.len(), expected.len());
 	if !s.iter().chain(expected).all(|x| x.is_finite()) {
 		return f64::INFINITY;
@@ -137,7 +141,7 @@ fn dchkbd_spectrum_ratio(with_vectors: &[f64], without_vectors: &[f64]) -> f64 {
 		})
 }
 
-fn check_ratio(
+pub(super) fn check_ratio(
 	failures: &mut Vec<String>,
 	context: &str,
 	check: &str,
@@ -147,6 +151,63 @@ fn check_ratio(
 		failures.push(format!(
 			"{context}: {check} ratio={ratio:e}, threshold={THRESHOLD}"
 		));
+	}
+}
+
+pub(super) fn check_driver_output(
+	failures: &mut Vec<String>,
+	context: &str,
+	a: MatRef<'_, f64>,
+	s: &[f64],
+	u: MatRef<'_, f64>,
+	v: MatRef<'_, f64>,
+	expected: Option<&[f64]>,
+	reference: Option<&[f64]>,
+) {
+	if !valid_spectrum(s) {
+		failures.push(format!(
+			"{context}: spectrum is not finite, nonnegative and decreasing: {s:?}"
+		));
+	}
+	if let Some(expected) = expected {
+		check_ratio(
+			failures,
+			context,
+			"known spectrum",
+			spectrum_ratio(s, expected, a.nrows().max(a.ncols())),
+		);
+	}
+	if let Some(reference) = reference {
+		check_ratio(
+			failures,
+			context,
+			"output-mode agreement",
+			spectrum_ratio(s, reference, s.len()),
+		);
+	}
+	if u.ncols() > 0 {
+		check_ratio(
+			failures,
+			context,
+			"U orthogonality",
+			orthogonality_ratio(u),
+		);
+	}
+	if v.ncols() > 0 {
+		check_ratio(
+			failures,
+			context,
+			"V orthogonality",
+			orthogonality_ratio(v),
+		);
+	}
+	if u.ncols() > 0 && v.ncols() > 0 {
+		check_ratio(
+			failures,
+			context,
+			"reconstruction",
+			reconstruction_ratio(a, s, u, v),
+		);
 	}
 }
 
@@ -201,57 +262,28 @@ fn run_case(
 			continue;
 		}
 		let s: Vec<f64> = s.iter().copied().collect();
-		if !valid_spectrum(&s) {
-			failures.push(format!(
-				"{context}: spectrum is not finite, nonnegative and decreasing: {s:?}"
-			));
-		}
-		if let Some(expected) = expected {
-			check_ratio(
-				failures,
-				&context,
-				"known spectrum",
-				spectrum_ratio(&s, expected, m.max(n)),
-			);
-		}
-		if let Some(reference) = &reference {
-			check_ratio(
-				failures,
-				&context,
-				"output-mode agreement",
-				spectrum_ratio(&s, reference, rank),
-			);
-		} else {
+		check_driver_output(
+			failures,
+			&context,
+			a,
+			&s,
+			u.as_ref(),
+			v.as_ref(),
+			expected,
+			reference.as_deref(),
+		);
+		if reference.is_none() {
 			reference = Some(s.clone());
-		}
-		if left != No {
-			check_ratio(
-				failures,
-				&context,
-				"U orthogonality",
-				orthogonality_ratio(u.as_ref()),
-			);
-		}
-		if right != No {
-			check_ratio(
-				failures,
-				&context,
-				"V orthogonality",
-				orthogonality_ratio(v.as_ref()),
-			);
-		}
-		if left != No && right != No {
-			check_ratio(
-				failures,
-				&context,
-				"reconstruction",
-				reconstruction_ratio(a, &s, u.as_ref(), v.as_ref()),
-			);
 		}
 	}
 }
 
-fn diagonal_case(m: usize, n: usize, kind: usize) -> (Mat<f64>, Vec<f64>) {
+pub(super) fn diagonal_case(
+	m: usize,
+	n: usize,
+	kind: usize,
+) -> (Mat<f64>, Vec<f64>) {
+	// Kinds 1–7 follow DCHKBD; 8/9 add repeated and tightly clustered spectra.
 	let rank = m.min(n);
 	let scale = match kind {
 		6 => f64::MAX.sqrt(),
@@ -274,6 +306,14 @@ fn diagonal_case(m: usize, n: usize, kind: usize) -> (Mat<f64>, Vec<f64>) {
 							f64::EPSILON
 						}
 					},
+					8 => {
+						if i < rank / 2 {
+							4.0
+						} else {
+							1.0
+						}
+					},
+					9 => 1.0 - 8.0 * f64::EPSILON * i as f64,
 					_ => unreachable!(),
 				}
 		})
@@ -288,7 +328,7 @@ fn diagonal_case(m: usize, n: usize, kind: usize) -> (Mat<f64>, Vec<f64>) {
 	(a, spectrum)
 }
 
-fn rotate(a: &mut Mat<f64>) {
+pub(super) fn rotate(a: &mut Mat<f64>) {
 	// Fixed orthogonal rotations replace DLATMS; no faer factorization generates inputs.
 	for i in 1..a.nrows() {
 		for j in 0..a.ncols() {

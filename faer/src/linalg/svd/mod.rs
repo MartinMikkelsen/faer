@@ -938,6 +938,7 @@ pub fn pseudoinverse_from_svd_with_tolerance<T: ComplexField>(
 #[cfg(test)]
 mod tests {
 	mod lapack;
+	mod svd_views;
 
 	use super::*;
 	use crate::assert;
