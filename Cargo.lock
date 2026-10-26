@@ -2743,9 +2743,8 @@ dependencies = [
 
 [[package]]
 name = "t4a-private-gemm-x86"
-version = "0.1.24"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6e140e3b2522528a14dc01752648b0eefa6594e1b8e7e7baff2c217acfb2c62"
+version = "0.1.25"
+source = "git+https://github.com/tensor4all/t4a-private-gemm-x86?rev=4f51ae9a83a851fad46fba13aa3d92bf136cf49d#4f51ae9a83a851fad46fba13aa3d92bf136cf49d"
 dependencies = [
  "crossbeam",
  "defer",
@@ -2833,7 +2832,7 @@ dependencies = [
 [[package]]
 name = "threadteam"
 version = "0.1.0"
-source = "git+https://github.com/tensor4all/threadteam-rs?rev=5afe0b4d2ea604d0d8fe6b563bacf4c80f2d0bc4#5afe0b4d2ea604d0d8fe6b563bacf4c80f2d0bc4"
+source = "git+https://github.com/tensor4all/threadteam-rs?rev=586738b6b6384617a455e35f0bcdfe616e40ea04#586738b6b6384617a455e35f0bcdfe616e40ea04"
 dependencies = [
  "libc",
  "loom",

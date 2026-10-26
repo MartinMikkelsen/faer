@@ -134,7 +134,9 @@ impl ParThreshold {
 		rate: Rate,
 		sections: u32,
 	) -> bool {
-		if matches!(shape, ParShape::Seq) && !matches!(self, Self::Fixed(_)) {
+		// a sequential shape, or a token of one participant (a `Team` of size 1), never pays:
+		// skip the estimate (a QR 128 asks hundreds of times)
+		if shape.degree() < 2 && !matches!(self, Self::Fixed(_)) {
 			return false;
 		}
 		let r = self.region_pays_impl::<T>(shape, units, rate, sections);
@@ -337,8 +339,9 @@ pub(crate) fn par_pays<T: crate::ComplexField>(
 	rate: Rate,
 	sections: u32,
 ) -> bool {
-	// a sequential token never pays: skip the estimate (a QR 128 asks 500 times)
-	if matches!(par, crate::Par::Seq) {
+	// a sequential token, or one of a single participant (a `Team` of size 1: it behaves exactly
+	// like `Par::Seq`), never pays: skip the estimate (a QR 128 asks 500 times)
+	if par.degree() < 2 {
 		return false;
 	}
 	let r = par.shape().pays_full(serial_time(units, rate.of::<T>()), sections);
@@ -374,7 +377,7 @@ pub(crate) fn join_pays<T: crate::ComplexField>(
 	rate: Rate,
 	sections: u32,
 ) -> bool {
-	if matches!(par, crate::Par::Seq) {
+	if par.degree() < 2 {
 		return false;
 	}
 	let r = par.shape().pays(
@@ -509,7 +512,9 @@ mod tests {
 		let s = ParShape::Rayon(nz(6));
 		assert_eq!(s.dispatch_cost(nz(1)), Duration::MAX);
 		let d6 = s.dispatch_cost(nz(6));
-		assert!(d6 >= Duration::from_micros(19));
+		// the table is the host's (threadteam's Linux row since the `586738b` pin, the M5 values
+		// before it), so the test states the shape, not a number: a finite, positive cost
+		assert!(d6 > Duration::ZERO && d6 < Duration::MAX);
 		// width is clamped to the degree
 		assert_eq!(s.dispatch_cost(nz(60)), d6);
 		// 3 times the cost is the floor: the cost itself does not pay, four times does

@@ -621,16 +621,20 @@ fn mat_x_mat_into_lower_impl_unchecked<'N, 'K, T: ComplexField>(
 	// unit is a multiply-add of the product into one triangle, `n*n*k/2`, at the GEMM rate.
 	let pays = crate::utils::cost::join_pays::<T>(
 		&par,
-		dst.nrows().unbound().saturating_mul(dst.nrows().unbound()).saturating_mul(lhs.ncols().unbound()) / 2,
+		dst.nrows()
+			.unbound()
+			.saturating_mul(dst.nrows().unbound())
+			.saturating_mul(lhs.ncols().unbound())
+			/ 2,
 		crate::utils::cost::rate::GEMM_MAC,
 		2,
 	);
-	// The `private_gemm_x86` kernel threads outside the caller, which a `Team` token must not
-	// do. A team that pays runs the recursion below on the team (its rectangular products reach
-	// `gemm_tiled`); a team that does not pay takes the kernel with one thread.
-	let team_recurses = pays && crate::utils::thread::is_team(&par);
+	// On x86_64 the `private_gemm_x86` kernel does the product into the triangle. A `Team` token
+	// runs it on its own members (`Fork` of the team), gated by the kernel's two sections at the
+	// width `width_for` chooses; Rayon and Seq hand it the degree. Without the kernel (other
+	// targets, other dtypes) a team that pays runs the recursion below on the team.
 	#[cfg(all(target_arch = "x86_64", feature = "std"))]
-	if !team_recurses && const {
+	if const {
 		T::IS_NATIVE_F64
 			|| T::IS_NATIVE_F32
 			|| T::IS_NATIVE_C64
@@ -657,47 +661,76 @@ fn mat_x_mat_into_lower_impl_unchecked<'N, 'K, T: ComplexField>(
 					} else {
 						(dst.as_dyn_mut(), lhs.as_dyn())
 					};
-					private_gemm_x86::gemm(
-						const {
-							if T::IS_NATIVE_F64 {
-								DType::F64
-							} else if T::IS_NATIVE_F32 {
-								DType::F32
-							} else if T::IS_NATIVE_C64 {
-								DType::C64
-							} else {
-								DType::C32
-							}
-						},
-						const { IType::U32 },
-						feat,
-						dst.nrows(),
-						dst.ncols(),
-						lhs.ncols(),
-						dst.as_ptr_mut() as _,
-						dst.row_stride(),
-						dst.col_stride(),
-						core::ptr::null(),
-						core::ptr::null(),
-						DstKind::Lower,
-						match beta {
-							crate::Accum::Replace => Accum::Replace,
-							crate::Accum::Add => Accum::Add,
-						},
-						lhs.as_ptr() as _,
-						lhs.row_stride(),
-						lhs.col_stride(),
-						conj_lhs == Conj::Yes,
-						core::ptr::null(),
-						0,
-						rhs.as_ptr() as _,
-						rhs.row_stride(),
-						rhs.col_stride(),
-						conj_rhs == Conj::Yes,
-						alpha as *const T as *const (),
-						// a `Team` token never threads outside its team
-						crate::utils::thread::outside_threads(&par),
-					);
+					macro_rules! go {
+						($call:path, $last:expr) => {
+							$call(
+								const {
+									if T::IS_NATIVE_F64 {
+										DType::F64
+									} else if T::IS_NATIVE_F32 {
+										DType::F32
+									} else if T::IS_NATIVE_C64 {
+										DType::C64
+									} else {
+										DType::C32
+									}
+								},
+								const { IType::U32 },
+								feat,
+								dst.nrows(),
+								dst.ncols(),
+								lhs.ncols(),
+								dst.as_ptr_mut() as _,
+								dst.row_stride(),
+								dst.col_stride(),
+								core::ptr::null(),
+								core::ptr::null(),
+								DstKind::Lower,
+								match beta {
+									crate::Accum::Replace => Accum::Replace,
+									crate::Accum::Add => Accum::Add,
+								},
+								lhs.as_ptr() as _,
+								lhs.row_stride(),
+								lhs.col_stride(),
+								conj_lhs == Conj::Yes,
+								core::ptr::null(),
+								0,
+								rhs.as_ptr() as _,
+								rhs.row_stride(),
+								rhs.col_stride(),
+								conj_rhs == Conj::Yes,
+								alpha as *const T as *const (),
+								$last,
+							)
+						};
+					}
+					#[cfg(feature = "threadteam")]
+					if let Par::Team(team) = par {
+						let estimate = crate::utils::cost::serial_time(
+							dst.nrows()
+								.saturating_mul(dst.ncols())
+								.saturating_mul(lhs.ncols())
+								/ 2,
+							crate::utils::cost::rate::GEMM_MAC.of::<T>(),
+						);
+						match crate::utils::team::kernel::kernel_width(
+							&team, estimate,
+						) {
+							Some(width) => {
+								crate::utils::team::kernel::with_fork(
+									team,
+									width,
+									|fork| {
+										go!(private_gemm_x86::gemm_with, fork)
+									},
+								)
+							},
+							None => go!(private_gemm_x86::gemm, 1),
+						}
+						return;
+					}
+					go!(private_gemm_x86::gemm, par.degree());
 					return;
 				}
 			}

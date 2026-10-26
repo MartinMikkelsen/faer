@@ -66,8 +66,8 @@ two concurrent children, each owning the whole team.
 
 On a `Team`, `split` and the jobs of `for_each_with_par` are `TeamExec::split` and `fork`: the
 child leader runs the callback on its own members, concurrently with its siblings, and members a
-split leaves over stay parked. GEMM tiling (`utils/team.rs`, `gemm_tiled`) consumes the team and
-runs one sequential `gemm` per member on its tile of the output; the depth is never split.
+split leaves over stay parked. GEMM tiling (`utils/team.rs`, `gemm_tiled`, the route without the x86 kernel) consumes the team and
+runs one sequential `gemm` per member on its tile of the output; the depth is never split. On x86_64 the kernel runs on the team instead (`gemm_team`, last section).
 `Rayon` splits give each child `Par::Rayon(width)` (`Seq` for a width of one); `Seq` runs the
 parts in turn.
 
@@ -187,4 +187,5 @@ a region runs in parallel when `estimate >= PAYS * sections * dispatch_cost(widt
   the sparse numeric matmul forks the team; the LU swap stage splits it in two.
 * Build matrix: default features, `--no-default-features --features std,linalg`, and
   `--features threadteam`, each with `--all-targets`.
-* x86_64: a `Team` never hands its size to `private_gemm_x86` (`thread::outside_threads`), and `gemm_tiled` runs the kernel per tile with one thread; tests in `utils::team::tests` (record: `docs/worklogs/2026-10-26-team-authority-x86.md`).
+* x86_64: a `Team` never hands its size to an outside runtime; the kernel forks on the team itself (`utils::team::kernel`); tests in `utils::team::tests` (records: `docs/worklogs/2026-10-26-team-authority-x86.md`, `docs/worklogs/2026-10-26-team-gemm-executor.md`).
+* x86_64, `exp/team-gemm-executor`: a `Team` runs the `private_gemm_x86` kernel itself. The kernel forks its packing and its job queue through a `Fork` executor (`private_gemm_x86::gemm_with`), which `utils::team::kernel` implements over the team (`TeamExec::run` on a sub-team of the gate's width). Plain GEMM, `spicy_matmul` and the triangular product use it, gated by `pays(estimate, 2 sections, width)`; `thread::outside_threads` is removed because no team size reaches an outside runtime any more (record: `docs/worklogs/2026-10-26-team-gemm-executor.md`).
