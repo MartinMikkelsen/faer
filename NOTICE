@@ -12,8 +12,9 @@ This fork
 
 The source in this repository is upstream faer plus tensor4all modifications.
 The upstream copyright notice and the MIT text in LICENSE apply to it.
-Modifications made in this fork are Copyright (c) tensor4all contributors and
-are released under the same MIT license.
+Except for explicitly identified ported material, modifications made in this
+fork are Copyright (c) tensor4all contributors and are released under the same
+MIT license.
 
 faer also contains code ported from other projects. Those files keep their own
 terms and their notices ship alongside the crate:
@@ -21,12 +22,14 @@ terms and their notices ship alongside the crate:
   faer/COPYING.EIGEN.MPL2               divide-and-conquer SVD (Eigen)
   faer/COPYING.LAPACK.BSD               jacobi/givens, LLT full pivoting,
                                         column-pivoting QR, Schur, Hessenberg,
-                                        Schur reordering
+                                        Schur reordering, selected LAPACK SVD
+                                        validation tests
   faer/COPYING.SUITE_SPARSE.AMD.BSD     AMD ordering
   faer/COPYING.SUITE_SPARSE.COLAMD.BSD  COLAMD ordering
 
-The `license = "MIT"` metadata describes the crate as a whole; it does not
-relicense those files. Read the COPYING files for their actual terms.
+The faer package's `license = "MIT AND BSD-3-Clause"` metadata includes the
+LAPACK SVD test adaptation. It does not relicense the other ported files;
+read the COPYING files for their actual terms.
 
 The packages published from this repository are the temporary tensor4all fork
 names `t4a-faer` and `t4a-faer-traits`, so that downstream crates can depend on

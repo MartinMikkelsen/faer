@@ -7,6 +7,8 @@ ported algorithms:
 - generalized schur decomposition (real + complex)
 - schur reordering, 1x2 / 2x1 block swaps (dlaexc, dlasy2, order-3 dlarfx, dlapy2,
   dlanv2-style norm fallback)
+- selected SVD validation families and checks (src/linalg/svd/tests/lapack.rs;
+  original 1992-2023 / 2000-2023 / 2006-2023 notices retained in that file)
 -------------------------------------------------------------------------------
 
 Copyright (c) 1992-2025 The University of Tennessee and The University

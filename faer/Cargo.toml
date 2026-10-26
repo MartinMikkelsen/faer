@@ -6,7 +6,7 @@ authors = ["sarah quiñones <sarah@veganb.tw>"]
 description = "Temporary tensor4all fork of faer: an AI-driven experiment build for tenferro-rs."
 readme = "../README.md"
 repository = "https://github.com/tensor4all/faer"
-license = "MIT"
+license = "MIT AND BSD-3-Clause"
 keywords = ["math", "linear-algebra"]
 rust-version = "1.84.0"
 
