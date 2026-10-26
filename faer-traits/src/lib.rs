@@ -378,8 +378,17 @@ fn recip_impl<T: RealField>(re: T, im: T) -> (T, T) {
 	} else {
 		let re = re * big;
 		let im = im * big;
-		let inv = &(re.abs2() + im.abs2()).recip();
-		(((re * inv) * big), ((-im * inv) * big))
+		if &abs(&re) < small && &abs(&im) < small {
+			// a subnormal input is still below `small` after one scaling,
+			// where the squared magnitude's reciprocal would overflow
+			let re = re * big;
+			let im = im * big;
+			let inv = &(re.abs2() + im.abs2()).recip();
+			(((re * inv) * big) * big, ((-im * inv) * big) * big)
+		} else {
+			let inv = &(re.abs2() + im.abs2()).recip();
+			(((re * inv) * big), ((-im * inv) * big))
+		}
 	}
 }
 fn sqrt_impl<T: RealField>(re: T, im: T) -> (T, T) {
@@ -5809,4 +5818,22 @@ pub mod ext {
 	}
 	impl<T: ComplexField> ComplexFieldExt for T {}
 	impl<T: RealField> RealFieldExt for T {}
+}
+#[cfg(test)]
+mod tests {
+	use super::*;
+	/// the reciprocal of a subnormal complex value is finite whenever the
+	/// exact result is (`tensor4all/faer#31`)
+	#[test]
+	fn recip_of_subnormal() {
+		let (re, im) = recip_impl(0.0f64, f64::MIN_POSITIVE / 2.0);
+		assert_eq!((re, im), (0.0, -2.0 / f64::MIN_POSITIVE));
+		let (re, im) = recip_impl(f64::MIN_POSITIVE / 4.0, 0.0);
+		assert_eq!((re, im), (4.0 / f64::MIN_POSITIVE, 0.0));
+		let (re, im) = recip_impl(0.0f32, f32::MIN_POSITIVE / 2.0);
+		assert_eq!((re, im), (0.0, -2.0 / f32::MIN_POSITIVE));
+		// 1 / 2^-1074 exceeds the largest finite value
+		let (re, _) = recip_impl(f64::from_bits(1), 0.0);
+		assert_eq!(re, f64::INFINITY);
+	}
 }
