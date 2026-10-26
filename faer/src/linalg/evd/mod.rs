@@ -2565,7 +2565,7 @@ mod tridiagonal_range_tests {
 			MemBuffer::new(tridiagonal_self_adjoint_evd_scratch::<f64>(
 				n,
 				ComputeEigenvectors::Yes,
-				Par::Seq,
+				crate::ParShape::Seq,
 				params,
 			));
 		tridiagonal_self_adjoint_evd(
