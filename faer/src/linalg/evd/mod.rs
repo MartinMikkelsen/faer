@@ -207,6 +207,9 @@ pub fn tridiagonal_self_adjoint_evd<T: ComplexField>(
 	params: Spec<SelfAdjointEvdParams, T>,
 ) -> Result<(), EvdError> {
 	let n = diag.dim();
+	if n == 0 {
+		return Ok(());
+	}
 	let (mut real_diag, stack) =
 		unsafe { temp_mat_uninit::<T::Real, _, _>(n, 1, stack) };
 	let (mut real_offdiag, stack) =
@@ -2537,6 +2540,38 @@ mod scale_and_empty_tests {
 		let eig = a.self_adjoint_eigen(Side::Lower).unwrap();
 		assert_eq!(eig.U().shape(), (0, 0));
 		assert_eq!(eig.S().dim(), 0);
+	}
+	/// the tridiagonal entry point with eigenvectors, for an empty complex
+	/// matrix (`tensor4all/faer#31`)
+	#[test]
+	fn empty_tridiagonal_with_vectors() {
+		fn check<T: ComplexField>() {
+			let empty = Diag::<T>::zeros(0);
+			let mut s = Diag::<T>::zeros(0);
+			let mut u = Mat::<T>::zeros(0, 0);
+			let params = default();
+			let mut mem = dyn_stack::MemBuffer::new(
+				tridiagonal_self_adjoint_evd_scratch::<T>(
+					0,
+					ComputeEigenvectors::Yes,
+					Par::Seq,
+					params,
+				),
+			);
+			tridiagonal_self_adjoint_evd(
+				empty.as_ref(),
+				empty.as_ref(),
+				s.as_mut(),
+				Some(u.as_mut()),
+				Par::Seq,
+				MemStack::new(&mut mem),
+				params,
+			)
+			.unwrap();
+		}
+		check::<f64>();
+		check::<c64>();
+		check::<c32>();
 	}
 }
 #[cfg(test)]
