@@ -1389,11 +1389,10 @@ pub(super) fn divide_and_conquer<T: RealField>(
 				let v_lhs2 = v_lhs.submatrix(k + 1, k + 1, rem, rem);
 				let (v_rhs1, v_rhs2) = v_rhs.split_at_row(1).1.split_at_row(k);
 				// one section; the two products `k x k` and `rem x rem` against `n` columns
-				let join_par = if crate::utils::cost::par_pays::<T>(
+				let join_par = if crate::utils::cost::join_pays::<T>(
 					&par,
 					(k * k + rem * rem).saturating_mul(n),
 					crate::utils::cost::rate::GEMM_MAC,
-					1,
 				) {
 					par.reborrow()
 				} else {
@@ -1451,11 +1450,10 @@ pub(super) fn divide_and_conquer<T: RealField>(
 		let (u_rhs1, u_rhs2) = u_rhs.split_at_row(k + 1);
 		// one section; the two products `(k+1) x (k+1)` and `(rem+1) x (rem+1)` against `n + 1`
 		// columns
-		let join_par = if crate::utils::cost::par_pays::<T>(
+		let join_par = if crate::utils::cost::join_pays::<T>(
 			&par,
 			((k + 1) * (k + 1) + (rem + 1) * (rem + 1)).saturating_mul(n + 1),
 			crate::utils::cost::rate::GEMM_MAC,
-			1,
 		) {
 			par
 		} else {
@@ -1531,13 +1529,12 @@ pub(super) fn divide_and_conquer<T: RealField>(
 				);
 				let stack_v = MemStack::new(mem_v);
 				// one section; the products of both updates
-				let join_par = if crate::utils::cost::par_pays::<T>(
+				let join_par = if crate::utils::cost::join_pays::<T>(
 					&par,
 					(k * k + rem * rem).saturating_mul(n).saturating_add(
 						((k + 1) * (k + 1) + (rem + 1) * (rem + 1)).saturating_mul(n + 1),
 					),
 					crate::utils::cost::rate::GEMM_MAC,
-					1,
 				) {
 					par
 				} else {

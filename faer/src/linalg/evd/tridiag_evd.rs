@@ -609,11 +609,10 @@ fn divide_and_conquer_recurse<T: RealField>(
 	let (repaired_u_top, repaired_u_bot) = repaired_u.rb().split_at_row(n1);
 	let (tmp_top, tmp_bot) = tmp.rb_mut().split_at_row_mut(n1);
 	// one section; the two products `n1 x n1` and `(n - n1) x (n - n1)` against `n` columns
-	let join_par = if crate::utils::cost::par_pays::<T>(
+	let join_par = if crate::utils::cost::join_pays::<T>(
 		&par,
 		(n1 * n1 + (n - n1) * (n - n1)).saturating_mul(n),
 		crate::utils::cost::rate::GEMM_MAC,
-		1,
 	) {
 		par
 	} else {

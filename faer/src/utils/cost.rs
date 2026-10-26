@@ -139,7 +139,7 @@ impl ParThreshold {
 		}
 		let r = self.region_pays_impl::<T>(shape, units, rate, sections);
 		#[cfg(feature = "par-trace")]
-		trace_decision(shape, units, rate.of::<T>(), sections, r, core::panic::Location::caller());
+		trace_decision(shape, shape.degree(), units, rate.of::<T>(), sections, r, core::panic::Location::caller());
 		r
 	}
 
@@ -349,27 +349,50 @@ pub(crate) fn par_pays<T: crate::ComplexField>(
 	}
 	let r = par.shape().pays_full(serial_time(units, rate.of::<T>()), sections);
 	#[cfg(feature = "par-trace")]
-	trace_decision(par.shape(), units, rate.of::<T>(), sections, r, core::panic::Location::caller());
+	trace_decision(par.shape(), par.shape().degree(), units, rate.of::<T>(), sections, r, core::panic::Location::caller());
 	r
 }
 
 #[cfg(feature = "par-trace")]
 fn trace_decision(
 	shape: ParShape,
+	width: usize,
 	units: usize,
 	ns: f64,
 	sections: u32,
 	r: bool,
 	loc: &'static core::panic::Location<'static>,
 ) {
-	let d = NonZeroUsize::new(shape.degree())
+	let d = NonZeroUsize::new(width)
 		.map(|w| shape.dispatch_cost(w).as_secs_f64() * 1e9)
 		.unwrap_or(f64::INFINITY);
 	trace::record(loc, units, sections, units as f64 * ns, d, r);
 }
 
+/// Whether a join of two halves pays: one section of width 2 (the two halves are the
+/// participants; the budget is split between them, it is not a flat section over all of it), so
+/// the dispatch cost is that of the shape at width 2 (`Team` 3.0 us, `Rayon` from outside 14 us
+/// on the M5 table, against 1.4 and 19 at width 6). `units` of work at `rate`.
+pub(crate) fn join_pays<T: crate::ComplexField>(
+	par: &crate::Par,
+	units: usize,
+	rate: Rate,
+) -> bool {
+	if matches!(par, crate::Par::Seq) {
+		return false;
+	}
+	let r = par.shape().pays(
+		serial_time(units, rate.of::<T>()),
+		1,
+		NonZeroUsize::new(2).unwrap(),
+	);
+	#[cfg(feature = "par-trace")]
+	trace_decision(par.shape(), 2, units, rate.of::<T>(), 1, r, core::panic::Location::caller());
+	r
+}
+
 /// Whether the join of a recursion that halves a problem of size `n` pays: its work is the two
-/// halves, `2 (n/2)^power` units of `rate`, one section. The rate is that of a whole serial
+/// halves, `2 (n/2)^power` units of `rate`, one join ([`join_pays`]). The rate is that of a whole serial
 /// solve of size `m` per `m^power`, so no recurrence is assumed beyond the power: the work of
 /// the subproblems at this level is what the two calls below it cost, and the merge after the
 /// join is not counted (it is not parallel through this join). `power` is 3 for the triangular
@@ -382,7 +405,7 @@ pub(crate) fn halves_pays<T: crate::ComplexField>(
 	power: u32,
 ) -> bool {
 	let h = n / 2;
-	par_pays::<T>(par, h.saturating_pow(power).saturating_mul(2), rate, 1)
+	join_pays::<T>(par, h.saturating_pow(power).saturating_mul(2), rate)
 }
 
 /// Serial time of `count` units at `ns` nanoseconds each.
@@ -541,9 +564,6 @@ mod tests {
 		("householder_rank_one", rate::HOUSEHOLDER_RANK_ONE, 1),
 		("gemm_mac", rate::GEMM_MAC, 1),
 		("block_apply", rate::BLOCK_APPLY, 1),
-		("bidiag_svd_dc", rate::BIDIAG_SVD_DC, 1),
-		("tridiag_evd_dc", rate::TRIDIAG_EVD_DC, 1),
-		("triangular_inverse", rate::TRIANGULAR_INVERSE, 1),
 		("sparse_matmul", rate::SPARSE_MATMUL, 1),
 	];
 
@@ -856,7 +876,7 @@ mod tests {
 				// work is the power of half the size, two halves
 				let h = first / 2;
 				let work_ns = 2.0 * (h as f64).powi(power as i32) * r.real;
-				let want = PAYS * par.shape().dispatch_cost(nz(6)).as_secs_f64() * 1e9;
+				let want = PAYS * par.shape().dispatch_cost(nz(2)).as_secs_f64() * 1e9;
 				assert!(work_ns >= want * 0.999, "{work_ns} {want}");
 			}
 		}
@@ -882,7 +902,7 @@ mod tests {
 
 	#[cfg(feature = "threadteam")]
 	#[test]
-	fn join_gates_on_a_team_start_lower_than_outside_the_pool() {
+	fn join_gates_on_a_team_follow_the_width_two_cost() {
 		use threadteam::DispatchCosts;
 		let team = ParShape::Team(nz(6), DispatchCosts::apple_m5());
 		let rayon = ParShape::Rayon(nz(6));
@@ -891,9 +911,14 @@ mod tests {
 			let o = floor_units::<f64>(rayon, r, sections);
 			assert!(t < o, "{name}: team {t}, outside {o}");
 		}
-		// representative joins on the M5 table: the divide and conquer joins pay on a team from
-		// a size of about 20 (far below their recursion thresholds, 128 and 64), the triangular
-		// inverse joins from about 120 (4.2 us of work: `2 (n/2)^3` at 0.0096 ns)
+		// a join is a section of width 2: 3.0 us on the team table, so 9 us of work
+		let d2 = team.dispatch_cost(nz(2));
+		assert_eq!(d2, Duration::from_micros(3));
+		let par = |ns: f64| pays_at(Duration::from_secs_f64(ns * 1e-9), 1, d2);
+		assert!(par(9000.0) && !par(8900.0));
+		// representative joins on the M5 team table: the divide and conquer joins pay from a size
+		// of about 20 (far below their recursion thresholds, 128 and 64), the triangular inverse
+		// joins from about 150 (`2 (n/2)^3` at 0.0096 ns against 9 us)
 		for (r, power, yes, no) in [
 			(rate::BIDIAG_SVD_DC, 2u32, 128usize, 8usize),
 			(rate::TRIDIAG_EVD_DC, 2, 64, 8),
@@ -901,7 +926,11 @@ mod tests {
 		] {
 			let pays = |n: usize| {
 				let h = n / 2;
-				ParThreshold::Derived.region_pays::<f64>(team, 2 * h.pow(power), r, 1)
+				pays_at(
+					serial_time(2 * h.pow(power), r.real),
+					1,
+					d2,
+				)
 			};
 			assert!(pays(yes));
 			assert!(!pays(no));
