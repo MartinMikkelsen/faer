@@ -34,13 +34,8 @@ pub enum ParShape { Seq, Rayon(NonZeroUsize), Team(NonZeroUsize, DispatchCosts) 
 * Concurrent children are handed out by splitting, never copied. The two halves of `join_raw`,
   the two sides of the LU swap stage and the jobs of a `for_each` receive sub-teams as `Par<'c>`
   values owned by the child.
-* The global parallelism is a separate `Copy` type, `GlobalPar { Seq, Rayon(NonZeroUsize) }`,
-  with no `Team` variant: `set_global_parallelism(GlobalPar)` cannot be given a `Par`, so a team
-  as a process wide setting is a compile error (compile-fail doctest on `GlobalPar`), since a
-  team is exclusive authority over reserved threads. `get_global_parallelism()` returns
-  `GlobalPar`; `GlobalPar::par()` (or `Par::from`) gives the owned `Par<'static>` that the high
-  level `Mat::svd()` family runs with, and `ParShape::from` the shape. `ParShape` is not reused
-  because it has a `Team` variant.
+* There is no global parallelism: a team is exclusive authority over reserved threads, so it
+  cannot be a process wide setting, and the setting is removed (see "Global parallelism").
 
 ## Queries without authority
 
@@ -96,23 +91,28 @@ path dispatches to the global Rayon pool with a `Team` in hand.
 | `*_scratch(.., par)` take `ParShape` | every caller of a scratch function: pass `par.shape()` or `ParShape::{Seq, rayon(n), team(n)}` |
 | `LinOp`, `BiLinOp`, `Precond`, `BiPrecond` | implementors keep `par: Par` in `apply` and friends (lifetime elided) and take `ParShape` in the scratch methods; an `apply` that uses `par` twice adds `reborrow()` |
 | `Par::Team(TeamExec<'team>)` | `exec.team(\|team\| faer_fn(.., Par::Team(team)))`; the width is the team size |
-| `set_global_parallelism` takes `GlobalPar`, `get_global_parallelism()` returns it | callers pass `GlobalPar::Seq` / `GlobalPar::rayon(n)` instead of `Par`; read the setting as a `Par` with `.par()`; none for the high level `Mat::svd()` family |
+| `set_global_parallelism`, `get_global_parallelism`, `GlobalPar`, `disable_global_parallelism` | removed; pass `par`. The high level methods and solvers take a trailing `par: Par` (`mat.svd(par)`, `mat.llt(side, par)`, `solver.solve(rhs, par)`, `solver.reconstruct(par)`, `mat.determinant(par)`, `sp_lu(par)`, ...); operators (`&a * &b`) run sequentially |
 
 ## Global parallelism
 
-The planned end state lands in the same breaking release as `Par<'team>`. The process-wide
-parallelism setting is removed entirely:
+Done (acceptance condition 4). The process-wide parallelism setting is removed entirely:
 
 * `set_global_parallelism`, `get_global_parallelism`, `GlobalPar`, `disable_global_parallelism`
-  and the faer-ffi get and set functions are removed.
+  and the faer-ffi get and set functions are removed (the C++ wrapper loses the `get_global_par()`
+  default argument, so `Par` is explicit there too).
 * High-level methods and solvers that read the global setting take an explicit `par: Par`
-  argument instead, for example `mat.llt(par)`. There are 97 call sites: 65 in
-  `linalg/solvers.rs`, 17 in `sparse/solvers.rs`, 14 in `linalg/mat_ops.rs` and 1 in
-  `linalg/reductions/determinant.rs`.
+  argument, last in the list (the faer convention), for example `mat.llt(side, par)`. 97 call
+  sites: 65 in `linalg/solvers.rs`, 17 in `sparse/solvers.rs`, 14 in `linalg/mat_ops.rs` and 1 in
+  `linalg/reductions/determinant.rs`. A solver built once and then used takes the `par` where
+  the work happens: the constructor, `solve*`, `reconstruct`, `inverse`, `pseudoinverse`,
+  `compute_Q`, `compute_thin_Q`; the `SolveCore`, `SolveLstsqCore` and `DenseSolveCore` trait
+  methods take it too.
 * Operator overloads (`&a * &b`, `&a + &b` in `linalg/mat_ops.rs`) cannot take a `par`, so they
-  always run sequentially as a convenience. Parallel callers use the explicit functions, for
-  example `matmul(.., par)`.
-* `GlobalPar` is the interim state until the explicit `par` arguments land.
+  always run sequentially (`Par::Seq`) as a convenience; so does `Distribution::sample` for
+  `UnitaryMat` (stats). Parallel callers use the explicit functions, for example
+  `matmul(.., par)`.
+* Test: `utils::team::tests::high_level_*` run `singular_values`, `partial_piv_lu().solve` and
+  `qr().solve` on a team and compare with `Par::Seq`.
 
 ## Parallel floors: one rule
 
@@ -179,8 +179,8 @@ a region runs in parallel when `estimate >= PAYS * sections * dispatch_cost(widt
   `linalg::matmul::internal::tests::*strict_triangle*` cases recorded in `PATCHSET.md`, which are
   in files this work does not touch. The five integration test targets and the 55 doctests pass.
 * Compile-fail doctests on `Par` reject `Copy`, `Clone`, a second use of a consumed `par`, and a
-  `join_raw` whose two children both use the parent; one on `GlobalPar` rejects a `Par`
-  (so a team) in `set_global_parallelism`.
+  `join_raw` whose two children both use the parent; the global setting that a
+  `GlobalPar` compile-fail doctest guarded no longer exists.
 * `utils::team` tests: GEMM, LU, QR, Cholesky on a team of six match the sequential result;
   teams of one, three and five; `join_raw` widths; `for_each_with_par` deals every item once;
   `join_sized` on a team of six hands out exactly six threads and never overlaps beyond six;
