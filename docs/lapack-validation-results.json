@@ -1,5 +1,5 @@
 {
-  "production_revision": "59a62189fdc7fad26dafe1a89ed84501d6118af7",
+  "production_revision": "816105230da9bd753a2375400ea11b4785e96b91",
   "results": [
     {
       "family": "svd_bidiagonal_family",
@@ -1226,15 +1226,15 @@
       "auxiliary_attempted": 48
     }
   ],
-  "build_seconds": 49.388,
-  "execution_seconds": 208.216,
+  "build_seconds": 58.848,
+  "execution_seconds": 207.128,
   "families": [
     {
       "family": "common",
       "selected": 92,
       "executed": 92,
       "exit_code": 0,
-      "seconds": 0.023,
+      "seconds": 0.024,
       "complete": true,
       "log": "common.log"
     },
@@ -1243,7 +1243,7 @@
       "selected": 77,
       "executed": 77,
       "exit_code": 101,
-      "seconds": 23.642,
+      "seconds": 22.938,
       "complete": true,
       "log": "svd.log"
     },
@@ -1252,7 +1252,7 @@
       "selected": 8,
       "executed": 8,
       "exit_code": 0,
-      "seconds": 7.893,
+      "seconds": 8.024,
       "complete": true,
       "log": "hessenberg.log"
     },
@@ -1261,7 +1261,7 @@
       "selected": 12,
       "executed": 12,
       "exit_code": 0,
-      "seconds": 17.687,
+      "seconds": 17.685,
       "complete": true,
       "log": "schur.log"
     },
@@ -1270,7 +1270,7 @@
       "selected": 16,
       "executed": 16,
       "exit_code": 101,
-      "seconds": 6.002,
+      "seconds": 5.921,
       "complete": true,
       "log": "nonsymmetric_evd.log"
     },
@@ -1279,7 +1279,7 @@
       "selected": 8,
       "executed": 8,
       "exit_code": 0,
-      "seconds": 0.041,
+      "seconds": 0.039,
       "complete": true,
       "log": "schur_reorder.log"
     },
@@ -1288,7 +1288,7 @@
       "selected": 8,
       "executed": 8,
       "exit_code": 0,
-      "seconds": 0.021,
+      "seconds": 0.02,
       "complete": true,
       "log": "balance.log"
     },
@@ -1297,7 +1297,7 @@
       "selected": 12,
       "executed": 12,
       "exit_code": 101,
-      "seconds": 15.317,
+      "seconds": 15.56,
       "complete": true,
       "log": "tridiagonal_evd.log"
     },
@@ -1306,7 +1306,7 @@
       "selected": 16,
       "executed": 16,
       "exit_code": 101,
-      "seconds": 31.232,
+      "seconds": 30.484,
       "complete": true,
       "log": "self_adjoint_evd.log"
     },
@@ -1315,7 +1315,7 @@
       "selected": 16,
       "executed": 16,
       "exit_code": 0,
-      "seconds": 43.935,
+      "seconds": 44.305,
       "complete": true,
       "log": "lu.log"
     },
@@ -1324,7 +1324,7 @@
       "selected": 12,
       "executed": 12,
       "exit_code": 101,
-      "seconds": 14.546,
+      "seconds": 14.351,
       "complete": true,
       "log": "cholesky.log"
     },
@@ -1333,7 +1333,7 @@
       "selected": 12,
       "executed": 12,
       "exit_code": 101,
-      "seconds": 24.678,
+      "seconds": 24.475,
       "complete": true,
       "log": "indefinite.log"
     },
@@ -1342,7 +1342,7 @@
       "selected": 12,
       "executed": 12,
       "exit_code": 0,
-      "seconds": 16.248,
+      "seconds": 16.239,
       "complete": true,
       "log": "qr.log"
     },
@@ -1351,7 +1351,7 @@
       "selected": 12,
       "executed": 12,
       "exit_code": 101,
-      "seconds": 6.117,
+      "seconds": 6.169,
       "complete": true,
       "log": "triangular.log"
     },
@@ -1360,7 +1360,7 @@
       "selected": 12,
       "executed": 12,
       "exit_code": 0,
-      "seconds": 0.834,
+      "seconds": 0.894,
       "complete": true,
       "log": "lstsq.log"
     }

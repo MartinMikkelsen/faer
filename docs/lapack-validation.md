@@ -278,8 +278,8 @@ executed. All 136 numerical records match their frozen principal counts:
 pass. The runner returns failure for the numerical findings; none is marked
 expected success or hidden by a continue-on-error workflow step.
 
-Build: **49.39s**, third-party dependencies cached and the changed optimized test
-executable rebuilt. Execution: **208.22s (3m28s)**. These are local runtime
+Build: **58.85s**, third-party dependencies cached and the changed optimized test
+executable rebuilt. Execution: **207.13s (3m27s)**. These are local runtime
 observations on the recorded macOS host, not speedup or hosted-Linux measurements.
 The first full run also completed every test; a count check wrongly included four
 SVD calibration names as numerical groups. An offline regression now rejects that

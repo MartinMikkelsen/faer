@@ -27,11 +27,14 @@
 
 ## Verification conclusions and constraints
 
-- Production revision: 59a62189fdc7fad26dafe1a89ed84501d6118af7. The pre-existing
-  SVD work is included. All 148 initial source/lock identities are checked:
-  six append-only test hooks are the only edits to existing numerical files.
+- Development measurements: 59a62189fdc7fad26dafe1a89ed84501d6118af7, which is
+  `main` 5a27bce plus one test in the `solvers.rs` test module (same library
+  code). The final combined run repeats on this change's own commit, based on
+  5a27bce, with identical per-case records. The pre-existing SVD work is
+  included. All 148 initial source/lock identities are checked: six
+  append-only test hooks are the only edits to existing numerical files.
   No kernel, public API, dependency, upstream measurement or performance
-  improvement is part of this change. No commit or external write was made.
+  improvement is part of this change.
 - Every inventory family is implemented within the documented existing-API
   scope. The [catalog](../lapack-validation.md) records bounded manifests,
   adaptations, omissions, minimal findings and the original twelve reports.
@@ -47,7 +50,7 @@
   matmul failures / 138 ignored. Other workspace libraries and all 55 doctests
   pass. Native oracle calibrations, eight offline runner/reporter checks,
   changed-test formatting, packaging and workflow syntax pass.
-- Local build/execution is 49.39s + 208.22s with cached third-party dependencies.
+- Local build/execution is 58.85s + 207.13s with cached third-party dependencies.
   Family limits sum to 20 minutes; build limit 20 minutes, combined step 44,
   validation job 50 and reporting job two. Cold hosted builds, Linux execution
   and actual failure-report writes remain unmeasured. Weekly/manual is the
