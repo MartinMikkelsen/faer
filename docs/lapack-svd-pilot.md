@@ -1,9 +1,13 @@
 # Focused f64 LAPACK SVD validation
 
-This is the first bounded Rust adaptation for [#31](https://github.com/tensor4all/faer/issues/31).
-It exercises faer's low-level `svd` interface with selected LAPACK matrix
-families and correctness checks. It requires neither OpenBLAS nor a Fortran
-compiler. It is not the complete LAPACK SVD suite.
+This is an opt-in f64 validation suite for faer's SVD. It adapts selected
+LAPACK test families and checks from DCHKBD and DDRVBD to Rust, and adds
+faer-specific cases. It tests the `svd` driver and, directly, the private real
+bidiagonal solver. The faer-specific cases cover strided views, reused buffers,
+recursion and QR-path boundaries, and parallel execution. It needs neither
+OpenBLAS nor a Fortran compiler, and a weekly workflow runs it. It covers part
+of [#31](https://github.com/tensor4all/faer/issues/31) and is not the complete
+LAPACK SVD suite; the gaps are listed under "Not covered yet".
 
 ## Running it
 
