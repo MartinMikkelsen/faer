@@ -461,6 +461,7 @@ mod tests {
 	use crate::stats::prelude::*;
 	use crate::utils::approx::*;
 	use crate::{Mat, assert, c32, c64};
+	use crate::utils::cost::{HostClass, Rates, outside_cost_of, pays_at, rate, serial_time};
 	use dyn_stack::MemBuffer;
 	#[test]
 	fn region_rules_follow_the_serial_time() {
@@ -478,13 +479,24 @@ mod tests {
 			assert!(!swap_stage_pays::<f64>(par, ParThreshold::Derived, 64, 16, 48, false));
 			assert!(swap_stage_pays::<f64>(par, ParThreshold::Derived, 4096, 256, 4096, false));
 			// the swap stage of a 64 x 1024 matrix (64 swaps over 960 columns, every column on
-			// one side: one section) pays at the widths of the benchmark, for both dtypes; it
-			// measured 60 us (`f64`) and 80 us (`c64`) serial against 6 us of dispatch. The same
-			// region counted as the two sided split (four sections) is what kept it serial.
+			// one side: one section) follows the rule on the tables of the host class, for both
+			// dtypes; the same region counted as the two sided split (four sections) is what kept
+			// it serial. The verdict itself depends on the class, so the test states the rule.
 			for w in [4, 8] {
 				let par = ParShape::Rayon(NonZeroUsize::new(w).unwrap());
-				assert!(swap_stage_pays::<f64>(par, ParThreshold::Derived, 64, 64, 960, true), "f64 {w}");
-				assert!(swap_stage_pays::<c64>(par, ParThreshold::Derived, 64, 64, 960, true), "c64 {w}");
+				let rule = |ns: f64| pays_at(serial_time(64 * 960, ns), SWAP_ONE_SIDE_SECTIONS, par.dispatch_cost(NonZeroUsize::new(w).unwrap()));
+				assert_eq!(swap_stage_pays::<f64>(par, ParThreshold::Derived, 64, 64, 960, true), rule(rate::lu_swap().of::<f64>()), "f64 {w}");
+				assert_eq!(swap_stage_pays::<c64>(par, ParThreshold::Derived, 64, 64, 960, true), rule(rate::lu_swap().of::<c64>()), "c64 {w}");
+			}
+			// on the measured Zen 5 row (avx512) it pays: 60 us (`f64`) and 80 us (`c64`) serial
+			// against 6 us of dispatch (the Rayon cost from outside the pool of that class)
+			for w in [4, 8] {
+				let class = HostClass::X86_64Avx512;
+				let rt = Rates::for_class(class);
+				let cost = outside_cost_of(class, NonZeroUsize::new(w).unwrap());
+				assert!(pays_at(serial_time(64 * 960, rt.lu_swap.of::<f64>()), SWAP_ONE_SIDE_SECTIONS, cost), "f64 {w}");
+				assert!(pays_at(serial_time(64 * 960, rt.lu_swap.of::<c64>()), SWAP_ONE_SIDE_SECTIONS, cost), "c64 {w}");
+				assert!(!pays_at(serial_time(64 * 960, rt.lu_swap.of::<f64>()), SWAP_STAGE_SECTIONS, cost), "two sided {w}");
 			}
 			// a complex trailing update reaches the floor at fewer elements than a real one
 			let (r, c) = (160, 160);
