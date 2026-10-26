@@ -250,7 +250,7 @@ fn qr_in_place_unblocked<'out, I: Index, T: ComplexField>(
 				if !params.par_threshold.region_pays::<T>(
 					par.shape(),
 					(m - k - 1) * (n - k - 1),
-					rate::QR_COL_PIVOT,
+					rate::qr_col_pivot(),
 					1,
 				) {
 					par = Par::Seq;

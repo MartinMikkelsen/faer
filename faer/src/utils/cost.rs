@@ -30,45 +30,171 @@ pub fn pays_at(estimate: Duration, sections: u32, dispatch_cost: Duration) -> bo
 	estimate.as_secs_f64() >= PAYS * f64::from(sections) * dispatch_cost.as_secs_f64()
 }
 
+/// The class of the machine, keyed by the kernel dispatch it will take, not by the CPU model.
+/// Every table of this module (the serial rates, the Rayon dispatch costs) has one row per
+/// class. The same enum and the same detection are kept in sync by hand with
+/// `threadteam::HostClass` (faer also builds without the `threadteam` feature); a test compares
+/// the two when the feature is on.
+///
+/// Rates and dispatch costs of one row must come from the same machine in the same clock state:
+/// switching the boost on moves both by about 1.66 times with a stable ratio (within a few
+/// percent), so a row that mixes boosted rates with unboosted costs, or the reverse, shifts every
+/// floor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HostClass {
+	/// `x86_64` with AVX-512F at run time (`x86_64-avx512`).
+	X86_64Avx512,
+	/// `x86_64` with AVX2 and FMA, without AVX-512F (`x86_64-avx2`).
+	X86_64Avx2,
+	/// Any other `x86_64` (`x86_64-scalar`).
+	X86_64Scalar,
+	/// `aarch64` on macOS (`aarch64-apple`).
+	Aarch64Apple,
+	/// Any other `aarch64` (`aarch64`).
+	Aarch64,
+	/// Everything else (`generic`).
+	Generic,
+}
+
+impl HostClass {
+	/// Every class, in declaration order.
+	pub const ALL: [HostClass; 6] = [
+		HostClass::X86_64Avx512,
+		HostClass::X86_64Avx2,
+		HostClass::X86_64Scalar,
+		HostClass::Aarch64Apple,
+		HostClass::Aarch64,
+		HostClass::Generic,
+	];
+
+	/// The class of this host, detected at the first call and cached. With `std`, `x86_64` uses
+	/// run time feature detection; without it the target features of the build decide.
+	pub fn detect() -> Self {
+		use core::sync::atomic::{AtomicU8, Ordering};
+		static CLASS: AtomicU8 = AtomicU8::new(0);
+		let c = CLASS.load(Ordering::Relaxed);
+		if c != 0 {
+			return Self::ALL[c as usize - 1];
+		}
+		let class = Self::detect_uncached();
+		let idx = Self::ALL.iter().position(|&k| k == class).unwrap();
+		CLASS.store(idx as u8 + 1, Ordering::Relaxed);
+		class
+	}
+
+	#[cfg(all(target_arch = "x86_64", feature = "std"))]
+	fn detect_uncached() -> Self {
+		if std::arch::is_x86_feature_detected!("avx512f") {
+			HostClass::X86_64Avx512
+		} else if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma") {
+			HostClass::X86_64Avx2
+		} else {
+			HostClass::X86_64Scalar
+		}
+	}
+
+	#[cfg(all(target_arch = "x86_64", not(feature = "std")))]
+	fn detect_uncached() -> Self {
+		if cfg!(target_feature = "avx512f") {
+			HostClass::X86_64Avx512
+		} else if cfg!(all(target_feature = "avx2", target_feature = "fma")) {
+			HostClass::X86_64Avx2
+		} else {
+			HostClass::X86_64Scalar
+		}
+	}
+
+	#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+	fn detect_uncached() -> Self {
+		HostClass::Aarch64Apple
+	}
+
+	#[cfg(all(target_arch = "aarch64", not(target_os = "macos")))]
+	fn detect_uncached() -> Self {
+		HostClass::Aarch64
+	}
+
+	#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+	fn detect_uncached() -> Self {
+		HostClass::Generic
+	}
+
+	/// The class name used in the docs and the tables.
+	pub const fn name(self) -> &'static str {
+		match self {
+			HostClass::X86_64Avx512 => "x86_64-avx512",
+			HostClass::X86_64Avx2 => "x86_64-avx2",
+			HostClass::X86_64Scalar => "x86_64-scalar",
+			HostClass::Aarch64Apple => "aarch64-apple",
+			HostClass::Aarch64 => "aarch64",
+			HostClass::Generic => "generic",
+		}
+	}
+}
+
 /// Cost of one section started from outside the pool (`threadteam::DispatchKind::Outside`) at
-/// width `w`: the Rayon route of faer enters the global or installed pool from the calling
-/// thread. Apple M5 Max (measured, microseconds at widths 2, 4, 6: 14, 18, 19), the conservative
-/// 40 us elsewhere; grown in proportion to the width above 6 (mirrors threadteam's model).
+/// width `w` on the host class `class`: the Rayon route of faer enters the global or installed
+/// pool from the calling thread. The row of the class, in nanoseconds at widths 2, 4, 6 (the
+/// model of threadteam: linear between the anchors, flat below 2 and above 6):
+///
+/// * `x86_64-avx512`: 9.7, 10.1, 8.7 us (AMD Ryzen AI 9 HX 470, boost off, 8 threads);
+/// * `aarch64-apple`: 14, 18, 19 us (Apple M5 Max);
+/// * every other class: 40 us at every width (conservative, unmeasured).
+///
+/// Mirrors `threadteam::DispatchCosts::for_class(class)` for builds without the `threadteam`
+/// feature (a test compares the two when it is on).
+#[cfg(any(all(feature = "rayon", not(feature = "threadteam")), test))]
+#[cfg_attr(feature = "threadteam", allow(dead_code))]
+pub(crate) fn outside_cost_of(class: HostClass, w: NonZeroUsize) -> Duration {
+	let anchors: [u64; 3] = match class {
+		HostClass::X86_64Avx512 => [9_700, 10_100, 8_700],
+		HostClass::Aarch64Apple => [14_000, 18_000, 19_000],
+		_ => [40_000; 3],
+	};
+	let w = w.get() as i64;
+	let ns = if w <= 2 {
+		anchors[0] as i64
+	} else if w >= 6 {
+		anchors[2] as i64
+	} else {
+		let i = (w > 4) as usize;
+		let (w0, w1) = (2 + 2 * i as i64, 4 + 2 * i as i64);
+		let (c0, c1) = (anchors[i] as i64, anchors[i + 1] as i64);
+		c0 + (c1 - c0) * (w - w0) / (w1 - w0)
+	};
+	Duration::from_nanos(ns as u64)
+}
+
+/// [`outside_cost_of`] for the class of this host.
 #[cfg(all(feature = "rayon", not(feature = "threadteam")))]
 pub(crate) fn outside_cost(w: NonZeroUsize) -> Duration {
-	let w = w.get() as u64;
-	let ns: u64 = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-		match w {
-			0..=2 => 14_000,
-			3 => 16_000,
-			4 => 18_000,
-			5 => 18_500,
-			6 => 19_000,
-			_ => 19_000 * w / 6,
-		}
-	} else if w <= 6 {
-		40_000
-	} else {
-		40_000 * w / 6
-	};
-	Duration::from_nanos(ns)
+	outside_cost_of(HostClass::detect(), w)
 }
 
 /// Serial throughput of the GEMM kernel, nanoseconds per multiply-add of the dtype (a complex
-/// one for `c32`/`c64`). Measured on an Apple M5 Max with the `seq` mode of the threshold sweeps
-/// (`threadteam/docs/design/thresholds-data`), L2 resident shapes.
+/// one for `c32`/`c64`), of the host class ([`rates`]).
 pub mod ns_per_mac {
-	/// `f64`: 0.037, range 0.034 to 0.040.
-	pub const F64: f64 = 0.037;
-	/// `c64`: 0.165, range 0.162 to 0.172.
-	pub const C64: f64 = 0.165;
-	/// `f32`: not measured, scaled from `f64` by the SIMD width (two lanes per register).
-	pub const F32: f64 = F64 / 2.0;
-	/// `c32`: not measured, scaled from `c64` by the SIMD width.
-	pub const C32: f64 = C64 / 2.0;
+	use super::rates;
+	/// `f64`.
+	pub fn f64() -> f64 {
+		rates().gemm_mac.real
+	}
+	/// `c64`.
+	pub fn c64() -> f64 {
+		rates().gemm_mac.cplx
+	}
+	/// `f32`: measured on the classes that have a measurement, half of `f64` on the others.
+	pub fn f32() -> f64 {
+		rates().gemm_single.real
+	}
+	/// `c32`: measured on the classes that have a measurement, half of `c64` on the others.
+	pub fn c32() -> f64 {
+		rates().gemm_single.cplx
+	}
 }
 
-/// Serial time of one row swap of one column in the LU swap stage, nanoseconds: random pivot
+/// Serial time of one row swap of one column in the LU swap stage, nanoseconds (not measured on
+/// every class; the one value of every class): random pivot
 /// rows, columns of 64 to 1024 `f64`, cache resident, median of 0.31 to 1.0 over
 /// `m` 128 to 1024 and 16 to 128 swaps per column (Apple M5 Max, one thread; memory bound, so
 /// the same for every dtype of the same element width).
@@ -163,10 +289,10 @@ impl ParThreshold {
 }
 
 /// Serial throughput of a kernel family, nanoseconds per unit of work for the real and the
-/// complex native scalars. Measured with one thread on an Apple M5 Max, QoS `UserInitiated`,
-/// L2 resident shapes (`faer-benchmark` `data/probes/20261026-threshold-recalibration`); `f32`
-/// and `c32` take half of the `f64` and `c64` value (twice the lanes per register and half the
-/// bytes; checked for the GEMM only), a scalar that is not native takes the `f64` or `c64` value.
+/// complex native scalars, per host class ([`Rates`]). Measured with one thread, L2 resident
+/// shapes; `f32` and `c32` take half of the `f64` and `c64` value (twice the lanes per register
+/// and half the bytes; checked for the GEMM only, where the Zen 5 measurement agrees to 0.2
+/// percent), a scalar that is not native takes the `f64` or `c64` value.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Rate {
 	/// `f64` (and, halved, `f32`).
@@ -190,59 +316,201 @@ impl Rate {
 	}
 }
 
-/// The serial throughput constants of the kernel families, one per family (design record:
-/// `threadteam` `docs/design/thresholds.md`, section 2.3; one thread, Apple M5 Max, QoS
-/// `UserInitiated`, f64 and c64, median over the shapes 96 to 768 and two processes; the raw
-/// numbers and the host log are in `faer-benchmark` `data/probes/20261026-threshold-recalibration`).
-/// The unit is what the gate of the family counts. A step of a factorization is timed inside the
-/// whole serial factorization, so the constant includes the serial parts of a step (pivot
-/// search, Householder generation) and slightly overestimates the time of the part that is
-/// split; the Hessenberg value comes from processes the host log marks busy.
-pub mod rate {
-	use super::{Rate, ns_per_mac};
-	/// GEMM and every kernel counted in multiply-adds (triangular products and solves, the
-	/// block Householder apply), per multiply-add; the values of [`ns_per_mac`].
-	pub const GEMM_MAC: Rate = Rate { real: ns_per_mac::F64, cplx: ns_per_mac::C64 };
+/// The serial throughput constants of the kernel families of one host class, one per family
+/// (design record: `threadteam` `docs/design/thresholds.md`, section 2.3). The unit is what the
+/// gate of the family counts. A step of a factorization is timed inside the whole serial
+/// factorization, so the constant includes the serial parts of a step (pivot search, Householder
+/// generation) and slightly overestimates the time of the part that is split.
+///
+/// The row of a class is [`Rates::for_class`]; [`rates`] is the row of the host. Sources:
+///
+/// * `x86_64-avx512`: one thread on an AMD Ryzen AI 9 HX 470 (Zen 5) at 2.0 GHz, boost off,
+///   median over shapes and rounds (`faer-benchmark`
+///   `data/probes/20261026-awake-team-linux/tables-consts-exec3.md`); the divide and conquer and
+///   sparse product from the region constants of the same file (`raw-exec3/rconsts-*.csv`).
+/// * `aarch64-apple`: one thread on an Apple M5 Max, QoS `UserInitiated`, L2 resident shapes,
+///   median over the shapes 96 to 768 and two processes
+///   (`data/probes/20261026-threshold-recalibration`).
+/// * every other class is unmeasured and takes the `generic` row: per entry the smaller of the
+///   measured rows, so that an unknown host keeps work serial a little longer than it must
+///   rather than dispatching too early.
+///
+/// A row's rates and the dispatch costs of the same class must come from the same machine and
+/// clock state ([`HostClass`]).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Rates {
+	/// GEMM and every kernel counted in multiply-adds (triangular products and solves), per
+	/// multiply-add.
+	pub gemm_mac: Rate,
+	/// GEMM in single precision, per multiply-add: `real` is `f32`, `cplx` is `c32`.
+	pub gemm_single: Rate,
+	/// The multiply-adds of the block Householder apply, per multiply-add.
+	pub block_apply_mac: Rate,
 	/// Full-pivoting LU, one step: rank-one update fused with the pivot search, per element of
 	/// the trailing block `(m-k-1)*(n-k-1)`.
-	pub const LU_FULL_PIVOT: Rate = Rate { real: 0.216, cplx: 0.6 };
+	pub lu_full_pivot: Rate,
 	/// Bunch-Kaufman with full pivoting, one step: rank-1 or rank-2 update fused with the pivot
 	/// search, per element of the trailing block `rem*rem`.
-	pub const BUNCH_KAUFMAN: Rate = Rate { real: 0.238, cplx: 0.38 };
+	pub bunch_kaufman: Rate,
 	/// QR with column pivoting, one step: fused update of the trailing block and the norms, per
 	/// element `(m-k-1)*(n-k-1)`.
-	pub const QR_COL_PIVOT: Rate = Rate { real: 0.202, cplx: 0.713 };
+	pub qr_col_pivot: Rate,
 	/// Bidiagonalization, one step: the fused two-sided update and the matrix-vector product, per
 	/// element `(m-k-1)*(n-k-1)`.
-	pub const BIDIAG: Rate = Rate { real: 0.48, cplx: 1.36 };
+	pub bidiag: Rate,
 	/// Hessenberg reduction (unblocked), one step: two matrix-vector products and a rank-one
 	/// update, per element `n*n` of the trailing block.
-	pub const HESSENBERG: Rate = Rate { real: 0.451, cplx: 1.57 };
+	pub hessenberg: Rate,
 	/// Tridiagonalization, one step: the symmetric fused update, per element `rem*rem/2` of the
 	/// triangle.
-	pub const TRIDIAG: Rate = Rate { real: 0.339, cplx: 1.16 };
-	/// Matrix-vector product, per matrix element.
-	pub const MATVEC: Rate = Rate { real: 0.1, cplx: 0.34 };
+	pub tridiag: Rate,
+	/// Matrix-vector product, per matrix element (the mean of the column major and row major
+	/// products).
+	pub matvec: Rate,
 	/// Divide and conquer bidiagonal SVD (`bidiag_svd`, both singular vectors, non deflating
 	/// data), the whole serial solve of size `m` per `m^2`; the join of size `n` has the two
-	/// halves as work, `2 (n/2)^2`. The time is `45 m^2 + 0.023 m^3` ns (fit over `m` 64 to 512,
-	/// 53 ns per `m^2` at the median of the shapes, 48 to 62 across them): the `m^2` term
-	/// (secular equation, deflation, permutations) is larger than the merge products below
-	/// `m` about 1900, so the unit is `m^2`. Real types only (the complex value repeats the
-	/// real one).
-	pub const BIDIAG_SVD_DC: Rate = Rate { real: 53.0, cplx: 53.0 };
+	/// halves as work, `2 (n/2)^2`. The `m^2` term (secular equation, deflation, permutations)
+	/// is larger than the merge products below `m` about 1900, so the unit is `m^2`; the
+	/// constant is the median over `m` 64 to 512 (it is size dependent: 48 to 62 on the M5 fit,
+	/// 145 to 178 on the Zen 5). Real types only (the complex value repeats the real one).
+	pub bidiag_svd_dc: Rate,
 	/// Divide and conquer symmetric tridiagonal EVD (`tridiag_evd`, eigenvectors on), the whole
-	/// serial solve of size `m` per `m^2`, used as `BIDIAG_SVD_DC` (27 to 36 ns per `m^2` over
-	/// the shapes 64 to 512). Real types only.
-	pub const TRIDIAG_EVD_DC: Rate = Rate { real: 31.0, cplx: 31.0 };
+	/// serial solve of size `m` per `m^2`, used as `bidiag_svd_dc` (88 to 102 on the Zen 5 over
+	/// `m` 64 to 512). Real types only.
+	pub tridiag_evd_dc: Rate,
 	/// Triangular inverse (`invert_*_triangular`), the whole serial inverse of size `m` per
-	/// `m^3`; the join of size `n` has the two halves as work, `2 (n/2)^3`.
-	pub const TRIANGULAR_INVERSE: Rate = Rate { real: 0.0096, cplx: 0.0344 };
+	/// `m^3`; the join of size `n` has the two halves as work, `2 (n/2)^3`. The constant is the
+	/// median over `m` 64 to 512 and falls with the size (on the Zen 5, `f64` 0.047 per `m^3`
+	/// at 64 to 0.0145 at 512), so a join near the floor is a little overestimated.
+	pub triangular_inverse: Rate,
 	/// Sparse by sparse numeric product, per multiply-add of the symbolic flop count
-	/// (`SparseMatMulInfo`, free to read).
-	pub const SPARSE_MATMUL: Rate = Rate { real: 1.5, cplx: 1.8 };
+	/// (`SparseMatMulInfo`, free to read); the median over the measured densities and sizes.
+	pub sparse_matmul: Rate,
 	/// Rank-one Householder apply (`N == 1`), per element of the target `M*K`.
-	pub const HOUSEHOLDER_RANK_ONE: Rate = Rate { real: 0.212, cplx: 0.725 };
+	pub householder_rank_one: Rate,
+}
+
+const fn fmin(a: f64, b: f64) -> f64 {
+	if b < a { b } else { a }
+}
+
+const fn rmin(a: Rate, b: Rate) -> Rate {
+	Rate { real: fmin(a.real, b.real), cplx: fmin(a.cplx, b.cplx) }
+}
+
+const fn r(real: f64, cplx: f64) -> Rate {
+	Rate { real, cplx }
+}
+
+impl Rates {
+	/// Per entry the smaller value of the two rows.
+	const fn min_of(a: &Rates, b: &Rates) -> Rates {
+		Rates {
+			gemm_mac: rmin(a.gemm_mac, b.gemm_mac),
+			gemm_single: rmin(a.gemm_single, b.gemm_single),
+			block_apply_mac: rmin(a.block_apply_mac, b.block_apply_mac),
+			lu_full_pivot: rmin(a.lu_full_pivot, b.lu_full_pivot),
+			bunch_kaufman: rmin(a.bunch_kaufman, b.bunch_kaufman),
+			qr_col_pivot: rmin(a.qr_col_pivot, b.qr_col_pivot),
+			bidiag: rmin(a.bidiag, b.bidiag),
+			hessenberg: rmin(a.hessenberg, b.hessenberg),
+			tridiag: rmin(a.tridiag, b.tridiag),
+			matvec: rmin(a.matvec, b.matvec),
+			bidiag_svd_dc: rmin(a.bidiag_svd_dc, b.bidiag_svd_dc),
+			tridiag_evd_dc: rmin(a.tridiag_evd_dc, b.tridiag_evd_dc),
+			triangular_inverse: rmin(a.triangular_inverse, b.triangular_inverse),
+			sparse_matmul: rmin(a.sparse_matmul, b.sparse_matmul),
+			householder_rank_one: rmin(a.householder_rank_one, b.householder_rank_one),
+		}
+	}
+
+	/// `x86_64-avx512`: Zen 5 at 2.0 GHz, boost off (see the type docs).
+	pub const X86_64_AVX512: Rates = Rates {
+		gemm_mac: r(0.0641, 0.2565),
+		gemm_single: r(0.0320, 0.1283),
+		block_apply_mac: r(0.0676, 0.2685),
+		lu_full_pivot: r(0.4011, 0.8679),
+		bunch_kaufman: r(0.8295, 1.3904),
+		qr_col_pivot: r(0.3645, 1.0320),
+		bidiag: r(1.0427, 2.1997),
+		hessenberg: r(0.8576, 2.2212),
+		tridiag: r(0.7695, 1.9252),
+		// mean of matvec_colmajor (0.1743, 0.3373) and matvec_rowmajor (0.1565, 0.5057)
+		matvec: r(0.1654, 0.4215),
+		bidiag_svd_dc: r(152.9, 152.9),
+		tridiag_evd_dc: r(97.4, 97.4),
+		triangular_inverse: r(0.01936, 0.07228),
+		// median over spmm_{f64,c64}_n{2000,4000,8000,20000}_d{4,6,8,12,16,40}
+		sparse_matmul: r(4.1315, 5.2342),
+		householder_rank_one: r(0.4783, 1.0303),
+	};
+
+	/// `aarch64-apple`: Apple M5 Max (the constants of the first calibration).
+	pub const AARCH64_APPLE: Rates = Rates {
+		gemm_mac: r(0.037, 0.165),
+		gemm_single: r(0.037 / 2.0, 0.165 / 2.0),
+		block_apply_mac: r(0.037, 0.165),
+		lu_full_pivot: r(0.216, 0.6),
+		bunch_kaufman: r(0.238, 0.38),
+		qr_col_pivot: r(0.202, 0.713),
+		bidiag: r(0.48, 1.36),
+		hessenberg: r(0.451, 1.57),
+		tridiag: r(0.339, 1.16),
+		matvec: r(0.1, 0.34),
+		bidiag_svd_dc: r(53.0, 53.0),
+		tridiag_evd_dc: r(31.0, 31.0),
+		triangular_inverse: r(0.0096, 0.0344),
+		sparse_matmul: r(1.5, 1.8),
+		householder_rank_one: r(0.212, 0.725),
+	};
+
+	/// `generic` (every unmeasured class): per entry the smaller of the measured rows.
+	pub const GENERIC: Rates = Rates::min_of(&Rates::X86_64_AVX512, &Rates::AARCH64_APPLE);
+
+	/// The row of a host class.
+	pub fn for_class(class: HostClass) -> &'static Rates {
+		static AVX512: Rates = Rates::X86_64_AVX512;
+		static APPLE: Rates = Rates::AARCH64_APPLE;
+		static GENERIC: Rates = Rates::GENERIC;
+		match class {
+			HostClass::X86_64Avx512 => &AVX512,
+			HostClass::Aarch64Apple => &APPLE,
+			HostClass::X86_64Avx2 | HostClass::X86_64Scalar | HostClass::Aarch64 | HostClass::Generic => &GENERIC,
+		}
+	}
+}
+
+/// The rates of the host class of this process ([`HostClass::detect`]).
+pub fn rates() -> &'static Rates {
+	Rates::for_class(HostClass::detect())
+}
+
+/// The serial throughput constants of the host, one function per family ([`Rates`] has the
+/// units and the sources).
+pub mod rate {
+	use super::{Rate, rates};
+	macro_rules! families {
+		($($name:ident),* $(,)?) => {$(
+			#[doc = core::concat!("`Rates::", core::stringify!($name), "` of the host class.")]
+			pub fn $name() -> Rate { rates().$name }
+		)*};
+	}
+	families!(
+		gemm_mac,
+		block_apply_mac,
+		lu_full_pivot,
+		bunch_kaufman,
+		qr_col_pivot,
+		bidiag,
+		hessenberg,
+		tridiag,
+		matvec,
+		bidiag_svd_dc,
+		tridiag_evd_dc,
+		triangular_inverse,
+		sparse_matmul,
+		householder_rank_one,
+	);
 }
 
 /// Nanoseconds per multiply-add of `T` for a GEMM, by the table above. Non-native scalars use
@@ -250,13 +518,13 @@ pub mod rate {
 /// time, so such a region stays serial a little longer rather than dispatching too early.
 pub(crate) fn gemm_ns_per_mac<T: crate::ComplexField>() -> f64 {
 	if const { T::IS_NATIVE_F32 } {
-		ns_per_mac::F32
+		ns_per_mac::f32()
 	} else if const { T::IS_NATIVE_C32 } {
-		ns_per_mac::C32
+		ns_per_mac::c32()
 	} else if const { T::IS_REAL } {
-		ns_per_mac::F64
+		ns_per_mac::f64()
 	} else {
-		ns_per_mac::C64
+		ns_per_mac::c64()
 	}
 }
 
@@ -464,10 +732,20 @@ pub(crate) fn block_apply_estimate<T: crate::ComplexField>(
 	k: usize,
 	products: usize,
 ) -> Duration {
+	block_apply_estimate_with::<T>(rates(), m, n, k, products)
+}
+
+/// [`block_apply_estimate`] on the row `rt`.
+pub(crate) fn block_apply_estimate_with<T: crate::ComplexField>(
+	rt: &Rates,
+	m: usize,
+	n: usize,
+	k: usize,
+	products: usize,
+) -> Duration {
 	let macs = m.saturating_mul(n).saturating_mul(k).saturating_mul(products);
 	// summed in nanoseconds: one `Duration`, not two and an addition (a gate asked per block apply)
-	let ns = macs as f64 * rate::GEMM_MAC.of::<T>()
-		+ m.saturating_mul(k) as f64 * rate::HOUSEHOLDER_RANK_ONE.of::<T>();
+	let ns = macs as f64 * rt.block_apply_mac.of::<T>() + m.saturating_mul(k) as f64 * rt.householder_rank_one.of::<T>();
 	Duration::from_secs_f64(ns * 1e-9)
 }
 
@@ -573,13 +851,13 @@ mod tests {
 		let us = Duration::from_micros;
 		// falling, flat and rising tables
 		for t in [[us(9), us(5), us(3)], [us(4), us(4), us(4)], [us(2), us(7), us(12)]] {
-			let costs = DispatchCosts::generic().with(DispatchKind::Team, WidthCosts::new(t));
+			let costs = DispatchCosts::for_class(threadteam::HostClass::Generic).with(DispatchKind::Team, WidthCosts::new(t));
 			let s = ParShape::Team(nz(6), costs);
 			let want = (2..=6).map(|w| s.dispatch_cost(nz(w))).min().unwrap();
 			assert_eq!(s.min_dispatch_cost(), want, "{t:?}");
 		}
 		assert_eq!(ParShape::Seq.min_dispatch_cost(), Duration::MAX);
-		assert_eq!(ParShape::Team(nz(1), DispatchCosts::generic()).min_dispatch_cost(), Duration::MAX);
+		assert_eq!(ParShape::Team(nz(1), DispatchCosts::for_class(threadteam::HostClass::Generic)).min_dispatch_cost(), Duration::MAX);
 	}
 
 	#[test]
@@ -612,7 +890,7 @@ mod tests {
 	#[test]
 	fn team_shape_carries_the_costs_of_its_token() {
 		use threadteam::{DispatchCosts, DispatchKind, WidthCosts};
-		let costs = DispatchCosts::generic()
+		let costs = DispatchCosts::for_class(threadteam::HostClass::Generic)
 			.with(DispatchKind::Team, WidthCosts::flat(Duration::from_micros(5)));
 		let s = ParShape::Team(nz(4), costs);
 		assert_eq!(s.dispatch_cost(nz(4)), Duration::from_micros(5));
@@ -623,12 +901,12 @@ mod tests {
 
 	#[test]
 	fn gemm_rates_are_per_dtype() {
-		assert_eq!(gemm_ns_per_mac::<f64>(), ns_per_mac::F64);
-		assert_eq!(gemm_ns_per_mac::<crate::c64>(), ns_per_mac::C64);
-		assert_eq!(gemm_ns_per_mac::<f32>(), ns_per_mac::F32);
-		assert_eq!(gemm_ns_per_mac::<crate::c32>(), ns_per_mac::C32);
+		assert_eq!(gemm_ns_per_mac::<f64>(), ns_per_mac::f64());
+		assert_eq!(gemm_ns_per_mac::<crate::c64>(), ns_per_mac::c64());
+		assert_eq!(gemm_ns_per_mac::<f32>(), ns_per_mac::f32());
+		assert_eq!(gemm_ns_per_mac::<crate::c32>(), ns_per_mac::c32());
 		// the complex rate is 4.5 times the real one, not 1: the floor bug of the team route
-		assert!(ns_per_mac::C64 > 4.0 * ns_per_mac::F64);
+		assert!(ns_per_mac::c64() > 4.0 * ns_per_mac::f64());
 	}
 
 	/// Smallest `units` (doubling, then bisection) for which the region pays on `shape`.
@@ -657,24 +935,146 @@ mod tests {
 		hi
 	}
 
-	/// (name, rate, sections as counted in the code of the gate)
-	const GATES: &[(&str, Rate, u32)] = &[
-		("lu_full_pivot", rate::LU_FULL_PIVOT, 1),
-		("bunch_kaufman", rate::BUNCH_KAUFMAN, 1),
-		("qr_col_pivot", rate::QR_COL_PIVOT, 1),
-		("bidiag", rate::BIDIAG, 2),
-		("hessenberg", rate::HESSENBERG, 2),
-		("tridiag", rate::TRIDIAG, 1),
-		("matvec", rate::MATVEC, 1),
-		("householder_rank_one", rate::HOUSEHOLDER_RANK_ONE, 1),
-		("gemm_mac", rate::GEMM_MAC, 1),
-		("sparse_matmul", rate::SPARSE_MATMUL, 1),
-	];
+	/// (name, rate, sections as counted in the code of the gate), on the row `rt`
+	fn gates(rt: &Rates) -> [(&'static str, Rate, u32); 10] {
+		[
+			("lu_full_pivot", rt.lu_full_pivot, 1),
+			("bunch_kaufman", rt.bunch_kaufman, 1),
+			("qr_col_pivot", rt.qr_col_pivot, 1),
+			("bidiag", rt.bidiag, 2),
+			("hessenberg", rt.hessenberg, 2),
+			("tridiag", rt.tridiag, 1),
+			("matvec", rt.matvec, 1),
+			("householder_rank_one", rt.householder_rank_one, 1),
+			("gemm_mac", rt.gemm_mac, 1),
+			("sparse_matmul", rt.sparse_matmul, 1),
+		]
+	}
+
+	/// The M5 row: the tests that state numbers of the Apple team table use it with that table
+	/// (rates and costs of one row).
+	const M5: &Rates = &Rates::AARCH64_APPLE;
+
+	/// Every entry of a row, as `(name, Rate)`.
+	fn entries(rt: &Rates) -> [(&'static str, Rate); 15] {
+		[
+			("gemm_mac", rt.gemm_mac),
+			("gemm_single", rt.gemm_single),
+			("block_apply_mac", rt.block_apply_mac),
+			("lu_full_pivot", rt.lu_full_pivot),
+			("bunch_kaufman", rt.bunch_kaufman),
+			("qr_col_pivot", rt.qr_col_pivot),
+			("bidiag", rt.bidiag),
+			("hessenberg", rt.hessenberg),
+			("tridiag", rt.tridiag),
+			("matvec", rt.matvec),
+			("bidiag_svd_dc", rt.bidiag_svd_dc),
+			("tridiag_evd_dc", rt.tridiag_evd_dc),
+			("triangular_inverse", rt.triangular_inverse),
+			("sparse_matmul", rt.sparse_matmul),
+			("householder_rank_one", rt.householder_rank_one),
+		]
+	}
+
+	#[test]
+	fn every_class_resolves_to_its_table() {
+		assert_eq!(Rates::for_class(HostClass::X86_64Avx512), &Rates::X86_64_AVX512);
+		assert_eq!(Rates::for_class(HostClass::Aarch64Apple), &Rates::AARCH64_APPLE);
+		for c in [HostClass::X86_64Avx2, HostClass::X86_64Scalar, HostClass::Aarch64, HostClass::Generic] {
+			assert_eq!(Rates::for_class(c), &Rates::GENERIC, "{}", c.name());
+		}
+		// the rows are the measured ones
+		assert_eq!(Rates::X86_64_AVX512.gemm_mac, Rate { real: 0.0641, cplx: 0.2565 });
+		assert_eq!(Rates::X86_64_AVX512.gemm_single, Rate { real: 0.0320, cplx: 0.1283 });
+		assert_eq!(Rates::AARCH64_APPLE.gemm_mac, Rate { real: 0.037, cplx: 0.165 });
+		assert_eq!(Rates::AARCH64_APPLE.bidiag_svd_dc, Rate { real: 53.0, cplx: 53.0 });
+		// the single precision GEMM entry of the first row agrees with half of the double one
+		let g = Rates::X86_64_AVX512;
+		assert!((g.gemm_single.real / (g.gemm_mac.real / 2.0) - 1.0).abs() < 0.01);
+		assert!((g.gemm_single.cplx / (g.gemm_mac.cplx / 2.0) - 1.0).abs() < 0.01);
+	}
+
+	#[test]
+	fn generic_is_the_per_entry_minimum_of_the_measured_rows() {
+		let (a, b, g) = (entries(&Rates::X86_64_AVX512), entries(&Rates::AARCH64_APPLE), entries(&Rates::GENERIC));
+		for i in 0..a.len() {
+			let (name, ga) = (a[i].0, a[i].1);
+			assert_eq!(g[i].1.real, ga.real.min(b[i].1.real), "{name} real");
+			assert_eq!(g[i].1.cplx, ga.cplx.min(b[i].1.cplx), "{name} cplx");
+			assert!(g[i].1.real <= ga.real && g[i].1.real <= b[i].1.real, "{name}");
+		}
+	}
+
+	#[test]
+	fn rows_are_positive() {
+		for c in HostClass::ALL {
+			for (name, r) in entries(Rates::for_class(c)) {
+				assert!(r.real > 0.0 && r.cplx > 0.0, "{} {name}", c.name());
+			}
+		}
+	}
+
+	#[test]
+	fn detection_is_stable_and_the_host_row_is_its_class() {
+		let c = HostClass::detect();
+		for _ in 0..4 {
+			assert_eq!(HostClass::detect(), c);
+		}
+		assert_eq!(HostClass::detect_uncached(), c);
+		assert_eq!(rates(), Rates::for_class(c));
+		assert_eq!(rate::bidiag(), rates().bidiag);
+		#[cfg(all(target_arch = "x86_64", feature = "std"))]
+		if std::arch::is_x86_feature_detected!("avx512f") {
+			assert_eq!(c, HostClass::X86_64Avx512);
+		}
+		#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+		assert_eq!(c, HostClass::Aarch64Apple);
+	}
+
+	#[test]
+	fn outside_rows_follow_the_classes() {
+		let us = |c, w: usize| outside_cost_of(c, nz(w)).as_nanos();
+		assert_eq!((us(HostClass::X86_64Avx512, 2), us(HostClass::X86_64Avx512, 4), us(HostClass::X86_64Avx512, 6)), (9_700, 10_100, 8_700));
+		assert_eq!((us(HostClass::Aarch64Apple, 2), us(HostClass::Aarch64Apple, 4), us(HostClass::Aarch64Apple, 6)), (14_000, 18_000, 19_000));
+		assert_eq!(us(HostClass::Aarch64Apple, 3), 16_000);
+		assert_eq!(us(HostClass::Aarch64Apple, 5), 18_500);
+		for c in [HostClass::X86_64Avx2, HostClass::X86_64Scalar, HostClass::Aarch64, HostClass::Generic] {
+			for w in [1, 2, 3, 6, 12] {
+				assert_eq!(us(c, w), 40_000);
+			}
+		}
+		// flat above the last anchor
+		assert_eq!(us(HostClass::Aarch64Apple, 12), 19_000);
+	}
+
+	/// faer keeps its own `HostClass` and its own Rayon table so that it builds without the
+	/// feature; with the feature on they must agree with threadteam's.
+	#[cfg(feature = "threadteam")]
+	#[test]
+	fn host_class_and_outside_rows_agree_with_threadteam() {
+		use threadteam::{DispatchCosts, DispatchKind};
+		let tt = |c: HostClass| match c {
+			HostClass::X86_64Avx512 => threadteam::HostClass::X86_64Avx512,
+			HostClass::X86_64Avx2 => threadteam::HostClass::X86_64Avx2,
+			HostClass::X86_64Scalar => threadteam::HostClass::X86_64Scalar,
+			HostClass::Aarch64Apple => threadteam::HostClass::Aarch64Apple,
+			HostClass::Aarch64 => threadteam::HostClass::Aarch64,
+			HostClass::Generic => threadteam::HostClass::Generic,
+		};
+		assert_eq!(tt(HostClass::detect()), threadteam::HostClass::detect());
+		for c in HostClass::ALL {
+			assert_eq!(c.name(), tt(c).name());
+			let costs = DispatchCosts::for_class(tt(c));
+			for w in 2..=12 {
+				assert_eq!(outside_cost_of(c, nz(w)), costs.cost(DispatchKind::Outside, nz(w)), "{} width {w}", c.name());
+			}
+		}
+	}
 
 	#[test]
 	fn fixed_and_never_keep_their_meaning() {
 		let s = ParShape::Rayon(nz(6));
-		let r = rate::LU_FULL_PIVOT;
+		let r = rate::lu_full_pivot();
 		assert!(!ParThreshold::Never.region_pays::<f64>(s, usize::MAX, r, 1));
 		assert!(ParThreshold::Fixed(100).region_pays::<f64>(ParShape::Seq, 100, r, 1));
 		assert!(!ParThreshold::Fixed(100).region_pays::<f64>(s, 99, r, 1));
@@ -688,7 +1088,7 @@ mod tests {
 
 	#[test]
 	fn derived_gates_never_pay_on_a_sequential_shape() {
-		for &(_, r, sections) in GATES {
+		for (_, r, sections) in gates(rates()) {
 			assert!(!ParThreshold::Derived.region_pays::<f64>(
 				ParShape::Seq,
 				usize::MAX / 2,
@@ -708,9 +1108,9 @@ mod tests {
 	#[test]
 	fn derived_floors_on_a_team_follow_the_rule() {
 		use threadteam::DispatchCosts;
-		let team = ParShape::Team(nz(6), DispatchCosts::apple_m5());
+		let team = ParShape::Team(nz(6), DispatchCosts::for_class(threadteam::HostClass::Aarch64Apple));
 		let d = team.dispatch_cost(nz(6)).as_secs_f64() * 1e9;
-		for &(name, r, sections) in GATES {
+		for (name, r, sections) in gates(M5) {
 			for (ty, ns) in [("f64", r.real), ("c64", r.cplx)] {
 				let floor = if ty == "f64" {
 					floor_units::<f64>(team, r, sections)
@@ -730,17 +1130,17 @@ mod tests {
 			ParThreshold::Derived.region_pays::<f64>(team, u, r, f)
 		};
 		// full pivoting LU: a 100 x 100 trailing block stays serial, 200 x 200 is parallel
-		assert!(!pays(100 * 100, rate::LU_FULL_PIVOT, 1));
-		assert!(pays(200 * 200, rate::LU_FULL_PIVOT, 1));
+		assert!(!pays(100 * 100, M5.lu_full_pivot, 1));
+		assert!(pays(200 * 200, M5.lu_full_pivot, 1));
 		// bidiagonalization counts two sections: it needs twice the work of a one-section step
-		assert!(floor_units::<f64>(team, rate::BIDIAG, 2) >= 2 * floor_units::<f64>(team, rate::BIDIAG, 1) - 2);
+		assert!(floor_units::<f64>(team, M5.bidiag, 2) >= 2 * floor_units::<f64>(team, M5.bidiag, 1) - 2);
 		// a 256 x 256 matrix-vector product (65536 elements) pays on a team, not below 100 x 100
-		assert!(pays(256 * 256, rate::MATVEC, 1));
-		assert!(!pays(64 * 64, rate::MATVEC, 1));
+		assert!(pays(256 * 256, M5.matvec, 1));
+		assert!(!pays(64 * 64, M5.matvec, 1));
 		// the old fixed floors were 192*256 = 49152 elements for every one of these steps; the
 		// derived floors differ per family (the faster the kernel, the larger the floor)
-		let lu = floor_units::<f64>(team, rate::LU_FULL_PIVOT, 1);
-		let bidiag = floor_units::<f64>(team, rate::BIDIAG, 1);
+		let lu = floor_units::<f64>(team, M5.lu_full_pivot, 1);
+		let bidiag = floor_units::<f64>(team, M5.bidiag, 1);
 		assert!(lu > bidiag);
 	}
 
@@ -748,12 +1148,12 @@ mod tests {
 	#[test]
 	fn derived_floors_outside_the_pool_are_larger_than_on_a_team() {
 		let rayon = ParShape::Rayon(nz(6));
-		for &(name, r, sections) in GATES {
+		for (name, r, sections) in gates(M5) {
 			let outside = floor_units::<f64>(rayon, r, sections);
 			#[cfg(feature = "threadteam")]
 			{
 				use threadteam::DispatchCosts;
-				let team = ParShape::Team(nz(6), DispatchCosts::apple_m5());
+				let team = ParShape::Team(nz(6), DispatchCosts::for_class(threadteam::HostClass::Aarch64Apple));
 				let t = floor_units::<f64>(team, r, sections);
 				assert!(outside > 8 * t, "{name}: outside {outside}, team {t}");
 			}
@@ -763,30 +1163,30 @@ mod tests {
 		}
 		// the old fixed floor of the reductions (192 * 256) would have been 10 us of
 		// bidiagonalization and runs 5 times slower than serial from outside the pool
-		assert!(floor_units::<f64>(rayon, rate::BIDIAG, 2) > 192 * 256);
+		assert!(floor_units::<f64>(rayon, M5.bidiag, 2) > 192 * 256);
 	}
 
 	#[cfg(feature = "rayon")]
 	#[test]
 	fn par_pays_reads_the_degree_of_the_token() {
 		let seq = crate::Par::Seq;
-		assert!(!par_pays::<f64>(&seq, usize::MAX / 2, rate::MATVEC, 1));
+		assert!(!par_pays::<f64>(&seq, usize::MAX / 2, rate::matvec(), 1));
 		let par = crate::Par::rayon(6);
-		assert!(par_pays::<f64>(&par, 10_000_000, rate::MATVEC, 1));
-		assert!(!par_pays::<f64>(&par, 1_000, rate::MATVEC, 1));
+		assert!(par_pays::<f64>(&par, 10_000_000, rate::matvec(), 1));
+		assert!(!par_pays::<f64>(&par, 1_000, rate::matvec(), 1));
 		let one = crate::Par::rayon(1);
-		assert!(!par_pays::<f64>(&one, 10_000_000, rate::MATVEC, 1));
+		assert!(!par_pays::<f64>(&one, 10_000_000, rate::matvec(), 1));
 	}
 
 	#[test]
 	fn rates_are_per_dtype() {
-		let r = rate::BIDIAG;
+		let r = rate::bidiag();
 		assert_eq!(r.of::<f64>(), r.real);
 		assert_eq!(r.of::<c64>(), r.cplx);
 		assert_eq!(r.of::<f32>(), r.real / 2.0);
 		assert_eq!(r.of::<crate::c32>(), r.cplx / 2.0);
-		assert_eq!(rate::GEMM_MAC.of::<f64>(), ns_per_mac::F64);
-		assert_eq!(rate::GEMM_MAC.of::<c64>(), ns_per_mac::C64);
+		assert_eq!(rate::gemm_mac().of::<f64>(), ns_per_mac::f64());
+		assert_eq!(rate::gemm_mac().of::<c64>(), ns_per_mac::c64());
 	}
 
 	/// `Fixed(1)` makes every step of every reduction parallel, and the factors must equal the
@@ -963,15 +1363,15 @@ mod tests {
 	#[test]
 	fn halves_join_gates_follow_the_rule() {
 		let seq = crate::Par::Seq;
-		for r in [rate::BIDIAG_SVD_DC, rate::TRIDIAG_EVD_DC, rate::TRIANGULAR_INVERSE] {
+		for r in [rate::bidiag_svd_dc(), rate::tridiag_evd_dc(), rate::triangular_inverse()] {
 			assert!(!halves_pays::<f64>(&seq, 1 << 20, r, 2));
 		}
 		#[cfg(feature = "rayon")]
 		{
 			let par = crate::Par::rayon(6);
-			for r in [rate::BIDIAG_SVD_DC, rate::TRIDIAG_EVD_DC, rate::TRIANGULAR_INVERSE] {
+			for r in [rate::bidiag_svd_dc(), rate::tridiag_evd_dc(), rate::triangular_inverse()] {
 				// the smallest size whose join pays is the one the rule gives, and it is monotone
-				let power = if r == rate::TRIANGULAR_INVERSE { 3 } else { 2 };
+				let power = if r == rate::triangular_inverse() { 3 } else { 2 };
 				let first = (2..4096).find(|&n| halves_pays::<f64>(&par, n, r, power)).expect("never pays");
 				assert!(first > 8, "{first}");
 				assert!(!halves_pays::<f64>(&par, first - 1, r, power));
@@ -996,21 +1396,21 @@ mod tests {
 	#[test]
 	fn block_apply_split_starts_where_the_estimate_pays() {
 		use threadteam::DispatchCosts;
-		let team = ParShape::Team(nz(6), DispatchCosts::apple_m5());
+		let team = ParShape::Team(nz(6), DispatchCosts::for_class(threadteam::HostClass::Aarch64Apple));
 		let pays = |m: usize| {
 			let (n, k) = (8, m - 8);
-			pays_at(block_apply_estimate::<f64>(m, n, k, 2), 1, team.dispatch_cost(nz(6)))
+			pays_at(block_apply_estimate_with::<f64>(M5, m, n, k, 2), 1, team.dispatch_cost(nz(6)))
 		};
 		assert!(!pays(72));
 		assert!(pays(80));
 		// the GEMM term alone was 0.6 to 0.8 of the measured time and started at M = 96
 		let gemm_only = |m: usize| {
-			pays_at(serial_time(2 * m * 8 * (m - 8), rate::GEMM_MAC.real), 1, team.dispatch_cost(nz(6)))
+			pays_at(serial_time(2 * m * 8 * (m - 8), M5.gemm_mac.real), 1, team.dispatch_cost(nz(6)))
 		};
 		assert!(!gemm_only(88) && gemm_only(96));
 		// complex values: the streaming term is 0.54 ns per element, the GEMM 0.162 per multiply-add
-		let c = block_apply_estimate::<c64>(100, 8, 92, 2).as_secs_f64() * 1e9;
-		let want = 2.0 * 100.0 * 8.0 * 92.0 * rate::GEMM_MAC.cplx + 100.0 * 92.0 * rate::HOUSEHOLDER_RANK_ONE.cplx;
+		let c = block_apply_estimate_with::<c64>(M5, 100, 8, 92, 2).as_secs_f64() * 1e9;
+		let want = 2.0 * 100.0 * 8.0 * 92.0 * M5.block_apply_mac.cplx + 100.0 * 92.0 * M5.householder_rank_one.cplx;
 		assert!((c - want).abs() < 2.0, "{c} {want}");
 	}
 
@@ -1018,9 +1418,9 @@ mod tests {
 	#[test]
 	fn join_gates_on_a_team_follow_the_width_two_cost() {
 		use threadteam::DispatchCosts;
-		let team = ParShape::Team(nz(6), DispatchCosts::apple_m5());
+		let team = ParShape::Team(nz(6), DispatchCosts::for_class(threadteam::HostClass::Aarch64Apple));
 		let rayon = ParShape::Rayon(nz(6));
-		for &(name, r, sections) in GATES {
+		for (name, r, sections) in gates(M5) {
 			let t = floor_units::<f64>(team, r, sections);
 			let o = floor_units::<f64>(rayon, r, sections);
 			assert!(t < o, "{name}: team {t}, outside {o}");
@@ -1034,9 +1434,9 @@ mod tests {
 		// of about 20 (far below their recursion thresholds, 128 and 64), the triangular inverse
 		// joins from about 150 (`2 (n/2)^3` at 0.0096 ns against 9 us)
 		for (r, power, yes, no) in [
-			(rate::BIDIAG_SVD_DC, 2u32, 128usize, 8usize),
-			(rate::TRIDIAG_EVD_DC, 2, 64, 8),
-			(rate::TRIANGULAR_INVERSE, 3, 256, 64),
+			(M5.bidiag_svd_dc, 2u32, 128usize, 8usize),
+			(M5.tridiag_evd_dc, 2, 64, 8),
+			(M5.triangular_inverse, 3, 256, 64),
 		] {
 			let pays = |n: usize| {
 				let h = n / 2;
@@ -1050,8 +1450,8 @@ mod tests {
 			assert!(!pays(no));
 		}
 		// a sparse product of 1e6 multiply-adds is above the floor, 1e3 below
-		assert!(ParThreshold::Derived.region_pays::<f64>(team, 1_000_000, rate::SPARSE_MATMUL, 1));
-		assert!(!ParThreshold::Derived.region_pays::<f64>(team, 1_000, rate::SPARSE_MATMUL, 1));
+		assert!(ParThreshold::Derived.region_pays::<f64>(team, 1_000_000, M5.sparse_matmul, 1));
+		assert!(!ParThreshold::Derived.region_pays::<f64>(team, 1_000, M5.sparse_matmul, 1));
 	}
 }
 

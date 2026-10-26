@@ -577,7 +577,7 @@ mod tests {
 	fn small_qr_on_a_team_is_the_sequential_one() {
 		use crate::dyn_stack::{MemBuffer, MemStack};
 		use crate::linalg::qr::no_pivoting::factor as qrf;
-		let n = 48;
+		let n = 32;
 		let a0 = rand_mat(n, n, 11);
 		let run = |mut par: Par<'_>| {
 			let bs = qrf::recommended_block_size::<f64>(n, n);
@@ -612,7 +612,7 @@ mod tests {
 		use core::time::Duration;
 		let _turn = TEAM_TESTS.lock().unwrap_or_else(|e| e.into_inner());
 		let us = Duration::from_micros;
-		let costs = DispatchCosts::generic().with(DispatchKind::Team, WidthCosts::new([us(2), us(7), us(12)]));
+		let costs = DispatchCosts::for_class(threadteam::HostClass::Generic).with(DispatchKind::Team, WidthCosts::new([us(2), us(7), us(12)]));
 		let team = Pool::builder()
 			.threads(6)
 			.acquire_timeout(std::time::Duration::from_secs(30))
@@ -1000,9 +1000,9 @@ mod tests {
 				let par = Par::Team(team);
 				assert_eq!(par.degree(), 1);
 				// no gate pays on a single participant, however large the work
-				assert!(!par_pays::<f64>(&par, 1 << 40, rate::GEMM_MAC, 1));
-				assert!(!crate::utils::cost::join_pays::<f64>(&par, 1 << 40, rate::GEMM_MAC, 1));
-				assert!(!ParThreshold::Derived.region_pays::<f64>(par.shape(), 1 << 40, rate::GEMM_MAC, 1));
+				assert!(!par_pays::<f64>(&par, 1 << 40, rate::gemm_mac(), 1));
+				assert!(!crate::utils::cost::join_pays::<f64>(&par, 1 << 40, rate::gemm_mac(), 1));
+				assert!(!ParThreshold::Derived.region_pays::<f64>(par.shape(), 1 << 40, rate::gemm_mac(), 1));
 				// and the product equals the sequential one, with no team section at all
 				let a = rand_mat(200, 150, 1);
 				let b = rand_mat(150, 180, 2);

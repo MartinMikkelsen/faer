@@ -60,7 +60,7 @@ fn invert_lower_triangular_impl<'N, T: ComplexField>(
 	let join_par = if crate::utils::cost::halves_pays::<T>(
 		&par,
 		*N,
-		crate::utils::cost::rate::TRIANGULAR_INVERSE,
+		crate::utils::cost::rate::triangular_inverse(),
 		3,
 	) {
 		par.reborrow()
@@ -107,7 +107,7 @@ fn invert_unit_lower_triangular_impl<'N, T: ComplexField>(
 	let join_par = if crate::utils::cost::halves_pays::<T>(
 		&par,
 		*N,
-		crate::utils::cost::rate::TRIANGULAR_INVERSE,
+		crate::utils::cost::rate::triangular_inverse(),
 		3,
 	) {
 		par.reborrow()

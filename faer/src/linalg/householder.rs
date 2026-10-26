@@ -167,7 +167,7 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 		&& crate::utils::cost::par_pays::<T>(
 			&par,
 			deep_rows.saturating_mul(n).saturating_mul(n),
-			crate::utils::cost::rate::GEMM_MAC,
+			crate::utils::cost::rate::gemm_mac(),
 			1,
 		);
 	#[cfg(feature = "par-trace")]
@@ -241,7 +241,7 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 			&& crate::utils::cost::par_pays::<T>(
 				&par,
 				rows.saturating_mul(n).saturating_mul(n),
-				crate::utils::cost::rate::GEMM_MAC,
+				crate::utils::cost::rate::gemm_mac(),
 				1,
 			);
 		#[cfg(feature = "par-trace")]
@@ -532,7 +532,7 @@ fn apply_block_householder_on_the_left_in_place_generic<
 			.nrows()
 			.unbound()
 			.saturating_mul(matrix.ncols().unbound()),
-		crate::utils::cost::rate::HOUSEHOLDER_RANK_ONE,
+		crate::utils::cost::rate::householder_rank_one(),
 		1,
 	);
 	let use_simd = N.unbound() == 1
@@ -677,7 +677,7 @@ fn apply_block_householder_on_the_left_in_place_generic<
 				M.unbound()
 					.saturating_mul(N.unbound())
 					.saturating_mul(K.unbound()),
-				crate::utils::cost::rate::GEMM_MAC,
+				crate::utils::cost::rate::gemm_mac(),
 				1,
 			);
 		#[cfg(feature = "par-trace")]

@@ -327,7 +327,7 @@ pub fn tridiag_in_place<T: ComplexField>(
 			if !params.par_threshold.region_pays::<T>(
 				par.shape(),
 				rem * rem / 2,
-				rate::TRIDIAG,
+				rate::tridiag(),
 				1,
 			) {
 				par = Par::Seq;

@@ -443,7 +443,7 @@ fn solve_unit_lower_triangular_in_place_imp<'N, 'K, T: ComplexField>(
 		let par = if crate::utils::cost::join_pays::<T>(
 			&par,
 			n.saturating_mul(n).saturating_mul(k) / 2,
-			crate::utils::cost::rate::GEMM_MAC,
+			crate::utils::cost::rate::gemm_mac(),
 			1,
 		) {
 			par
@@ -537,7 +537,7 @@ fn solve_lower_triangular_in_place_imp<'N, 'K, T: ComplexField>(
 		let par = if crate::utils::cost::join_pays::<T>(
 			&par,
 			n.saturating_mul(n).saturating_mul(k) / 2,
-			crate::utils::cost::rate::GEMM_MAC,
+			crate::utils::cost::rate::gemm_mac(),
 			1,
 		) {
 			par

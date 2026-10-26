@@ -80,7 +80,7 @@ pub fn spicy_matmul<I: Index, T: ComplexField>(
 		|| crate::utils::cost::par_pays::<T>(
 			&par,
 			units,
-			crate::utils::cost::rate::GEMM_MAC,
+			crate::utils::cost::rate::gemm_mac(),
 			1,
 		) {
 		par
@@ -261,7 +261,7 @@ pub fn spicy_matmul<I: Index, T: ComplexField>(
 				};
 				let estimate = crate::utils::cost::serial_time(
 					macs,
-					crate::utils::cost::rate::GEMM_MAC.of::<T>(),
+					crate::utils::cost::rate::gemm_mac().of::<T>(),
 				);
 				match crate::utils::team::kernel::kernel_width(&team, estimate)
 				{
@@ -287,7 +287,7 @@ pub fn spicy_matmul<I: Index, T: ComplexField>(
 		&& !crate::utils::cost::par_pays::<T>(
 			&par,
 			units,
-			crate::utils::cost::rate::GEMM_MAC,
+			crate::utils::cost::rate::gemm_mac(),
 			1,
 		) {
 		par = Par::Seq;

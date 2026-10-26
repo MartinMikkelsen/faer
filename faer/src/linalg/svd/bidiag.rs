@@ -113,7 +113,7 @@ pub fn bidiag_in_place<T: ComplexField>(
 			if !params.par_threshold.region_pays::<T>(
 				par.shape(),
 				(m - k - 1) * (n - k - 1),
-				rate::BIDIAG,
+				rate::bidiag(),
 				2,
 			) {
 				par = Par::Seq;

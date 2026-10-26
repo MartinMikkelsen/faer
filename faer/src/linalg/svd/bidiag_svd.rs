@@ -1157,7 +1157,7 @@ pub(super) fn divide_and_conquer<T: RealField>(
 		let mut r2 = Ok(());
 		// one section for the join of the two halves, each a whole solve of size `n / 2`
 		let join_par =
-			if crate::utils::cost::halves_pays::<T>(&par, n, crate::utils::cost::rate::BIDIAG_SVD_DC, 2) {
+			if crate::utils::cost::halves_pays::<T>(&par, n, crate::utils::cost::rate::bidiag_svd_dc(), 2) {
 				par.reborrow()
 			} else {
 				Par::Seq
@@ -1392,7 +1392,7 @@ pub(super) fn divide_and_conquer<T: RealField>(
 				let join_par = if crate::utils::cost::join_pays::<T>(
 					&par,
 					(k * k + rem * rem).saturating_mul(n),
-					crate::utils::cost::rate::GEMM_MAC,
+					crate::utils::cost::rate::gemm_mac(),
 					1,
 				) {
 					par.reborrow()
@@ -1454,7 +1454,7 @@ pub(super) fn divide_and_conquer<T: RealField>(
 		let join_par = if crate::utils::cost::join_pays::<T>(
 			&par,
 			((k + 1) * (k + 1) + (rem + 1) * (rem + 1)).saturating_mul(n + 1),
-			crate::utils::cost::rate::GEMM_MAC,
+			crate::utils::cost::rate::gemm_mac(),
 			1,
 		) {
 			par
@@ -1536,7 +1536,7 @@ pub(super) fn divide_and_conquer<T: RealField>(
 					(k * k + rem * rem).saturating_mul(n).saturating_add(
 						((k + 1) * (k + 1) + (rem + 1) * (rem + 1)).saturating_mul(n + 1),
 					),
-					crate::utils::cost::rate::GEMM_MAC,
+					crate::utils::cost::rate::gemm_mac(),
 					1,
 				) {
 					par

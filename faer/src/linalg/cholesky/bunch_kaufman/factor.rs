@@ -334,7 +334,7 @@ fn lblt_full_piv<T: ComplexField>(
 		if !params.par_threshold.region_pays::<T>(
 			par.shape(),
 			rem * rem,
-			rate::BUNCH_KAUFMAN,
+			rate::bunch_kaufman(),
 			1,
 		) {
 			par = Par::Seq;

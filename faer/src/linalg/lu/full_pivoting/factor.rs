@@ -375,7 +375,7 @@ fn lu_in_place_unblocked<T: ComplexField>(
 		if !params.par_threshold.region_pays::<T>(
 			par.shape(),
 			(m - k - 1) * (n - k - 1),
-			rate::LU_FULL_PIVOT,
+			rate::lu_full_pivot(),
 			1,
 		) {
 			par = Par::Seq;

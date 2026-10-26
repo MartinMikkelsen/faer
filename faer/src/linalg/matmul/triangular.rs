@@ -127,7 +127,7 @@ fn mat_x_lower_impl_unchecked<'M, 'N, T: ComplexField>(
 	let join_parallelism = if crate::utils::cost::join_pays::<T>(
 		&par,
 		m.saturating_mul(n).saturating_mul(n) / 2,
-		crate::utils::cost::rate::GEMM_MAC,
+		crate::utils::cost::rate::gemm_mac(),
 		1,
 	) {
 		par.reborrow()
@@ -626,7 +626,7 @@ fn mat_x_mat_into_lower_impl_unchecked<'N, 'K, T: ComplexField>(
 			.saturating_mul(dst.nrows().unbound())
 			.saturating_mul(lhs.ncols().unbound())
 			/ 2,
-		crate::utils::cost::rate::GEMM_MAC,
+		crate::utils::cost::rate::gemm_mac(),
 		2,
 	);
 	// On x86_64 the `private_gemm_x86` kernel does the product into the triangle. A `Team` token
@@ -712,7 +712,7 @@ fn mat_x_mat_into_lower_impl_unchecked<'N, 'K, T: ComplexField>(
 								.saturating_mul(dst.ncols())
 								.saturating_mul(lhs.ncols())
 								/ 2,
-							crate::utils::cost::rate::GEMM_MAC.of::<T>(),
+							crate::utils::cost::rate::gemm_mac().of::<T>(),
 						);
 						match crate::utils::team::kernel::kernel_width(
 							&team, estimate,

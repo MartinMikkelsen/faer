@@ -297,7 +297,7 @@ fn hessenberg_rearranged_unblocked<T: ComplexField>(
 				if !params.par_threshold.region_pays::<T>(
 					par.shape(),
 					n * n,
-					rate::HESSENBERG,
+					rate::hessenberg(),
 					2,
 				) {
 					par = Par::Seq;

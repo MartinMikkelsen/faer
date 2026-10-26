@@ -117,7 +117,7 @@ pub fn sparse_sparse_matmul_numeric<
 	let parallel = crate::utils::cost::par_pays::<T>(
 		&par,
 		total_flop_count as usize,
-		crate::utils::cost::rate::SPARSE_MATMUL,
+		crate::utils::cost::rate::sparse_matmul(),
 		1,
 	);
 	let nthreads = if parallel { par.degree() } else { 1 };

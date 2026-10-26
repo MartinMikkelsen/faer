@@ -776,7 +776,7 @@ mod matvec_rowmajor {
 		let par = if crate::utils::cost::par_pays::<T>(
 			&par,
 			size,
-			crate::utils::cost::rate::MATVEC,
+			crate::utils::cost::rate::matvec(),
 			1,
 		) {
 			par
@@ -907,7 +907,7 @@ mod matvec_colmajor {
 		let par = if crate::utils::cost::par_pays::<T>(
 			&par,
 			size,
-			crate::utils::cost::rate::MATVEC,
+			crate::utils::cost::rate::matvec(),
 			1,
 		) {
 			par

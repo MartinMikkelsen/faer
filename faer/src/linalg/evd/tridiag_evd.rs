@@ -329,7 +329,7 @@ fn divide_and_conquer_recurse<T: RealField>(
 		let join_par = if crate::utils::cost::halves_pays::<T>(
 			&par,
 			n,
-			crate::utils::cost::rate::TRIDIAG_EVD_DC,
+			crate::utils::cost::rate::tridiag_evd_dc(),
 			2,
 		) {
 			par.reborrow()
@@ -612,7 +612,7 @@ fn divide_and_conquer_recurse<T: RealField>(
 	let join_par = if crate::utils::cost::join_pays::<T>(
 		&par,
 		(n1 * n1 + (n - n1) * (n - n1)).saturating_mul(n),
-		crate::utils::cost::rate::GEMM_MAC,
+		crate::utils::cost::rate::gemm_mac(),
 		1,
 	) {
 		par

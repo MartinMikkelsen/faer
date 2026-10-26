@@ -120,17 +120,43 @@ Every cost gate of the library is the same decision, `ParShape::pays(estimate, s
 a region runs in parallel when `estimate >= PAYS * sections * dispatch_cost(width)` with `PAYS = 3`.
 
 * The **dispatch cost** belongs to the token. `ParShape::Team(n, costs)` carries the costs of its
-  team token (threadteam `DispatchCosts`, steady state: team 1.4 us at width 6 on the M5 table);
-  `Rayon(n)` is entered from outside the pool and uses the `Outside` cost (19 us at width 6 on the
-  M5, 40 us generic); `Seq` never pays. `ParShape::dispatch_cost(width)` and `pays_full` (the full
+  team token (threadteam `DispatchCosts`, steady state: team 1.4 us at width 6 on the M5 table, 0.9 us on the
+  `x86_64-avx512` row);
+  `Rayon(n)` is entered from outside the pool and uses the `Outside` cost of the host class (19 us at width 6
+  on the M5, 8.7 us on `x86_64-avx512`, 40 us generic); `Seq` never pays. `ParShape::dispatch_cost(width)` and `pays_full` (the full
   degree) are the queries. A build without the `threadteam` feature keeps the same numbers in
   `utils::cost`.
 * The **estimate** is units of work times the serial throughput of the kernel family
-  (`utils::cost::rate`, `Rate { real, cplx }` in ns per unit: GEMM per multiply-add, the
-  reductions per element of the trailing block, matvec per matrix element, the rank-one Householder
-  apply per target element, the divide and conquer solves per `m^2`, the triangular inverse per `m^3`, the
-  sparse product per multiply-add; `f32` and `c32` are half of `f64` and `c64`). One constant per family,
-  measured with one thread (table in the threadteam `thresholds.md`, section 2.3).
+  (`utils::cost::rates()`, `Rate { real, cplx }` in ns per unit, read through `rate::<family>()`: GEMM per
+  multiply-add, the reductions per element of the trailing block, matvec per matrix element, the rank-one
+  Householder apply per target element, the divide and conquer solves per `m^2`, the triangular inverse per
+  `m^3`, the sparse product per multiply-add; `f32` and `c32` are half of `f64` and `c64`, the GEMM measured
+  where a row has it). One constant per family and **per host class**, measured with one thread.
+* **Host classes.** Both tables, the rates and the Rayon dispatch costs, have one row per `HostClass`,
+  keyed by the kernel dispatch the machine takes, not by the CPU model: `x86_64-avx512` (x86_64 with runtime
+  `avx512f`), `x86_64-avx2` (avx2 and fma), `x86_64-scalar`, `aarch64-apple`, `aarch64`, `generic`.
+  `HostClass::detect()` runs once (`is_x86_feature_detected!` under `std`; without `std` the target features
+  of the build decide on x86_64). It is kept in sync by hand with `threadteam::HostClass` so that faer builds
+  without the `threadteam` feature; a test compares the two when the feature is on. `Rates::for_class(class)`
+  is a row, `rates()` the row of the host.
+
+  | class | rates | Rayon outside (us at width 2, 4, 6) |
+  | --- | --- | --- |
+  | `x86_64-avx512` | Zen 5 (Ryzen AI 9 HX 470), 1 thread, 2.0 GHz, boost off (`faer-benchmark` `data/probes/20261026-awake-team-linux`, `tables-consts-exec3.md`) | 9.7, 10.1, 8.7 |
+  | `aarch64-apple` | Apple M5 Max (the first calibration) | 14, 18, 19 |
+  | every other class | `generic`: per entry the smaller of the measured rows | 40 flat |
+
+  The `generic` row is the per entry minimum of the measured rows (fastest known time per unit, so an
+  unmeasured host keeps work serial a little longer instead of dispatching early); a class that gets a
+  measurement replaces its alias. **A row's rates and its dispatch costs must come from the same machine and
+  clock state:** the boost moves both by about 1.66 times with a stable ratio (within a few percent,
+  `tables-*-exec3-boost.md`), so mixing a boosted rate with an unboosted cost shifts every floor. The Rayon
+  table of a build without the feature is the model of threadteam (linear between the anchors at widths 2, 4,
+  6, flat above) with the same values. Region constants of the `x86_64-avx512` row: the block apply streaming
+  per multiply-add, the divide and conquer solves (median over `m` 64 to 512; per `m^2` 152.9 and 97.4 ns, size
+  dependent, 145 to 178 and 88 to 102), the sparse product (median of the measured densities) and the
+  triangular inverse (median over `m`; 0.047 per `m^3` at 64 falling to 0.0145 at 512, as on the M5 row).
+  Matvec is the mean of the column major and row major products.
 * **`sections`** is the real number of parallel dispatches the region performs, read from the
   code of the gate and never tuned: one for a fused step, two for a step that runs two products
   (bidiagonalization, Hessenberg), two for the trailing update of an LU level, four for its swap
