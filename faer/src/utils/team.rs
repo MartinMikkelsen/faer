@@ -288,6 +288,13 @@ pub(crate) mod kernel {
 	/// call (packing, then compute), so the gate is `pays(estimate, 2, width)` at the width
 	/// `width_for` chooses.
 	pub(crate) fn kernel_width(team: &TeamExec<'_>, estimate: Duration) -> Option<usize> {
+		// the cheap rejection first: a section costs least at the widest width (the tables are
+		// non-increasing in width), so a product that does not pay there pays nowhere and
+		// `width_for` need not search (68 ns; a QR 128 asks for every product of its 59 block applies)
+		if team.size().get() < 2 || !team.pays(estimate, 2, team.size()) {
+			stats::bump(&stats::GEMM_BELOW_FLOOR);
+			return None;
+		}
 		let width = team.width_for(estimate, 2);
 		if width.get() >= 2 && team.pays(estimate, 2, width) {
 			Some(width.get())
@@ -560,6 +567,61 @@ mod tests {
 			}
 		}
 		d
+	}
+
+	/// A factorization too small to pay for a section asks the gates of a team token as the
+	/// sequential path does: the same factors to the last bit, and no section opened. The block
+	/// apply decides once at its top (`householder.rs`, the floor of the whole apply) and runs its
+	/// products sequentially, instead of asking each product and each triangular step.
+	#[test]
+	fn small_qr_on_a_team_is_the_sequential_one() {
+		use crate::dyn_stack::{MemBuffer, MemStack};
+		use crate::linalg::qr::no_pivoting::factor as qrf;
+		let n = 48;
+		let a0 = rand_mat(n, n, 11);
+		let run = |mut par: Par<'_>| {
+			let bs = qrf::recommended_block_size::<f64>(n, n);
+			let mut a = a0.clone();
+			let mut q = Mat::<f64>::zeros(bs, n);
+			let mut mem = MemBuffer::new(qrf::qr_in_place_scratch::<f64>(n, n, bs, par.shape(), Default::default()));
+			qrf::qr_in_place(a.as_mut(), q.as_mut(), par.reborrow(), MemStack::new(&mut mem), Default::default());
+			(a, q)
+		};
+		let (a_seq, q_seq) = run(Par::Seq);
+		let (a_team, q_team) = with_par(4, |par| {
+			stats::take();
+			stats::enable(true);
+			let r = run(par);
+			stats::enable(false);
+			let s = stats::take();
+			let sections: usize = s.run.iter().skip(2).sum::<usize>() + s.split.iter().skip(2).sum::<usize>();
+			assert_eq!(sections, 0, "a QR {n} opened a section: {s:?}");
+			assert_eq!(s.gemm_tiled + s.gemm_team_kernel, 0, "{s:?}");
+			r
+		});
+		assert_eq!(max_diff(a_seq.as_ref(), a_team.as_ref()), 0.0);
+		assert_eq!(max_diff(q_seq.as_ref(), q_team.as_ref()), 0.0);
+	}
+
+	/// `par_pays_time` is `ParShape::pays` without the shape.
+	#[test]
+	fn par_pays_time_is_the_shape_gate() {
+		use crate::utils::cost::par_pays_time;
+		use core::time::Duration;
+		with_par(6, |par| {
+			let shape = par.shape();
+			for &us in &[0u64, 1, 3, 5, 8, 12, 30, 1000] {
+				for sections in 1..=3 {
+					for width in 1..=8usize {
+						let est = Duration::from_micros(us);
+						let w = core::num::NonZeroUsize::new(width.min(6)).unwrap();
+						let want = width >= 2 && shape.pays(est, sections, w);
+						assert_eq!(par_pays_time(&par, est, sections, width), want, "{us} us, {sections}, {width}");
+					}
+				}
+			}
+		});
+		assert!(!par_pays_time(&Par::Seq, Duration::from_secs(1), 1, 4));
 	}
 
 	#[test]

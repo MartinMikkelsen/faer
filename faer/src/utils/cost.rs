@@ -330,6 +330,23 @@ pub mod trace {
 	}
 }
 
+/// [`ParShape::pays`] of `par` at `width` participants, without building the shape. A gate is asked
+/// hundreds of times by a small factorization, and the shape of a team token copies its whole cost
+/// table on every call (`Par::shape`: 15 ns, the decision itself 40 ns, against 12 ns here, where the
+/// token answers from its own table). `width` is clamped to the degree, below 2 never pays.
+pub(crate) fn par_pays_time(par: &crate::Par, estimate: Duration, sections: u32, width: usize) -> bool {
+	let width = width.min(par.degree());
+	let Some(width) = NonZeroUsize::new(width).filter(|w| w.get() >= 2) else {
+		return false;
+	};
+	match par {
+		crate::Par::Seq => false,
+		#[cfg(feature = "threadteam")]
+		crate::Par::Team(team) => team.pays(estimate, sections, width),
+		other => other.shape().pays(estimate, sections, width),
+	}
+}
+
 /// Whether a region of `units` of work at `rate` that opens `sections` sections pays on `par`,
 /// at the full degree of `par` ([`ParShape::pays_full`]).
 #[cfg_attr(feature = "par-trace", track_caller)]
@@ -344,7 +361,7 @@ pub(crate) fn par_pays<T: crate::ComplexField>(
 	if par.degree() < 2 {
 		return false;
 	}
-	let r = par.shape().pays_full(serial_time(units, rate.of::<T>()), sections);
+	let r = par_pays_time(par, serial_time(units, rate.of::<T>()), sections, par.degree());
 	#[cfg(feature = "par-trace")]
 	trace_decision(par.shape(), par.shape().degree(), units, rate.of::<T>(), sections, r, core::panic::Location::caller());
 	r
@@ -380,11 +397,7 @@ pub(crate) fn join_pays<T: crate::ComplexField>(
 	if par.degree() < 2 {
 		return false;
 	}
-	let r = par.shape().pays(
-		serial_time(units, rate.of::<T>()),
-		sections,
-		NonZeroUsize::new(2).unwrap(),
-	);
+	let r = par_pays_time(par, serial_time(units, rate.of::<T>()), sections, 2);
 	#[cfg(feature = "par-trace")]
 	trace_decision(par.shape(), 2, units, rate.of::<T>(), sections, r, core::panic::Location::caller());
 	r
@@ -421,8 +434,10 @@ pub(crate) fn block_apply_estimate<T: crate::ComplexField>(
 	products: usize,
 ) -> Duration {
 	let macs = m.saturating_mul(n).saturating_mul(k).saturating_mul(products);
-	serial_time(macs, rate::GEMM_MAC.of::<T>())
-		+ serial_time(m.saturating_mul(k), rate::HOUSEHOLDER_RANK_ONE.of::<T>())
+	// summed in nanoseconds: one `Duration`, not two and an addition (a gate asked per block apply)
+	let ns = macs as f64 * rate::GEMM_MAC.of::<T>()
+		+ m.saturating_mul(k) as f64 * rate::HOUSEHOLDER_RANK_ONE.of::<T>();
+	Duration::from_secs_f64(ns * 1e-9)
 }
 
 /// Serial time of `count` units at `ns` nanoseconds each.
@@ -451,7 +466,9 @@ impl ParShape {
 			Self::Rayon(_) => {
 				#[cfg(feature = "threadteam")]
 				{
-					threadteam::DispatchCosts::host_default()
+					// the host table is a constant: built once, not on every gate
+					static HOST: std::sync::OnceLock<threadteam::DispatchCosts> = std::sync::OnceLock::new();
+					HOST.get_or_init(threadteam::DispatchCosts::host_default)
 						.cost(threadteam::DispatchKind::Outside, width)
 				}
 				#[cfg(not(feature = "threadteam"))]
