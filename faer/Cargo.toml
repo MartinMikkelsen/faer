@@ -79,6 +79,8 @@ rayon = ["dep:rayon", "gemm/rayon", "t4a-private-gemm-x86?/rayon", "dep:spindle"
 # `Par::Team`: opt-in route onto a threadteam team (needs the rayon feature, the call sites share its types)
 threadteam = ["rayon", "dep:threadteam"]
 perf-warn = ["dep:log"]
+# decision trace of the parallel gates (`utils::cost::trace`), for probes; off by default
+par-trace = []
 rand = [
   "num-complex/rand",
   "dep:rand",

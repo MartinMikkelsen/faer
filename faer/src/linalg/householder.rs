@@ -160,6 +160,8 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 	// section.
 	let threads = crate::utils::thread::parallelism_degree(&par);
 	let deep_rows = essentials.nrows().unbound().saturating_sub(n);
+	#[cfg(feature = "par-trace")]
+	crate::utils::cost::trace::shape("upgrade_above_floor", deep_rows, n, n);
 	let above_floor = deep_rows >= 2 * n
 		&& deep_rows >= 4 * threads
 		&& crate::utils::cost::par_pays::<T>(
@@ -168,6 +170,8 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 			crate::utils::cost::rate::GEMM_MAC,
 			1,
 		);
+	#[cfg(feature = "par-trace")]
+	crate::utils::cost::trace::shape("", 0, 0, 0);
 	let mut par = if above_floor { par } else { Par::Seq };
 	let mut householder_factor = householder_factor;
 	let essentials = essentials;
@@ -228,6 +232,8 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 		let threads = crate::utils::thread::parallelism_degree(&par);
 		let rows = basis_bot.nrows().unbound();
 		// shape conditions (`2 * n`, `4 * threads`) as above, then the cost rule
+		#[cfg(feature = "par-trace")]
+		crate::utils::cost::trace::shape("upgrade_deep", rows, n, n);
 		let deep = cfg!(feature = "rayon")
 			&& threads > 1
 			&& rows >= 2 * n
@@ -238,6 +244,8 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 				crate::utils::cost::rate::GEMM_MAC,
 				1,
 			);
+		#[cfg(feature = "par-trace")]
+		crate::utils::cost::trace::shape("", 0, 0, 0);
 		if deep {
 			#[cfg(feature = "rayon")]
 			{
@@ -491,6 +499,13 @@ fn apply_block_householder_on_the_left_in_place_generic<
 	// partitions the target's columns and threads its two matrix products, which this one cannot.
 	// "Enough work" is the cost rule: one section (the column split of the generic path), the
 	// unit an element of the target.
+	#[cfg(feature = "par-trace")]
+	crate::utils::cost::trace::shape(
+"big_rank_one",
+		householder_basis.nrows().unbound(),
+		N.unbound(),
+		matrix.ncols().unbound(),
+	);
 	let big_rank_one = crate::utils::cost::par_pays::<T>(
 		&par,
 		householder_basis
@@ -630,6 +645,8 @@ fn apply_block_householder_on_the_left_in_place_generic<
 		// unit block (`div_ceil(threads) >= N`) are shape conditions; the work floor is the
 		// cost rule: the reduction `V^H C`, `M * N * K` multiply-adds at the GEMM rate, one
 		// section.
+		#[cfg(feature = "par-trace")]
+		crate::utils::cost::trace::shape("row_split", M.unbound(), N.unbound(), K.unbound());
 		let row_split = cfg!(feature = "rayon")
 			&& threads > 1
 			&& M.unbound() >= 2 * K.unbound()
@@ -643,6 +660,8 @@ fn apply_block_householder_on_the_left_in_place_generic<
 				crate::utils::cost::rate::GEMM_MAC,
 				1,
 			);
+		#[cfg(feature = "par-trace")]
+		crate::utils::cost::trace::shape("", 0, 0, 0);
 		// The column split is the only parallelism when the rows are not split, so it takes
 		// the whole budget and leaves `inner_parallelism` at one thread: the block apply a
 		// blocked QR performs is short and wide (`N` columns of basis against the whole
@@ -658,8 +677,10 @@ fn apply_block_householder_on_the_left_in_place_generic<
 			if row_split { 4 } else { threads },
 		);
 		// The column split is one section over `n_tasks` participants; its work is the two
-		// products of the update, `2 * M * N * K` multiply-adds at the GEMM rate (one of them
-		// when the row split already did the reduction).
+		// products of the update, `2 * M * N * K` multiply-adds at the block apply rate (one of
+		// them when the row split already did the reduction). The block apply rate is GEMM's with
+		// the narrow and short shapes included; at the GEMM rate this estimate was 0.6 to 0.8 of
+		// the measured serial time of a `N = 8` block (`QR 128`).
 		if n_tasks > 1 {
 			let macs = M
 				.unbound()
@@ -667,14 +688,38 @@ fn apply_block_householder_on_the_left_in_place_generic<
 				.saturating_mul(K.unbound())
 				.saturating_mul(if row_split { 1 } else { 2 });
 			let width = core::num::NonZeroUsize::new(n_tasks).unwrap();
-			if !par.shape().pays(
+			#[cfg(feature = "par-trace")]
+			{
+				let est = crate::utils::cost::serial_time(
+					macs,
+					crate::utils::cost::rate::BLOCK_APPLY.of::<T>(),
+				);
+				crate::utils::cost::trace::shape("n_tasks", M.unbound(), N.unbound(), K.unbound());
+				crate::utils::cost::trace_pub(
+					macs,
+					1,
+					est,
+					par.shape().dispatch_cost(width),
+					par.shape().pays(est, 1, width),
+					core::panic::Location::caller(),
+				);
+			}
+			let pays = par.shape().pays(
 				crate::utils::cost::serial_time(
 					macs,
-					crate::utils::cost::rate::GEMM_MAC.of::<T>(),
+					crate::utils::cost::rate::BLOCK_APPLY.of::<T>(),
 				),
 				1,
 				width,
-			) {
+			);
+			#[cfg(feature = "par-trace")]
+			let pays = match crate::utils::cost::trace::N_TASKS_MODE.load(core::sync::atomic::Ordering::Relaxed) {
+				1 => (M.unbound() * K.unbound()).saturating_mul(4 * M.unbound()) >= gemm::get_threading_threshold(),
+				2 => true,
+				3 => false,
+				_ => pays,
+			};
+			if !pays {
 				n_tasks = 1;
 			}
 		}

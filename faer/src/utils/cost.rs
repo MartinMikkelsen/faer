@@ -126,7 +126,24 @@ impl ParThreshold {
 	///
 	/// [`Derived`](Self::Derived) is [`ParShape::pays_full`] of `units * rate`; an explicit
 	/// [`Fixed`](Self::Fixed) floor keeps the previous rule, `units >= floor`.
+	#[cfg_attr(feature = "par-trace", track_caller)]
 	pub(crate) fn region_pays<T: crate::ComplexField>(
+		self,
+		shape: ParShape,
+		units: usize,
+		rate: Rate,
+		sections: u32,
+	) -> bool {
+		if matches!(shape, ParShape::Seq) && !matches!(self, Self::Fixed(_)) {
+			return false;
+		}
+		let r = self.region_pays_impl::<T>(shape, units, rate, sections);
+		#[cfg(feature = "par-trace")]
+		trace_decision(shape, units, rate.of::<T>(), sections, r, core::panic::Location::caller());
+		r
+	}
+
+	fn region_pays_impl<T: crate::ComplexField>(
 		self,
 		shape: ParShape,
 		units: usize,
@@ -204,6 +221,30 @@ pub mod rate {
 	pub const TRIDIAG: Rate = Rate { real: 0.339, cplx: 1.16 };
 	/// Matrix-vector product, per matrix element.
 	pub const MATVEC: Rate = Rate { real: 0.1, cplx: 0.34 };
+	/// Block Householder apply near the parallel floor (`M` 64 to 128, basis width `N` 2 to 32),
+	/// per multiply-add of the two products of the update, `2*M*N*K`. Above GEMM's rate because
+	/// a narrow product streams its target and a short one pays the fixed cost of the
+	/// triangular and temporary steps (`QR 128`, `N = 8`: 0.048 to 0.053 against 0.036); the
+	/// per-shape values are in `faer-benchmark` `data/probes/20261026-qr128-regions`.
+	pub const BLOCK_APPLY: Rate = Rate { real: 0.054, cplx: 0.206 };
+	/// Divide and conquer bidiagonal SVD (`bidiag_svd`, both singular vectors, non deflating
+	/// data), the whole serial solve of size `m` per `m^2`; the join of size `n` has the two
+	/// halves as work, `2 (n/2)^2`. The time is `45 m^2 + 0.023 m^3` ns (fit over `m` 64 to 512,
+	/// 53 ns per `m^2` at the median of the shapes, 48 to 62 across them): the `m^2` term
+	/// (secular equation, deflation, permutations) is larger than the merge products below
+	/// `m` about 1900, so the unit is `m^2`. Real types only (the complex value repeats the
+	/// real one).
+	pub const BIDIAG_SVD_DC: Rate = Rate { real: 53.0, cplx: 53.0 };
+	/// Divide and conquer symmetric tridiagonal EVD (`tridiag_evd`, eigenvectors on), the whole
+	/// serial solve of size `m` per `m^2`, used as `BIDIAG_SVD_DC` (27 to 36 ns per `m^2` over
+	/// the shapes 64 to 512). Real types only.
+	pub const TRIDIAG_EVD_DC: Rate = Rate { real: 31.0, cplx: 31.0 };
+	/// Triangular inverse (`invert_*_triangular`), the whole serial inverse of size `m` per
+	/// `m^3`; the join of size `n` has the two halves as work, `2 (n/2)^3`.
+	pub const TRIANGULAR_INVERSE: Rate = Rate { real: 0.0096, cplx: 0.0344 };
+	/// Sparse by sparse numeric product, per multiply-add of the symbolic flop count
+	/// (`SparseMatMulInfo`, free to read).
+	pub const SPARSE_MATMUL: Rate = Rate { real: 1.5, cplx: 1.8 };
 	/// Rank-one Householder apply (`N == 1`), per element of the target `M*K`.
 	pub const HOUSEHOLDER_RANK_ONE: Rate = Rate { real: 0.212, cplx: 0.725 };
 }
@@ -223,15 +264,125 @@ pub(crate) fn gemm_ns_per_mac<T: crate::ComplexField>() -> f64 {
 	}
 }
 
+
+/// Decision trace of the gates, for probes (feature `par-trace`). A gate calls
+/// [`trace::shape`] with the dimensions it decides on, and the next decision on the thread
+/// records them together with the units, the section count, the estimate and the answer.
+#[cfg(feature = "par-trace")]
+pub mod trace {
+	use std::sync::Mutex;
+	use std::sync::atomic::{AtomicBool, Ordering};
+	/// One decision.
+	#[derive(Clone, Debug)]
+	pub struct Record {
+		/// source line of the gate that asked (`#[track_caller]`)
+		pub site: &'static str,
+		/// the dimensions the gate named with [`shape`]
+		pub dims: [usize; 3],
+		/// units of work passed to the rule
+		pub units: usize,
+		/// sections passed to the rule
+		pub sections: u32,
+		/// estimated serial time in ns
+		pub estimate_ns: f64,
+		/// dispatch cost of one section at the shape's width, in ns
+		pub dispatch_ns: f64,
+		/// the decision
+		pub parallel: bool,
+	}
+	/// Override of the block apply column split gate, for probes: 0 the rule, 1 the previous
+	/// rule (`M * K * 4 * M >= gemm threshold`), 2 always parallel, 3 never.
+	pub static N_TASKS_MODE: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+	static ON: AtomicBool = AtomicBool::new(false);
+	static LOG: Mutex<Vec<Record>> = Mutex::new(Vec::new());
+	std::thread_local! {
+		static DIMS: core::cell::Cell<(&'static str, [usize; 3])> = const { core::cell::Cell::new(("", [0; 3])) };
+	}
+	/// Start or stop recording; starting clears the log.
+	pub fn enable(on: bool) {
+		if on {
+			LOG.lock().unwrap().clear();
+		}
+		ON.store(on, Ordering::SeqCst);
+	}
+	/// Take the log.
+	pub fn take() -> Vec<Record> {
+		core::mem::take(&mut *LOG.lock().unwrap())
+	}
+	/// Name the dimensions of the next decision of this thread.
+	pub fn shape(label: &'static str, a: usize, b: usize, c: usize) {
+		DIMS.with(|d| d.set((label, [a, b, c])));
+	}
+	pub(crate) fn record(
+		loc: &'static core::panic::Location<'static>,
+		units: usize,
+		sections: u32,
+		estimate_ns: f64,
+		dispatch_ns: f64,
+		parallel: bool,
+	) {
+		if !ON.load(Ordering::Relaxed) {
+			return;
+		}
+		let (label, dims) = DIMS.with(|d| d.replace(("", [0; 3])));
+		let site: &'static str = if label.is_empty() {
+			Box::leak(format!("{}:{}", loc.file().rsplit('/').next().unwrap(), loc.line()).into_boxed_str())
+		} else {
+			label
+		};
+		LOG.lock().unwrap().push(Record { site, dims, units, sections, estimate_ns, dispatch_ns, parallel });
+	}
+}
+
 /// Whether a region of `units` of work at `rate` that opens `sections` sections pays on `par`,
 /// at the full degree of `par` ([`ParShape::pays_full`]).
+#[cfg_attr(feature = "par-trace", track_caller)]
 pub(crate) fn par_pays<T: crate::ComplexField>(
 	par: &crate::Par,
 	units: usize,
 	rate: Rate,
 	sections: u32,
 ) -> bool {
-	par.shape().pays_full(serial_time(units, rate.of::<T>()), sections)
+	// a sequential token never pays: skip the estimate (a QR 128 asks 500 times)
+	if matches!(par, crate::Par::Seq) {
+		return false;
+	}
+	let r = par.shape().pays_full(serial_time(units, rate.of::<T>()), sections);
+	#[cfg(feature = "par-trace")]
+	trace_decision(par.shape(), units, rate.of::<T>(), sections, r, core::panic::Location::caller());
+	r
+}
+
+#[cfg(feature = "par-trace")]
+fn trace_decision(
+	shape: ParShape,
+	units: usize,
+	ns: f64,
+	sections: u32,
+	r: bool,
+	loc: &'static core::panic::Location<'static>,
+) {
+	let d = NonZeroUsize::new(shape.degree())
+		.map(|w| shape.dispatch_cost(w).as_secs_f64() * 1e9)
+		.unwrap_or(f64::INFINITY);
+	trace::record(loc, units, sections, units as f64 * ns, d, r);
+}
+
+/// Whether the join of a recursion that halves a problem of size `n` pays: its work is the two
+/// halves, `2 (n/2)^power` units of `rate`, one section. The rate is that of a whole serial
+/// solve of size `m` per `m^power`, so no recurrence is assumed beyond the power: the work of
+/// the subproblems at this level is what the two calls below it cost, and the merge after the
+/// join is not counted (it is not parallel through this join). `power` is 3 for the triangular
+/// inverse and 2 for the divide and conquer solves, whose measured time is `a m^2 + b m^3`
+/// with the first term dominating up to `m` about 1900.
+pub(crate) fn halves_pays<T: crate::ComplexField>(
+	par: &crate::Par,
+	n: usize,
+	rate: Rate,
+	power: u32,
+) -> bool {
+	let h = n / 2;
+	par_pays::<T>(par, h.saturating_pow(power).saturating_mul(2), rate, 1)
 }
 
 /// Serial time of `count` units at `ns` nanoseconds each.
@@ -389,6 +540,11 @@ mod tests {
 		("matvec", rate::MATVEC, 1),
 		("householder_rank_one", rate::HOUSEHOLDER_RANK_ONE, 1),
 		("gemm_mac", rate::GEMM_MAC, 1),
+		("block_apply", rate::BLOCK_APPLY, 1),
+		("bidiag_svd_dc", rate::BIDIAG_SVD_DC, 1),
+		("tridiag_evd_dc", rate::TRIDIAG_EVD_DC, 1),
+		("triangular_inverse", rate::TRIANGULAR_INVERSE, 1),
+		("sparse_matmul", rate::SPARSE_MATMUL, 1),
 	];
 
 	#[test]
@@ -677,5 +833,240 @@ mod tests {
 		fn forced_parallel_steps_equal_serial_c64() {
 			check::<c64>();
 		}
+	}
+
+	/// the join gates: the work of a join of size `n` is two halves, `2 (n/2)^3` units
+	#[test]
+	fn halves_join_gates_follow_the_rule() {
+		let seq = crate::Par::Seq;
+		for r in [rate::BIDIAG_SVD_DC, rate::TRIDIAG_EVD_DC, rate::TRIANGULAR_INVERSE] {
+			assert!(!halves_pays::<f64>(&seq, 1 << 20, r, 2));
+		}
+		#[cfg(feature = "rayon")]
+		{
+			let par = crate::Par::rayon(6);
+			for r in [rate::BIDIAG_SVD_DC, rate::TRIDIAG_EVD_DC, rate::TRIANGULAR_INVERSE] {
+				// the smallest size whose join pays is the one the rule gives, and it is monotone
+				let power = if r == rate::TRIANGULAR_INVERSE { 3 } else { 2 };
+				let first = (2..4096).find(|&n| halves_pays::<f64>(&par, n, r, power)).expect("never pays");
+				assert!(first > 8, "{first}");
+				assert!(!halves_pays::<f64>(&par, first - 1, r, power));
+				assert!(halves_pays::<f64>(&par, first, r, power));
+				assert!(halves_pays::<f64>(&par, 2 * first, r, power));
+				// work is the power of half the size, two halves
+				let h = first / 2;
+				let work_ns = 2.0 * (h as f64).powi(power as i32) * r.real;
+				let want = PAYS * par.shape().dispatch_cost(nz(6)).as_secs_f64() * 1e9;
+				assert!(work_ns >= want * 0.999, "{work_ns} {want}");
+			}
+		}
+	}
+
+	/// The column split of the block apply at the shapes of a `128 x 128` QR (block 8, target
+	/// `K = M - 8`) on a team of 6: serial times measured with one thread are 2.75 us (`M = 56`)
+	/// to 11.9 us (`M = 128`); the estimate is within 0.8 to 1.2 of them and the split starts at
+	/// `M = 80`, where the estimate first reaches `3 * 1.4 us`.
+	#[cfg(feature = "threadteam")]
+	#[test]
+	fn block_apply_split_starts_where_the_estimate_pays() {
+		use threadteam::DispatchCosts;
+		let team = ParShape::Team(nz(6), DispatchCosts::apple_m5());
+		let pays = |m: usize| {
+			ParThreshold::Derived.region_pays::<f64>(team, 2 * m * 8 * (m - 8), rate::BLOCK_APPLY, 1)
+		};
+		assert!(!pays(72));
+		assert!(pays(80));
+		// at the GEMM rate the estimate was 0.6 to 0.8 of the measured time and started at 96
+		assert!(!ParThreshold::Derived.region_pays::<f64>(team, 2 * 88 * 8 * 80, rate::GEMM_MAC, 1));
+	}
+
+	#[cfg(feature = "threadteam")]
+	#[test]
+	fn join_gates_on_a_team_start_lower_than_outside_the_pool() {
+		use threadteam::DispatchCosts;
+		let team = ParShape::Team(nz(6), DispatchCosts::apple_m5());
+		let rayon = ParShape::Rayon(nz(6));
+		for &(name, r, sections) in GATES {
+			let t = floor_units::<f64>(team, r, sections);
+			let o = floor_units::<f64>(rayon, r, sections);
+			assert!(t < o, "{name}: team {t}, outside {o}");
+		}
+		// representative joins on the M5 table: the divide and conquer joins pay on a team from
+		// a size of about 20 (far below their recursion thresholds, 128 and 64), the triangular
+		// inverse joins from about 120 (4.2 us of work: `2 (n/2)^3` at 0.0096 ns)
+		for (r, power, yes, no) in [
+			(rate::BIDIAG_SVD_DC, 2u32, 128usize, 8usize),
+			(rate::TRIDIAG_EVD_DC, 2, 64, 8),
+			(rate::TRIANGULAR_INVERSE, 3, 256, 64),
+		] {
+			let pays = |n: usize| {
+				let h = n / 2;
+				ParThreshold::Derived.region_pays::<f64>(team, 2 * h.pow(power), r, 1)
+			};
+			assert!(pays(yes));
+			assert!(!pays(no));
+		}
+		// a sparse product of 1e6 multiply-adds is above the floor, 1e3 below
+		assert!(ParThreshold::Derived.region_pays::<f64>(team, 1_000_000, rate::SPARSE_MATMUL, 1));
+		assert!(!ParThreshold::Derived.region_pays::<f64>(team, 1_000, rate::SPARSE_MATMUL, 1));
+	}
+}
+
+#[cfg(feature = "par-trace")]
+#[doc(hidden)]
+pub fn trace_pub(
+	units: usize,
+	sections: u32,
+	estimate: Duration,
+	dispatch: Duration,
+	r: bool,
+	loc: &'static core::panic::Location<'static>,
+) {
+	trace::record(loc, units, sections, estimate.as_secs_f64() * 1e9, dispatch.as_secs_f64() * 1e9, r);
+}
+
+#[cfg(all(test, feature = "rayon", feature = "sparse-linalg"))]
+mod join_results {
+	//! The parallel routes behind the join gates give the serial results, at sizes above the
+	//! floor of a plain token from outside the pool (`Par::rayon(4)`).
+	use crate::dyn_stack::{MemBuffer, MemStack};
+	use crate::linalg::evd::{self, ComputeEigenvectors};
+	use crate::linalg::svd;
+	use crate::linalg::triangular_inverse::{invert_lower_triangular, invert_unit_lower_triangular};
+	use crate::{Accum, Mat, Par, Spec};
+
+	struct Rng(u64);
+	impl Rng {
+		fn next(&mut self) -> f64 {
+			self.0 ^= self.0 << 13;
+			self.0 ^= self.0 >> 7;
+			self.0 ^= self.0 << 17;
+			(self.0 >> 11) as f64 / (1u64 << 53) as f64 - 0.5
+		}
+	}
+
+	fn close(a: &[f64], b: &[f64], tol: f64) {
+		let scale = a.iter().fold(1.0f64, |m, x| m.max(x.abs()));
+		for (x, y) in a.iter().zip(b) {
+			assert!((x - y).abs() <= tol * scale, "{x} {y}");
+		}
+	}
+
+	#[test]
+	fn triangular_inverse_agrees_with_serial() {
+		let n = 512;
+		let mut r = Rng(3);
+		let mut src = Mat::<f64>::from_fn(n, n, |_, _| r.next() * 0.1);
+		for i in 0..n {
+			src[(i, i)] = 2.0 + src[(i, i)].abs();
+		}
+		for unit in [false, true] {
+			let mut a = Mat::<f64>::zeros(n, n);
+			let mut b = Mat::<f64>::zeros(n, n);
+			for (dst, par) in [(&mut a, Par::Seq), (&mut b, Par::rayon(4))] {
+				if unit {
+					invert_unit_lower_triangular(dst.as_mut(), src.as_ref(), par);
+				} else {
+					invert_lower_triangular(dst.as_mut(), src.as_ref(), par);
+				}
+			}
+			for j in 0..n {
+				close(
+					&(0..n).map(|i| a[(i, j)]).collect::<Vec<_>>(),
+					&(0..n).map(|i| b[(i, j)]).collect::<Vec<_>>(),
+					1e-9,
+				);
+			}
+		}
+	}
+
+	#[test]
+	fn bidiagonal_svd_agrees_with_serial() {
+		let n = 512;
+		let mut r = Rng(5);
+		let d0: Vec<f64> = (0..n).map(|_| r.next() + 1.0).collect();
+		let e: Vec<f64> = (0..n - 1).map(|_| r.next()).collect();
+		let mut out = vec![];
+		for par in [Par::Seq, Par::rayon(4)] {
+			let mut d = d0.clone();
+			let mut u = Mat::<f64>::zeros(n, n);
+			let mut v = Mat::<f64>::zeros(n, n);
+			let mut mem = MemBuffer::new(svd::bidiagonal_svd_scratch::<f64>(
+				n,
+				par.shape(),
+				Spec::default(),
+			));
+			svd::bidiagonal_svd(
+				&mut d,
+				&e,
+				true,
+				u.as_mut(),
+				v.as_mut(),
+				par,
+				MemStack::new(&mut mem),
+				Spec::default(),
+			)
+			.unwrap();
+			out.push(d);
+		}
+		close(&out[0], &out[1], 1e-10);
+	}
+
+	#[test]
+	fn tridiagonal_evd_agrees_with_serial() {
+		let n = 512;
+		let mut r = Rng(6);
+		let d0: Vec<f64> = (0..n).map(|_| r.next()).collect();
+		let mut e0: Vec<f64> = (0..n - 1).map(|_| r.next()).collect();
+		e0.push(0.0);
+		let mut out = vec![];
+		for par in [Par::Seq, Par::rayon(4)] {
+			let mut u = Mat::<f64>::zeros(n, n);
+			let mut s = Mat::<f64>::zeros(n, 1);
+			let mut mem = MemBuffer::new(evd::tridiagonal_self_adjoint_evd_scratch::<f64>(
+				n,
+				ComputeEigenvectors::Yes,
+				par.shape(),
+				Spec::default(),
+			));
+			let d = crate::col::ColRef::from_slice(&d0);
+			let e = crate::col::ColRef::from_slice(&e0);
+			evd::tridiagonal_self_adjoint_evd(
+				d.as_diagonal(),
+				e.as_diagonal(),
+				s.as_mut().col_mut(0).as_diagonal_mut(),
+				Some(u.as_mut()),
+				par,
+				MemStack::new(&mut mem),
+				Spec::default(),
+			)
+			.unwrap();
+			out.push((0..n).map(|i| s[(i, 0)]).collect::<Vec<_>>());
+		}
+		close(&out[0], &out[1], 1e-10);
+	}
+
+	#[test]
+	fn sparse_matmul_agrees_with_serial() {
+		use crate::sparse::SparseColMat;
+		use crate::sparse::Triplet;
+		use crate::sparse::linalg::matmul::sparse_sparse_matmul;
+		let n = 6000;
+		let mk = |seed: u64| {
+			let mut r = Rng(seed);
+			let mut t = vec![];
+			for j in 0..n {
+				for _ in 0..24 {
+					let i = ((r.next() + 0.5) * n as f64) as usize % n;
+					t.push(Triplet::new(i, j, r.next()));
+				}
+			}
+			SparseColMat::<usize, f64>::try_new_from_triplets(n, n, &t).unwrap()
+		};
+		let (a, b) = (mk(1), mk(2));
+		let s = sparse_sparse_matmul(a.as_ref(), b.as_ref(), 1.0, Par::Seq).unwrap();
+		let p = sparse_sparse_matmul(a.as_ref(), b.as_ref(), 1.0, Par::rayon(4)).unwrap();
+		close(s.val(), p.val(), 1e-12);
+		let _ = Accum::Add;
 	}
 }

@@ -112,7 +112,15 @@ pub fn sparse_sparse_matmul_numeric<
 	unsafe impl<T> Sync for SyncWrapper<T> {}
 	unsafe impl<T> Send for SyncWrapper<T> {}
 	let c_values = SyncWrapper(&*UnsafeCell::from_mut(c_values));
-	let nthreads = par.degree();
+	// one section over the column ranges; the work is the symbolic flop count, which is already
+	// known. The workspace keeps one column per thread of `par` either way.
+	let parallel = crate::utils::cost::par_pays::<T>(
+		&par,
+		total_flop_count as usize,
+		crate::utils::cost::rate::SPARSE_MATMUL,
+		1,
+	);
+	let nthreads = if parallel { par.degree() } else { 1 };
 	let job = &|tid: usize| {
 		assert!(tid < nthreads);
 		fn partition_fn(
@@ -164,6 +172,10 @@ pub fn sparse_sparse_matmul_numeric<
 	};
 	match par {
 		Par::Seq => {
+			job(0);
+		},
+		#[cfg(feature = "rayon")]
+		_ if !parallel => {
 			job(0);
 		},
 		#[cfg(feature = "rayon")]
