@@ -440,7 +440,7 @@ fn solve_unit_lower_triangular_in_place_imp<'N, 'K, T: ComplexField>(
 		// A split of the right hand sides, taken for every `par` (it is a shape rule, short
 		// triangles against many columns); only the join is a cost: one section, the unit a
 		// multiply-add of the solve, `n*n*k/2`, at the GEMM rate.
-		let par = if crate::utils::cost::par_pays::<T>(
+		let par = if crate::utils::cost::join_pays::<T>(
 			&par,
 			n.saturating_mul(n).saturating_mul(k) / 2,
 			crate::utils::cost::rate::GEMM_MAC,
@@ -534,7 +534,7 @@ fn solve_lower_triangular_in_place_imp<'N, 'K, T: ComplexField>(
 		// A split of the right hand sides, taken for every `par` (it is a shape rule, short
 		// triangles against many columns); only the join is a cost: one section, the unit a
 		// multiply-add of the solve, `n*n*k/2`, at the GEMM rate.
-		let par = if crate::utils::cost::par_pays::<T>(
+		let par = if crate::utils::cost::join_pays::<T>(
 			&par,
 			n.saturating_mul(n).saturating_mul(k) / 2,
 			crate::utils::cost::rate::GEMM_MAC,

@@ -613,6 +613,7 @@ fn divide_and_conquer_recurse<T: RealField>(
 		&par,
 		(n1 * n1 + (n - n1) * (n - n1)).saturating_mul(n),
 		crate::utils::cost::rate::GEMM_MAC,
+		1,
 	) {
 		par
 	} else {

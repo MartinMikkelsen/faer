@@ -124,7 +124,7 @@ fn mat_x_lower_impl_unchecked<'M, 'N, T: ComplexField>(
 	debug_assert!(N == dst.ncols());
 	// One section per level (the join of the two halves); the unit is a multiply-add of the
 	// triangular product, `m*n*n/2`, at the GEMM rate.
-	let join_parallelism = if crate::utils::cost::par_pays::<T>(
+	let join_parallelism = if crate::utils::cost::join_pays::<T>(
 		&par,
 		m.saturating_mul(n).saturating_mul(n) / 2,
 		crate::utils::cost::rate::GEMM_MAC,
@@ -700,7 +700,7 @@ fn mat_x_mat_into_lower_impl_unchecked<'N, 'K, T: ComplexField>(
 	debug_assert!(lhs.ncols() == rhs.nrows());
 	// Two sections per level (the outer join and the join nested in its second half); the
 	// unit is a multiply-add of the product into one triangle, `n*n*k/2`, at the GEMM rate.
-	let par = if crate::utils::cost::par_pays::<T>(
+	let par = if crate::utils::cost::join_pays::<T>(
 		&par,
 		n.saturating_mul(n).saturating_mul(k) / 2,
 		crate::utils::cost::rate::GEMM_MAC,

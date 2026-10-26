@@ -366,22 +366,24 @@ fn trace_decision(
 /// Whether a join of two halves pays: one section of width 2 (the two halves are the
 /// participants; the budget is split between them, it is not a flat section over all of it), so
 /// the dispatch cost is that of the shape at width 2 (`Team` 3.0 us, `Rayon` from outside 14 us
-/// on the M5 table, against 1.4 and 19 at width 6). `units` of work at `rate`.
+/// on the M5 table, against 1.4 and 19 at width 6). `units` of work at `rate`, `sections` joins.
+#[cfg_attr(feature = "par-trace", track_caller)]
 pub(crate) fn join_pays<T: crate::ComplexField>(
 	par: &crate::Par,
 	units: usize,
 	rate: Rate,
+	sections: u32,
 ) -> bool {
 	if matches!(par, crate::Par::Seq) {
 		return false;
 	}
 	let r = par.shape().pays(
 		serial_time(units, rate.of::<T>()),
-		1,
+		sections,
 		NonZeroUsize::new(2).unwrap(),
 	);
 	#[cfg(feature = "par-trace")]
-	trace_decision(par.shape(), 2, units, rate.of::<T>(), 1, r, core::panic::Location::caller());
+	trace_decision(par.shape(), 2, units, rate.of::<T>(), sections, r, core::panic::Location::caller());
 	r
 }
 
@@ -399,7 +401,7 @@ pub(crate) fn halves_pays<T: crate::ComplexField>(
 	power: u32,
 ) -> bool {
 	let h = n / 2;
-	join_pays::<T>(par, h.saturating_pow(power).saturating_mul(2), rate)
+	join_pays::<T>(par, h.saturating_pow(power).saturating_mul(2), rate, 1)
 }
 
 /// Estimated serial time of a block Householder apply with an `m x n` basis on an `m x k`

@@ -1393,6 +1393,7 @@ pub(super) fn divide_and_conquer<T: RealField>(
 					&par,
 					(k * k + rem * rem).saturating_mul(n),
 					crate::utils::cost::rate::GEMM_MAC,
+					1,
 				) {
 					par.reborrow()
 				} else {
@@ -1454,6 +1455,7 @@ pub(super) fn divide_and_conquer<T: RealField>(
 			&par,
 			((k + 1) * (k + 1) + (rem + 1) * (rem + 1)).saturating_mul(n + 1),
 			crate::utils::cost::rate::GEMM_MAC,
+			1,
 		) {
 			par
 		} else {
@@ -1535,6 +1537,7 @@ pub(super) fn divide_and_conquer<T: RealField>(
 						((k + 1) * (k + 1) + (rem + 1) * (rem + 1)).saturating_mul(n + 1),
 					),
 					crate::utils::cost::rate::GEMM_MAC,
+					1,
 				) {
 					par
 				} else {
