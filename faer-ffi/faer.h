@@ -3076,8 +3076,6 @@ struct FaerV0_24_Layout libfaer_v0_23_generalized_evd_scratch_fx128(size_t dim,
                                                                     struct FaerV0_24_Par par,
                                                                     struct FaerV0_24_GevdParams params);
 
-struct FaerV0_24_Par libfaer_v0_23_get_global_par(void);
-
 void libfaer_v0_23_inverse_triangular_lower_in_place_c32(struct FaerV0_24_MatMut L_inv,
                                                          struct FaerV0_24_MatRef L,
                                                          struct FaerV0_24_Par par);
@@ -6103,8 +6101,6 @@ struct FaerV0_24_Layout libfaer_v0_23_self_adjoint_evd_scratch_fx128(size_t dim,
                                                                      enum FaerV0_24_ComputeEigenvectors compute_U,
                                                                      struct FaerV0_24_Par par,
                                                                      struct FaerV0_24_SelfAdjointEvdParams params);
-
-void libfaer_v0_23_set_global_par(struct FaerV0_24_Par par);
 
 void libfaer_v0_23_solve_triangular_lower_in_place_c32(struct FaerV0_24_MatRef L,
                                                        enum FaerV0_24_Conj L_conj,

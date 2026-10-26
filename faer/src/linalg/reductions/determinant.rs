@@ -1,11 +1,13 @@
+use crate::assert;
 use crate::internal_prelude::*;
-use crate::{assert, get_global_parallelism};
 use alloc::vec;
 use dyn_stack::MemBuffer;
-pub fn determinant<T: ComplexField>(mat: MatRef<'_, T>) -> T::Canonical {
+pub fn determinant<T: ComplexField>(
+	mat: MatRef<'_, T>,
+	mut par: Par<'_>,
+) -> T::Canonical {
 	assert!(mat.nrows() == mat.ncols());
-	let mut par = get_global_parallelism().par();
-		let par_shape = par.shape();
+	let par_shape = par.shape();
 	let (m, n) = mat.shape();
 	let mut row_perm_fwd = vec![0usize; m];
 	let mut row_perm_bwd = vec![0usize; m];

@@ -5105,7 +5105,7 @@ mod tests {
 			}
 		}
 		assert!(Q * R ~ A);
-		let QR = A.qr().reconstruct();
+		let QR = A.qr(Par::Seq).reconstruct(Par::Seq);
 		assert!(QR ~ A);
 	}
 

@@ -1538,7 +1538,7 @@ mod tests {
 			0.0, 0.0, 0.0, 0.0,
 		];
 		let b = ColRef::from_slice(&b);
-		let lu = A.full_piv_lu();
-		assert!(lu.solve(b).is_all_finite());
+		let lu = A.full_piv_lu(Par::Seq);
+		assert!(lu.solve(b, Par::Seq).is_all_finite());
 	}
 }

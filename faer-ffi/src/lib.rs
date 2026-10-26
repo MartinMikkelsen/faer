@@ -2520,26 +2520,6 @@ pub mod linalg {
 	});
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn libfaer_v0_23_get_global_par() -> Par {
-	match faer::get_global_parallelism() {
-		faer::GlobalPar::Seq => Par {
-			tag: ParTag::Seq,
-			nthreads: 1,
-		},
-		faer::GlobalPar::Rayon(nthreads) => Par {
-			tag: ParTag::Rayon,
-			nthreads: nthreads.get(),
-		},
-	}
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn libfaer_v0_23_set_global_par(par: Par) {
-	faer::set_global_parallelism(match par.tag {
-		ParTag::Seq => faer::GlobalPar::Seq,
-		ParTag::Rayon => faer::GlobalPar::rayon(par.nthreads),
-	})
-}
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn libfaer_v0_23_alloc(
 	size: usize,
 	align: usize,

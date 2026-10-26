@@ -1492,7 +1492,7 @@ mod tests {
 			dist: StandardNormal,
 		}
 		.rand::<Mat<f64>>(rng);
-		let pinv = mat.svd().unwrap().pseudoinverse();
+		let pinv = mat.svd(Par::Seq).unwrap().pseudoinverse(Par::Seq);
 		let err = &mat * &pinv - Mat::<f64>::identity(m, m);
 		assert!(err.norm_max() < 1e-10);
 	}
@@ -1507,7 +1507,7 @@ mod tests {
 			dist: StandardNormal,
 		}
 		.rand::<Mat<f64>>(rng);
-		let pinv = mat.svd().unwrap().pseudoinverse();
+		let pinv = mat.svd(Par::Seq).unwrap().pseudoinverse(Par::Seq);
 		let err = &pinv * &mat - Mat::<f64>::identity(n, n);
 		assert!(err.norm_max() < 1e-10);
 	}

@@ -1432,4 +1432,43 @@ mod tests {
 		assert!(max_diff(qr(Par::Seq).as_ref(), got.as_ref()) < 1e-7, "qr");
 		assert!(st.gemm_team_kernel > 0, "qr: {st:?}");
 	}
+
+	/// The high level methods take the parallelism as an argument (there is no process wide
+	/// setting): `singular_values(Par::Team(..))` runs on the team and matches the sequential one.
+	#[test]
+	fn high_level_singular_values_run_on_the_team() {
+		let n = 384;
+		let a = rand_mat(n, n, 21);
+		let want = a.as_ref().singular_values(Par::Seq).unwrap();
+		let (got, st) = counted(4, |par| a.as_ref().singular_values(par).unwrap());
+		assert_eq!(want.len(), got.len());
+		for (w, g) in want.iter().zip(&got) {
+			assert!((w - g).abs() < 1e-9 * want[0], "{w} {g}");
+		}
+		let opened = st.run.iter().skip(2).sum::<usize>() + st.split.iter().skip(2).sum::<usize>();
+		assert!(opened > 0 || st.gemm_tiled > 0 || st.gemm_team_kernel > 0, "no team section: {st:?}");
+	}
+
+	/// A solver struct built with a team and used with a team: the work happens where `par` is given.
+	#[test]
+	fn high_level_qr_and_lu_solve_on_the_team() {
+		use crate::linalg::solvers::Solve;
+		let n = 320;
+		let a = rand_mat(n, n, 22);
+		let b = rand_mat(n, 8, 23);
+		let want = a.as_ref().partial_piv_lu(Par::Seq).solve(b.as_ref(), Par::Seq);
+		let (got, st) = counted(4, |mut par| {
+			let lu = a.as_ref().partial_piv_lu(par.reborrow());
+			lu.solve(b.as_ref(), par)
+		});
+		assert!(max_diff(want.as_ref(), got.as_ref()) < 1e-8);
+		let opened = st.run.iter().skip(2).sum::<usize>() + st.split.iter().skip(2).sum::<usize>();
+		assert!(opened > 0 || st.gemm_tiled > 0 || st.gemm_team_kernel > 0, "no team section: {st:?}");
+		let want = a.as_ref().qr(Par::Seq).solve(b.as_ref(), Par::Seq);
+		let got = with_par(4, |mut par| {
+			let qr = a.as_ref().qr(par.reborrow());
+			qr.solve(b.as_ref(), par)
+		});
+		assert!(max_diff(want.as_ref(), got.as_ref()) < 1e-8);
+	}
 }

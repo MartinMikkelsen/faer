@@ -2961,8 +2961,8 @@ mod tests {
 			let mut y = rhs.clone();
 			A.to_dense()
 				.as_dyn()
-				.qr()
-				.solve_lstsq_in_place_with_conj(Conj::No, y.as_mut());
+				.qr(Par::Seq)
+				.solve_lstsq_in_place_with_conj(Conj::No, y.as_mut(), Par::Seq);
 			let x = x.as_ref().subrows(0, n);
 			let linsolve_diff = a.adjoint() * (&a * &x - &rhs);
 			assert!(linsolve_diff.norm_max() <= 1e-10);

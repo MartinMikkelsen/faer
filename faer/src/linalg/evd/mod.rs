@@ -2498,7 +2498,7 @@ mod self_adjoint_tests {
 		}
 		.rand::<Mat<f64>>(rng);
 		let mat = &mat + mat.adjoint();
-		let pinv = mat.self_adjoint_eigen(Side::Lower).unwrap().pseudoinverse();
+		let pinv = mat.self_adjoint_eigen(Side::Lower, Par::Seq).unwrap().pseudoinverse(Par::Seq);
 		let err = &mat * &pinv - Mat::<f64>::identity(n, n);
 		assert!(err.norm_max() < 1e-10);
 	}
@@ -2513,11 +2513,11 @@ mod scale_and_empty_tests {
 	#[test]
 	fn two_by_two_finite_spectrum_at_the_range_limit() {
 		let a = crate::mat![[1e308f64, 0.0], [0.0, 1e308]];
-		let eig = a.self_adjoint_eigen(Side::Lower).unwrap();
+		let eig = a.self_adjoint_eigen(Side::Lower, Par::Seq).unwrap();
 		assert_eq!(eig.S()[0], 1e308);
 		assert_eq!(eig.S()[1], 1e308);
 		let a = crate::mat![[1e38f32, 0.0], [0.0, 1e38]];
-		let eig = a.self_adjoint_eigen(Side::Lower).unwrap();
+		let eig = a.self_adjoint_eigen(Side::Lower, Par::Seq).unwrap();
 		assert_eq!(eig.S()[0], 1e38);
 		assert_eq!(eig.S()[1], 1e38);
 	}
@@ -2527,14 +2527,14 @@ mod scale_and_empty_tests {
 	fn two_by_two_subnormal_diagonal() {
 		let q = f64::from_bits(1);
 		let a = Mat::<f64>::from_fn(2, 2, |i, j| if i == j { q } else { 0.0 });
-		let eig = a.self_adjoint_eigen(Side::Lower).unwrap();
+		let eig = a.self_adjoint_eigen(Side::Lower, Par::Seq).unwrap();
 		assert_eq!(eig.S()[0], q);
 		assert_eq!(eig.S()[1], q);
 	}
 	#[test]
 	fn empty_matrix() {
 		let a = Mat::<f64>::zeros(0, 0);
-		let eig = a.self_adjoint_eigen(Side::Lower).unwrap();
+		let eig = a.self_adjoint_eigen(Side::Lower, Par::Seq).unwrap();
 		assert_eq!(eig.U().shape(), (0, 0));
 		assert_eq!(eig.S().dim(), 0);
 	}

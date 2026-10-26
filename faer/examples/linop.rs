@@ -386,8 +386,8 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
 		use faer::prelude::*;
 
 		println!("sanity check:");
-		let Binv_A = B.sp_lu()?.solve(A.to_dense());
-		let eig = Binv_A.eigen().unwrap();
+		let Binv_A = B.sp_lu(Par::Seq)?.solve(A.to_dense(), Par::Seq);
+		let eig = Binv_A.eigen(Par::Seq).unwrap();
 		let mut sort = Vec::from_iter(0..n);
 		sort.sort_unstable_by(|&i, &j| {
 			let i = eig.S()[i].norm();

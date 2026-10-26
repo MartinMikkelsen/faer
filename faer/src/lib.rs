@@ -154,12 +154,19 @@
 //! using [`Mat::self_adjoint_eigenvalues`] (nondecreasing order),
 //! [`Mat::eigenvalues`] with the same conditions described above.
 //!
+//! # parallelism
+//! there is no process wide parallelism setting. Every function that can run in parallel takes a
+//! [`Par`] argument, the high level ones included ([`Mat::svd`], [`Mat::llt`],
+//! [`Mat::singular_values`], the `solve` family of [`linalg::solvers::Solve`], ...). Pass
+//! [`Par::Seq`] for sequential execution, or [`Par::rayon`] for the global rayon threadpool. The
+//! operator overloads (`&a * &b`, `&a + &b`, ...) have no room for the argument and always run
+//! sequentially; use [`linalg::matmul::matmul`] for a parallel product.
+//!
 //! # crate features
 //!
 //! - `std`: enabled by default. links with the standard library to enable
 //!   additional features such as cpu feature detection at runtime
-//! - `rayon`: enabled by default. enables the `rayon` parallel backend and
-//!   enables global parallelism by default
+//! - `rayon`: enabled by default. enables the `rayon` parallel backend
 //! - `npy`: enables conversions to/from numpy's matrix file format
 //! - `perf-warn`: produces performance warnings when matrix operations are
 //!   called with suboptimal
@@ -188,7 +195,6 @@ macro_rules! repeat_n {
 	};
 }
 use core::num::NonZeroUsize;
-use core::sync::atomic::AtomicUsize;
 use equator::{assert, debug_assert};
 use faer_traits::*;
 /// shorthand for `<_ as Auto::<T>>::auto()`
@@ -1243,111 +1249,6 @@ impl<T> Scale<T> {
 	#[inline(always)]
 	pub fn from_mut(value: &mut T) -> &mut Self {
 		unsafe { &mut *(value as *mut T as *mut Self) }
-	}
-}
-/// 0: disabled
-/// 1: `Seq`
-/// n >= 2: `Rayon(n - 2)`
-///
-/// default: `Rayon(0)`
-static GLOBAL_PARALLELISM: AtomicUsize = {
-	#[cfg(all(not(miri), feature = "rayon"))]
-	{
-		AtomicUsize::new(2)
-	}
-	#[cfg(not(all(not(miri), feature = "rayon")))]
-	{
-		AtomicUsize::new(1)
-	}
-};
-/// causes functions that access global parallelism settings to panic.
-pub fn disable_global_parallelism() {
-	GLOBAL_PARALLELISM.store(0, core::sync::atomic::Ordering::Relaxed);
-}
-/// the process wide parallelism setting: sequential or the global rayon threadpool. `Copy`,
-/// and it has no team variant, so a [`Par::Team`] cannot be stored as the global setting; the
-/// type checker rejects it instead of a run time panic.
-///
-/// ```
-/// use faer::{GlobalPar, Par};
-/// faer::set_global_parallelism(GlobalPar::Seq);
-/// assert!(matches!(faer::get_global_parallelism().par(), Par::Seq));
-/// ```
-///
-/// A [`Par`] is not accepted, so a team cannot be set globally:
-///
-/// ```compile_fail
-/// faer::set_global_parallelism(faer::Par::Seq);
-/// ```
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum GlobalPar {
-	/// sequential
-	Seq,
-	/// the global rayon threadpool with this many threads
-	#[cfg(feature = "rayon")]
-	Rayon(NonZeroUsize),
-}
-impl GlobalPar {
-	/// `Rayon(nthreads)`, or `Rayon(rayon::current_num_threads())` when `nthreads` is zero
-	#[inline]
-	#[cfg(feature = "rayon")]
-	pub fn rayon(nthreads: usize) -> Self {
-		match Par::rayon(nthreads) {
-			Par::Rayon(n) => Self::Rayon(n),
-			_ => unreachable!(),
-		}
-	}
-
-	/// the parallelism this setting stands for, as an owned `Par<'static>`
-	#[inline]
-	pub fn par(self) -> Par<'static> {
-		match self {
-			Self::Seq => Par::Seq,
-			#[cfg(feature = "rayon")]
-			Self::Rayon(n) => Par::Rayon(n),
-		}
-	}
-}
-impl From<GlobalPar> for Par<'static> {
-	#[inline]
-	fn from(value: GlobalPar) -> Self {
-		value.par()
-	}
-}
-impl From<GlobalPar> for ParShape {
-	#[inline]
-	fn from(value: GlobalPar) -> Self {
-		match value {
-			GlobalPar::Seq => ParShape::Seq,
-			#[cfg(feature = "rayon")]
-			GlobalPar::Rayon(n) => ParShape::Rayon(n),
-		}
-	}
-}
-/// sets the global parallelism settings.
-#[inline]
-pub fn set_global_parallelism(par: GlobalPar) {
-	let value = match par {
-		GlobalPar::Seq => 1,
-		#[cfg(feature = "rayon")]
-		GlobalPar::Rayon(n) => n.get().saturating_add(2),
-	};
-	GLOBAL_PARALLELISM.store(value, core::sync::atomic::Ordering::Relaxed);
-}
-/// gets the global parallelism settings. Use [`GlobalPar::par`] to run work with it.
-///
-/// # panics
-/// panics if global parallelism is disabled.
-#[track_caller]
-pub fn get_global_parallelism() -> GlobalPar {
-	let value = GLOBAL_PARALLELISM.load(core::sync::atomic::Ordering::Relaxed);
-	match value {
-		0 => panic!("Global parallelism is disabled."),
-		1 => GlobalPar::Seq,
-		#[cfg(feature = "rayon")]
-		n => GlobalPar::rayon(n - 2),
-		#[cfg(not(feature = "rayon"))]
-		_ => unreachable!(),
 	}
 }
 #[doc(hidden)]
