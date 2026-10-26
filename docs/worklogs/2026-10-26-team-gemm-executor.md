@@ -29,7 +29,7 @@ tiles that each call the kernel, so the kernel's shared packing and job queue we
   one costs nothing and behaves exactly as `Par::Seq` (the QR 128 probe evaluated 346 gates per item on such a team).
 - Counter `stats::Stats::gemm_team_kernel`: products run by the kernel on a team fork. `gemm_below_floor` also counts
   the kernel gate's refusals.
-- Pins: threadteam `586738b6b6384617a455e35f0bcdfe616e40ea04` (Linux row, `faer/Cargo.toml` and `Cargo.lock`);
+- Pins: threadteam `709589322fe50a9bcd6f33ef81aec0ba3e6042ed` (Linux row, per-member parkers, `min_cost`; `faer/Cargo.toml` and `Cargo.lock`);
   `t4a-private-gemm-x86` as a git dependency at the commit of the 0.1.25 branch (the registry release has no `Fork`).
   `Cargo.lock` was edited by hand for those two entries: `cargo update` also rewrote unrelated `windows-sys`
   entries.
@@ -37,6 +37,22 @@ tiles that each call the kernel, so the kernel's shared packing and job queue we
 - `utils::cost::tests::rayon_uses_the_outside_cost` asserted the M5 number (`>= 19 us`) of the outside cost; with the
   `586738b` pin the cost comes from threadteam's Linux row and the number is smaller, so the test now states the shape
   (a finite, positive cost). No gate changed.
+
+## Serial path overhead and the cheapest-width check (tensor4all-meta#51 follow-up)
+
+- `e34d99f` (from `fix/serial-path-overhead`): a QR 128 on a `Par::Team` that cannot pay cost +11 % over `Par::Seq`
+  because every product and triangular step of the 59 block applies asked its gate. The block apply now asks one
+  floor for the whole apply and runs the inner steps with `Par::Seq`; gates read the token's own table
+  (`utils::cost::par_pays_time`, no `ParShape` copy); the Rayon host table is built once (`OnceLock`).
+  Tests `small_qr_on_a_team_is_the_sequential_one`, `par_pays_time_is_the_shape_gate`.
+- The rejection no longer assumes the tables are non-increasing in width. `kernel_width` and the block apply floor
+  ask `pays_at(estimate, sections, min_cost)` (`utils::cost::par_can_pay_time`, `par_can_pay_time_team`,
+  `ParShape::min_dispatch_cost`; threadteam `DispatchCosts::min_cost`): does not pay at the cheapest width means
+  serial, for any table shape. `gemm_team` keeps its full-width gate: it runs at the full team width, so that is
+  the width it asks about. Tests `kernel_width_rejects_at_the_cheapest_width` (rising table),
+  `min_dispatch_cost_is_the_cheapest_width`.
+- Pin threadteam `7095893` (per-member parkers: a narrow section no longer wakes every parked member; table lookups).
+  Not measured.
 
 ## Verification conclusions and constraints
 

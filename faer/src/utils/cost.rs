@@ -347,6 +347,37 @@ pub(crate) fn par_pays_time(par: &crate::Par, estimate: Duration, sections: u32,
 	}
 }
 
+/// The host table, a constant: built once, not on every gate.
+#[cfg(all(feature = "rayon", feature = "threadteam"))]
+fn host_costs() -> &'static threadteam::DispatchCosts {
+	static HOST: std::sync::OnceLock<threadteam::DispatchCosts> = std::sync::OnceLock::new();
+	HOST.get_or_init(threadteam::DispatchCosts::host_default)
+}
+
+/// Whether a region of serial time `estimate` that opens `sections` sections can pay on `par` at
+/// *some* width: `estimate >= PAYS * sections * min over widths of the cost` ([`ParShape::min_dispatch_cost`]).
+/// "Does not pay at the cheapest width" is the rejection that is right for any shape of table (a
+/// rising one included); it says nothing about the width a region then chooses.
+pub(crate) fn par_can_pay_time(par: &crate::Par, estimate: Duration, sections: u32) -> bool {
+	if par.degree() < 2 {
+		return false;
+	}
+	let min = match par {
+		crate::Par::Seq => Duration::MAX,
+		#[cfg(feature = "threadteam")]
+		crate::Par::Team(team) => return par_can_pay_time_team(team, estimate, sections),
+		other => other.shape().min_dispatch_cost(),
+	};
+	pays_at(estimate, sections, min)
+}
+
+/// [`par_can_pay_time`] for a team token.
+#[cfg(feature = "threadteam")]
+pub(crate) fn par_can_pay_time_team(team: &threadteam::TeamExec<'_>, estimate: Duration, sections: u32) -> bool {
+	team.size().get() >= 2
+		&& pays_at(estimate, sections, team.dispatch_costs().min_cost(threadteam::DispatchKind::Team))
+}
+
 /// Whether a region of `units` of work at `rate` that opens `sections` sections pays on `par`,
 /// at the full degree of `par` ([`ParShape::pays_full`]).
 #[cfg_attr(feature = "par-trace", track_caller)]
@@ -466,10 +497,7 @@ impl ParShape {
 			Self::Rayon(_) => {
 				#[cfg(feature = "threadteam")]
 				{
-					// the host table is a constant: built once, not on every gate
-					static HOST: std::sync::OnceLock<threadteam::DispatchCosts> = std::sync::OnceLock::new();
-					HOST.get_or_init(threadteam::DispatchCosts::host_default)
-						.cost(threadteam::DispatchKind::Outside, width)
+					host_costs().cost(threadteam::DispatchKind::Outside, width)
 				}
 				#[cfg(not(feature = "threadteam"))]
 				{
@@ -478,6 +506,31 @@ impl ParShape {
 			},
 			#[cfg(feature = "threadteam")]
 			Self::Team(_, costs) => costs.cost(threadteam::DispatchKind::Team, width),
+		}
+	}
+
+	/// The cheapest cost of one section over all widths of this shape (a lower bound of
+	/// [`dispatch_cost`](Self::dispatch_cost) at every width), [`Duration::MAX`] for a shape of
+	/// degree below 2.
+	pub fn min_dispatch_cost(self) -> Duration {
+		if self.degree() < 2 {
+			return Duration::MAX;
+		}
+		match self {
+			Self::Seq => Duration::MAX,
+			#[cfg(feature = "rayon")]
+			Self::Rayon(_) => {
+				#[cfg(feature = "threadteam")]
+				{
+					host_costs().min_cost(threadteam::DispatchKind::Outside)
+				}
+				#[cfg(not(feature = "threadteam"))]
+				{
+					outside_cost(NonZeroUsize::new(2).unwrap()) // grows with the width: cheapest at 2
+				}
+			},
+			#[cfg(feature = "threadteam")]
+			Self::Team(_, costs) => costs.min_cost(threadteam::DispatchKind::Team),
 		}
 	}
 
@@ -511,6 +564,22 @@ mod tests {
 		assert_eq!(ParShape::Seq.dispatch_cost(nz(4)), Duration::MAX);
 		assert!(!ParShape::Seq.pays(Duration::from_secs(10), 1, nz(4)));
 		assert!(!ParShape::Seq.pays_full(Duration::from_secs(10), 1));
+	}
+
+	#[test]
+	#[cfg(feature = "threadteam")]
+	fn min_dispatch_cost_is_the_cheapest_width() {
+		use threadteam::{DispatchCosts, DispatchKind, WidthCosts};
+		let us = Duration::from_micros;
+		// falling, flat and rising tables
+		for t in [[us(9), us(5), us(3)], [us(4), us(4), us(4)], [us(2), us(7), us(12)]] {
+			let costs = DispatchCosts::generic().with(DispatchKind::Team, WidthCosts::new(t));
+			let s = ParShape::Team(nz(6), costs);
+			let want = (2..=6).map(|w| s.dispatch_cost(nz(w))).min().unwrap();
+			assert_eq!(s.min_dispatch_cost(), want, "{t:?}");
+		}
+		assert_eq!(ParShape::Seq.min_dispatch_cost(), Duration::MAX);
+		assert_eq!(ParShape::Team(nz(1), DispatchCosts::generic()).min_dispatch_cost(), Duration::MAX);
 	}
 
 	#[test]

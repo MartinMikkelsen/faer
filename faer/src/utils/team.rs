@@ -288,10 +288,10 @@ pub(crate) mod kernel {
 	/// call (packing, then compute), so the gate is `pays(estimate, 2, width)` at the width
 	/// `width_for` chooses.
 	pub(crate) fn kernel_width(team: &TeamExec<'_>, estimate: Duration) -> Option<usize> {
-		// the cheap rejection first: a section costs least at the widest width (the tables are
-		// non-increasing in width), so a product that does not pay there pays nowhere and
-		// `width_for` need not search (68 ns; a QR 128 asks for every product of its 59 block applies)
-		if team.size().get() < 2 || !team.pays(estimate, 2, team.size()) {
+		// the cheap rejection first: a product that does not pay at the cheapest width of the table
+		// pays nowhere (whatever the shape of the table), so `width_for` need not search (a QR 128
+		// asks for every product of its 59 block applies)
+		if !crate::utils::cost::par_can_pay_time_team(team, estimate, 2) {
 			stats::bump(&stats::GEMM_BELOW_FLOOR);
 			return None;
 		}
@@ -601,6 +601,36 @@ mod tests {
 		});
 		assert_eq!(max_diff(a_seq.as_ref(), a_team.as_ref()), 0.0);
 		assert_eq!(max_diff(q_seq.as_ref(), q_team.as_ref()), 0.0);
+	}
+
+	/// The rejection before the width search is against the cheapest width of the table, so it is right
+	/// for a table whose cost rises with the width: here 2 us at width 2 and 12 us at width 6, a
+	/// 13 us product (two sections) pays at width 2 only, and a 11 us one nowhere.
+	#[test]
+	fn kernel_width_rejects_at_the_cheapest_width() {
+		use threadteam::{DispatchCosts, DispatchKind, WidthCosts};
+		use core::time::Duration;
+		let _turn = TEAM_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+		let us = Duration::from_micros;
+		let costs = DispatchCosts::generic().with(DispatchKind::Team, WidthCosts::new([us(2), us(7), us(12)]));
+		let team = Pool::builder()
+			.threads(6)
+			.acquire_timeout(std::time::Duration::from_secs(30))
+			.dispatch_costs(costs)
+			.build()
+			.unwrap()
+			.into_team(6)
+			.expect("an idle pool");
+		let mut exec = team.exec(6);
+		exec.team(|team| {
+			assert_eq!(kernel::kernel_width(&team, us(13)), Some(2));
+			assert_eq!(kernel::kernel_width(&team, us(11)), None);
+			let par = Par::Team(team);
+			assert!(crate::utils::cost::par_can_pay_time(&par, us(6), 1));
+			assert!(!crate::utils::cost::par_can_pay_time(&par, us(5), 1));
+		})
+		.ok()
+		.expect("a team token");
 	}
 
 	/// `par_pays_time` is `ParShape::pays` without the shape.

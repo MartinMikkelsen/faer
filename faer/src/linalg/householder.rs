@@ -494,12 +494,12 @@ fn apply_block_householder_on_the_left_in_place_generic<
 	// The floor of the whole apply, asked once. Every parallel decision below (the rank-one split, the
 	// row split, the column split, and the gates inside the products and the triangular steps) is
 	// over a part of the work of the two products and the streaming of the target, at one section or
-	// more, so none can pay when the whole apply does not at one section: the sequential path is the
+	// more, so none can pay when the whole apply does not at one section of the cheapest width (`min_cost`): the sequential path is the
 	// result of all of them, and the nested calls need not ask. A QR 128 applies 59 blocks, and
 	// asking each product's gate for a token that cannot pay costs 0.3 to 0.9 us per apply
 	// (`Par::Team` against `Par::Seq`, 10 to 20 % of the factorization).
 	if par.degree() > 1
-		&& !crate::utils::cost::par_pays_time(
+		&& !crate::utils::cost::par_can_pay_time(
 			&par,
 			crate::utils::cost::block_apply_estimate::<T>(
 				M.unbound(),
@@ -508,7 +508,6 @@ fn apply_block_householder_on_the_left_in_place_generic<
 				2,
 			),
 			1,
-			par.degree(),
 		) {
 		par = Par::Seq;
 	}
