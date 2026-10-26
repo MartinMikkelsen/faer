@@ -146,11 +146,54 @@ impl HostClass {
 #[cfg(any(all(feature = "rayon", not(feature = "threadteam")), test))]
 #[cfg_attr(feature = "threadteam", allow(dead_code))]
 pub(crate) fn outside_cost_of(class: HostClass, w: NonZeroUsize) -> Duration {
-	let anchors: [u64; 3] = match class {
+	width_model(outside_anchors(class), w)
+}
+
+#[cfg(any(all(feature = "rayon", not(feature = "threadteam")), test))]
+#[cfg_attr(feature = "threadteam", allow(dead_code))]
+const fn outside_anchors(class: HostClass) -> [u64; 3] {
+	match class {
 		HostClass::X86_64Avx512 => [9_700, 10_100, 8_700],
 		HostClass::Aarch64Apple => [14_000, 18_000, 19_000],
 		_ => [40_000; 3],
-	};
+	}
+}
+
+/// Cost of one section started by a worker of the Rayon pool
+/// (`threadteam::DispatchKind::InPool`) at width `w` on the host class `class`: nothing is
+/// installed, the caller joins its own pool. A caller that holds the spindle group is such a
+/// worker (`spindle::with_lock` runs its closure on a pool thread, and `for_each` then reuses
+/// the group's spinning workers: 2.5 us at width 8 and 1.4 us at width 4 for an empty section,
+/// against 6.8 and 4.6 us from outside, measured on the Zen 5 below). The row of the class, in
+/// nanoseconds at widths 2, 4, 6:
+///
+/// * `x86_64-avx512`: 3.0, 3.6, 3.5 us;
+/// * `aarch64-apple`: 6.0, 11, 5.5 us;
+/// * every other class: 15 us at every width.
+///
+/// Mirrors `threadteam::DispatchCosts::for_class(class)` for builds without the `threadteam`
+/// feature (a test compares the two when it is on).
+#[cfg(any(all(feature = "rayon", not(feature = "threadteam")), test))]
+#[cfg_attr(feature = "threadteam", allow(dead_code))]
+pub(crate) fn in_pool_cost_of(class: HostClass, w: NonZeroUsize) -> Duration {
+	width_model(in_pool_anchors(class), w)
+}
+
+#[cfg(any(all(feature = "rayon", not(feature = "threadteam")), test))]
+#[cfg_attr(feature = "threadteam", allow(dead_code))]
+const fn in_pool_anchors(class: HostClass) -> [u64; 3] {
+	match class {
+		HostClass::X86_64Avx512 => [3_000, 3_600, 3_500],
+		HostClass::Aarch64Apple => [6_000, 11_000, 5_500],
+		_ => [15_000; 3],
+	}
+}
+
+/// The width model of the tables: linear between the anchors at widths 2, 4 and 6, flat below 2
+/// and above 6.
+#[cfg(any(all(feature = "rayon", not(feature = "threadteam")), test))]
+#[cfg_attr(feature = "threadteam", allow(dead_code))]
+fn width_model(anchors: [u64; 3], w: NonZeroUsize) -> Duration {
 	let w = w.get() as i64;
 	let ns = if w <= 2 {
 		anchors[0] as i64
@@ -165,10 +208,34 @@ pub(crate) fn outside_cost_of(class: HostClass, w: NonZeroUsize) -> Duration {
 	Duration::from_nanos(ns as u64)
 }
 
-/// [`outside_cost_of`] for the class of this host.
+/// Whether the calling thread is a worker of the Rayon pool, where a section of the Rayon route
+/// costs the `InPool` row and not the `Outside` one. This is the state of a caller inside
+/// `spindle::with_lock` (the benchmark harness, and every caller that holds the group around a
+/// run of factorizations), and of a faer call made from a task of a Rayon pool.
+#[cfg(feature = "rayon")]
+#[inline]
+pub(crate) fn caller_in_pool() -> bool {
+	rayon::current_thread_index().is_some()
+}
+
+/// [`outside_cost_of`] or [`in_pool_cost_of`] for the class of this host, by where the caller is.
 #[cfg(all(feature = "rayon", not(feature = "threadteam")))]
-pub(crate) fn outside_cost(w: NonZeroUsize) -> Duration {
-	outside_cost_of(HostClass::detect(), w)
+pub(crate) fn rayon_cost(w: NonZeroUsize) -> Duration {
+	if caller_in_pool() {
+		in_pool_cost_of(HostClass::detect(), w)
+	} else {
+		outside_cost_of(HostClass::detect(), w)
+	}
+}
+
+/// The cheapest [`rayon_cost`] over all widths: the model is linear between its anchors, so the
+/// cheapest width is one of them (the tables are not monotonic: the `x86_64-avx512` outside row is
+/// cheapest at 6 and above, the `aarch64-apple` in pool row at 6 too).
+#[cfg(all(feature = "rayon", not(feature = "threadteam")))]
+pub(crate) fn min_rayon_cost() -> Duration {
+	let class = HostClass::detect();
+	let anchors = if caller_in_pool() { in_pool_anchors(class) } else { outside_anchors(class) };
+	Duration::from_nanos(anchors[0].min(anchors[1]).min(anchors[2]))
 }
 
 /// Serial throughput of the GEMM kernel, nanoseconds per multiply-add of the dtype (a complex
@@ -193,8 +260,8 @@ pub mod ns_per_mac {
 	}
 }
 
-/// Serial time of one row swap of one column in the LU swap stage, nanoseconds (not measured on
-/// every class; the one value of every class): random pivot
+/// Serial time of one row swap of one column in the LU swap stage on the Apple M5 Max,
+/// nanoseconds (the `aarch64-apple` value of [`Rates::lu_swap`]; the other classes have their own): random pivot
 /// rows, columns of 64 to 1024 `f64`, cache resident, median of 0.31 to 1.0 over
 /// `m` 128 to 1024 and 16 to 128 swaps per column (Apple M5 Max, one thread; memory bound, so
 /// the same for every dtype of the same element width).
@@ -388,6 +455,10 @@ pub struct Rates {
 	pub sparse_matmul: Rate,
 	/// Rank-one Householder apply (`N == 1`), per element of the target `M*K`.
 	pub householder_rank_one: Rate,
+	/// One row swap of one column in the LU swap stage (random pivot rows, columns of 64 to 1024
+	/// elements, cache resident, one thread; memory bound, so the `c64` value is the larger
+	/// element width, not four times the `f64` one).
+	pub lu_swap: Rate,
 }
 
 const fn fmin(a: f64, b: f64) -> f64 {
@@ -421,6 +492,7 @@ impl Rates {
 			triangular_inverse: rmin(a.triangular_inverse, b.triangular_inverse),
 			sparse_matmul: rmin(a.sparse_matmul, b.sparse_matmul),
 			householder_rank_one: rmin(a.householder_rank_one, b.householder_rank_one),
+			lu_swap: rmin(a.lu_swap, b.lu_swap),
 		}
 	}
 
@@ -443,6 +515,10 @@ impl Rates {
 		// median over spmm_{f64,c64}_n{2000,4000,8000,20000}_d{4,6,8,12,16,40}
 		sparse_matmul: r(4.1315, 5.2342),
 		householder_rank_one: r(0.4783, 1.0303),
+		// Zen 5 at 2.0 GHz, one thread, a scratch probe of the swap loop: swaps of 64 to 256 rows over 768 to 960 columns, one
+		// thread: 0.98 (`f64`) and 1.30 (`c64`) ns, 1.0 at 256 rows; the 0.55 of the M5 was
+		// used for every class and made the swap stage of a 64 x 1024 LU 1.7 times too cheap
+		lu_swap: r(0.98, 1.30),
 	};
 
 	/// `aarch64-apple`: Apple M5 Max (the constants of the first calibration).
@@ -462,6 +538,7 @@ impl Rates {
 		triangular_inverse: r(0.0096, 0.0344),
 		sparse_matmul: r(1.5, 1.8),
 		householder_rank_one: r(0.212, 0.725),
+		lu_swap: r(NS_PER_SWAP, NS_PER_SWAP),
 	};
 
 	/// `generic` (every unmeasured class): per entry the smaller of the measured rows.
@@ -510,6 +587,7 @@ pub mod rate {
 		triangular_inverse,
 		sparse_matmul,
 		householder_rank_one,
+		lu_swap,
 	);
 }
 
@@ -612,6 +690,16 @@ pub(crate) fn par_pays_time(par: &crate::Par, estimate: Duration, sections: u32,
 		#[cfg(feature = "threadteam")]
 		crate::Par::Team(team) => team.pays(estimate, sections, width),
 		other => other.shape().pays(estimate, sections, width),
+	}
+}
+
+/// The kind of section the Rayon route starts on the calling thread.
+#[cfg(all(feature = "rayon", feature = "threadteam"))]
+fn rayon_kind() -> threadteam::DispatchKind {
+	if caller_in_pool() {
+		threadteam::DispatchKind::InPool
+	} else {
+		threadteam::DispatchKind::Outside
 	}
 }
 
@@ -761,9 +849,11 @@ impl ParShape {
 	///
 	/// * `Team`: the cost of the team token the shape was taken from (threadteam's
 	///   `DispatchKind::Team`, with the costs of that token's pool).
-	/// * `Rayon`: faer reaches the pool from the calling thread, so the cost is the
-	///   `Outside` cost of the host table (the default table of threadteam, or the same numbers
-	///   without the `threadteam` feature).
+	/// * `Rayon`: the cost of the Rayon route at the place the calling thread is: `InPool` when
+	///   it is a worker of the pool (a caller inside `spindle::with_lock` is one), `Outside`
+	///   otherwise (the rows of the host table of threadteam, or the same numbers without the
+	///   `threadteam` feature). The shape is read on the thread that decides, so the answer
+	///   follows the caller, not the token.
 	pub fn dispatch_cost(self, width: NonZeroUsize) -> Duration {
 		let width = width.min(NonZeroUsize::new(self.degree().max(1)).unwrap());
 		if width.get() < 2 {
@@ -775,11 +865,11 @@ impl ParShape {
 			Self::Rayon(_) => {
 				#[cfg(feature = "threadteam")]
 				{
-					host_costs().cost(threadteam::DispatchKind::Outside, width)
+					host_costs().cost(rayon_kind(), width)
 				}
 				#[cfg(not(feature = "threadteam"))]
 				{
-					outside_cost(width)
+					rayon_cost(width)
 				}
 			},
 			#[cfg(feature = "threadteam")]
@@ -800,11 +890,11 @@ impl ParShape {
 			Self::Rayon(_) => {
 				#[cfg(feature = "threadteam")]
 				{
-					host_costs().min_cost(threadteam::DispatchKind::Outside)
+					host_costs().min_cost(rayon_kind())
 				}
 				#[cfg(not(feature = "threadteam"))]
 				{
-					outside_cost(NonZeroUsize::new(2).unwrap()) // grows with the width: cheapest at 2
+					min_rayon_cost()
 				}
 			},
 			#[cfg(feature = "threadteam")]
@@ -956,7 +1046,7 @@ mod tests {
 	const M5: &Rates = &Rates::AARCH64_APPLE;
 
 	/// Every entry of a row, as `(name, Rate)`.
-	fn entries(rt: &Rates) -> [(&'static str, Rate); 15] {
+	fn entries(rt: &Rates) -> [(&'static str, Rate); 16] {
 		[
 			("gemm_mac", rt.gemm_mac),
 			("gemm_single", rt.gemm_single),
@@ -973,6 +1063,7 @@ mod tests {
 			("triangular_inverse", rt.triangular_inverse),
 			("sparse_matmul", rt.sparse_matmul),
 			("householder_rank_one", rt.householder_rank_one),
+			("lu_swap", rt.lu_swap),
 		]
 	}
 
@@ -1047,6 +1138,46 @@ mod tests {
 		assert_eq!(us(HostClass::Aarch64Apple, 12), 19_000);
 	}
 
+	#[test]
+	fn min_rayon_cost_is_the_cheapest_width() {
+		for c in HostClass::ALL {
+			let widths = |f: fn(HostClass, NonZeroUsize) -> Duration| (2..=12).map(|w| f(c, nz(w))).min().unwrap();
+			assert_eq!(widths(outside_cost_of), Duration::from_nanos(outside_anchors(c).into_iter().min().unwrap()));
+			assert_eq!(widths(in_pool_cost_of), Duration::from_nanos(in_pool_anchors(c).into_iter().min().unwrap()));
+		}
+	}
+
+	#[test]
+	fn in_pool_rows_follow_the_classes() {
+		let us = |c, w: usize| in_pool_cost_of(c, nz(w)).as_nanos();
+		assert_eq!((us(HostClass::X86_64Avx512, 2), us(HostClass::X86_64Avx512, 4), us(HostClass::X86_64Avx512, 6)), (3_000, 3_600, 3_500));
+		assert_eq!((us(HostClass::Aarch64Apple, 2), us(HostClass::Aarch64Apple, 4), us(HostClass::Aarch64Apple, 6)), (6_000, 11_000, 5_500));
+		assert_eq!(us(HostClass::Generic, 8), 15_000);
+		// a worker of the pool never pays more than a caller outside it, at any width
+		for c in HostClass::ALL {
+			for w in 2..=12 {
+				assert!(in_pool_cost_of(c, nz(w)) <= outside_cost_of(c, nz(w)), "{} width {w}", c.name());
+			}
+		}
+	}
+
+	/// The caller of a `spindle::with_lock` is a worker of the pool, so a section of its Rayon
+	/// route costs the in pool row: the QR of a `64 x 64` `c64` matrix opens its first two block
+	/// applies (23 and 18 us serial, 9 and 7 us parallel in the held group) only on this row.
+	#[cfg(feature = "rayon")]
+	#[test]
+	fn a_held_spindle_group_is_a_worker_of_the_pool() {
+		let s = ParShape::Rayon(nz(8));
+		let outside = s.dispatch_cost(nz(8));
+		assert!(!caller_in_pool());
+		let held = spindle::with_lock(8, || (caller_in_pool(), s.dispatch_cost(nz(8)), s.min_dispatch_cost()));
+		assert!(held.0);
+		assert!(held.1 <= outside && held.2 <= s.min_dispatch_cost());
+		if HostClass::detect() == HostClass::X86_64Avx512 {
+			assert!(held.1 < outside);
+		}
+	}
+
 	/// faer keeps its own `HostClass` and its own Rayon table so that it builds without the
 	/// feature; with the feature on they must agree with threadteam's.
 	#[cfg(feature = "threadteam")]
@@ -1067,6 +1198,7 @@ mod tests {
 			let costs = DispatchCosts::for_class(tt(c));
 			for w in 2..=12 {
 				assert_eq!(outside_cost_of(c, nz(w)), costs.cost(DispatchKind::Outside, nz(w)), "{} width {w}", c.name());
+				assert_eq!(in_pool_cost_of(c, nz(w)), costs.cost(DispatchKind::InPool, nz(w)), "{} width {w}", c.name());
 			}
 		}
 	}

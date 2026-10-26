@@ -437,6 +437,37 @@ fn solve_unit_lower_triangular_in_place_imp<'N, 'K, T: ComplexField>(
 	let n = N.unbound();
 	let k = K.unbound();
 	if k > 64 && n <= 128 {
+		// One flat split of the right hand sides over the budget when the whole solve pays for one
+		// section; the halving below (a join per level, each nested in the one above) is the shape
+		// rule for a sequential run.
+		#[cfg(feature = "rayon")]
+		{
+			let jobs = Ord::min(par.degree(), k.div_ceil(64));
+			if jobs >= 2
+				&& crate::utils::cost::par_pays::<T>(
+					&par,
+					n.saturating_mul(n).saturating_mul(k) / 2,
+					crate::utils::cost::rate::gemm_mac(),
+					1,
+				) {
+				crate::utils::thread::for_each_with_par(
+					par,
+					jobs,
+					rhs.as_dyn_cols_mut().par_col_partition_mut(jobs),
+					|chunk, par| {
+						make_guard!(CHUNK);
+						let width = chunk.ncols().bind(CHUNK);
+						solve_unit_lower_triangular_in_place_imp(
+							tril,
+							conj_lhs,
+							chunk.as_col_shape_mut(width),
+							par,
+						)
+					},
+				);
+				return;
+			}
+		}
 		// A split of the right hand sides, taken for every `par` (it is a shape rule, short
 		// triangles against many columns); only the join is a cost: one section, the unit a
 		// multiply-add of the solve, `n*n*k/2`, at the GEMM rate.
@@ -531,6 +562,34 @@ fn solve_lower_triangular_in_place_imp<'N, 'K, T: ComplexField>(
 	let n = N.unbound();
 	let k = K.unbound();
 	if k > 64 && n <= 128 {
+		#[cfg(feature = "rayon")]
+		{
+			let jobs = Ord::min(par.degree(), k.div_ceil(64));
+			if jobs >= 2
+				&& crate::utils::cost::par_pays::<T>(
+					&par,
+					n.saturating_mul(n).saturating_mul(k) / 2,
+					crate::utils::cost::rate::gemm_mac(),
+					1,
+				) {
+				crate::utils::thread::for_each_with_par(
+					par,
+					jobs,
+					rhs.as_dyn_cols_mut().par_col_partition_mut(jobs),
+					|chunk, par| {
+						make_guard!(CHUNK);
+						let width = chunk.ncols().bind(CHUNK);
+						solve_lower_triangular_in_place_imp(
+							tril,
+							conj_lhs,
+							chunk.as_col_shape_mut(width),
+							par,
+						)
+					},
+				);
+				return;
+			}
+		}
 		// A split of the right hand sides, taken for every `par` (it is a shape rule, short
 		// triangles against many columns); only the join is a cost: one section, the unit a
 		// multiply-add of the solve, `n*n*k/2`, at the GEMM rate.

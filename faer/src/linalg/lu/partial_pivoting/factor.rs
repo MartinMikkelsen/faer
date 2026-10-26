@@ -87,11 +87,15 @@ fn lu_in_place_unblocked<I: Index, T: ComplexField>(
 /// product, each a join; the second runs on caches the first filled or evicted, so the two
 /// are counted as the cold-region rule of the thresholds design (provisional).
 const TRAILING_UPDATE_SECTIONS: u32 = 2;
-/// Sections of the swap stage of one level: a split of the left and right blocks over the
-/// parallelism, then a split of the columns of each; memory bound, so a section costs more
-/// than its share of the work (provisional, from the thresholds design).
+/// Sections of the swap stage of one level when both the columns left of the panel and the
+/// columns right of it are swapped: a split of the two blocks over the parallelism, then a
+/// split of the columns of each; memory bound, so a section costs more than its share of the
+/// work (provisional, from the thresholds design).
 const SWAP_STAGE_SECTIONS: u32 = 4;
-use crate::utils::cost::{NS_PER_SWAP, gemm_ns_per_mac, serial_time};
+/// Sections of the swap stage when one side holds every column (the first panel of a wide
+/// matrix, the last of a tall one): one split of the columns over the whole budget.
+const SWAP_ONE_SIDE_SECTIONS: u32 = 1;
+use crate::utils::cost::{gemm_ns_per_mac, rate, serial_time};
 
 pub use crate::utils::cost::ParThreshold;
 
@@ -135,13 +139,14 @@ fn swap_stage_pays<T: ComplexField>(
 	m: usize,
 	n: usize,
 	cols: usize,
+	one_side: bool,
 ) -> bool {
 	match par_threshold {
 		ParThreshold::Never => false,
 		ParThreshold::Fixed(floor) => m.saturating_mul(cols) > floor,
 		ParThreshold::Derived => shape.pays_full(
-			serial_time(n.saturating_mul(cols), NS_PER_SWAP),
-			SWAP_STAGE_SECTIONS,
+			serial_time(n.saturating_mul(cols), rate::lu_swap().of::<T>()),
+			if one_side { SWAP_ONE_SIDE_SECTIONS } else { SWAP_STAGE_SECTIONS },
 		),
 	}
 }
@@ -248,6 +253,7 @@ pub(crate) fn lu_in_place_recursion<I: Index, T: ComplexField>(
 		m,
 		n,
 		ncols - n,
+		start == 0 || end == ncols,
 	) {
 		par
 	} else {
@@ -462,15 +468,24 @@ mod tests {
 		let seq = ParShape::Seq;
 		// sequential never pays, whatever the size
 		assert!(!trailing_update_pays::<f64>(seq, ParThreshold::Derived, 4096, 4096, 256));
-		assert!(!swap_stage_pays::<f64>(seq, ParThreshold::Derived, 4096, 256, 4096));
+		assert!(!swap_stage_pays::<f64>(seq, ParThreshold::Derived, 4096, 256, 4096, false));
 		#[cfg(feature = "rayon")]
 		{
 			let par = ParShape::Rayon(NonZeroUsize::new(6).unwrap());
 			// tiny regions stay serial, huge ones go parallel
 			assert!(!trailing_update_pays::<f64>(par, ParThreshold::Derived, 16, 16, 8));
 			assert!(trailing_update_pays::<f64>(par, ParThreshold::Derived, 2048, 2048, 128));
-			assert!(!swap_stage_pays::<f64>(par, ParThreshold::Derived, 64, 16, 48));
-			assert!(swap_stage_pays::<f64>(par, ParThreshold::Derived, 4096, 256, 4096));
+			assert!(!swap_stage_pays::<f64>(par, ParThreshold::Derived, 64, 16, 48, false));
+			assert!(swap_stage_pays::<f64>(par, ParThreshold::Derived, 4096, 256, 4096, false));
+			// the swap stage of a 64 x 1024 matrix (64 swaps over 960 columns, every column on
+			// one side: one section) pays at the widths of the benchmark, for both dtypes; it
+			// measured 60 us (`f64`) and 80 us (`c64`) serial against 6 us of dispatch. The same
+			// region counted as the two sided split (four sections) is what kept it serial.
+			for w in [4, 8] {
+				let par = ParShape::Rayon(NonZeroUsize::new(w).unwrap());
+				assert!(swap_stage_pays::<f64>(par, ParThreshold::Derived, 64, 64, 960, true), "f64 {w}");
+				assert!(swap_stage_pays::<c64>(par, ParThreshold::Derived, 64, 64, 960, true), "c64 {w}");
+			}
 			// a complex trailing update reaches the floor at fewer elements than a real one
 			let (r, c) = (160, 160);
 			let real = trailing_update_pays::<f64>(par, ParThreshold::Derived, r, c, 32);
@@ -479,8 +494,51 @@ mod tests {
 			// an explicit floor restores the fixed rule and `usize::MAX` disables
 			assert!(trailing_update_pays::<f64>(par, ParThreshold::Fixed(1), 64, 64, 8));
 			assert!(!trailing_update_pays::<f64>(par, ParThreshold::Never, 4096, 4096, 256));
-			assert!(!swap_stage_pays::<f64>(par, ParThreshold::Never, 4096, 256, 4096));
+			assert!(!swap_stage_pays::<f64>(par, ParThreshold::Never, 4096, 256, 4096, false));
 		}
+	}
+
+	/// The wide shape of the merge gate (`64 x 1024`): every column of the swap stage is on one
+	/// side (one section), and the right block goes through the flat split of the triangular
+	/// solve, both inside a held spindle group (a worker of the pool) and from outside it.
+	#[cfg(feature = "rayon")]
+	#[test]
+	fn wide_matrix_parallel_agrees_with_serial() {
+		fn check<T: ComplexField<Real = f64>>(m: usize, n: usize) {
+			let a = Mat::<T>::from_fn(m, n, |i, j| {
+				let h = (i * 2654435761usize).wrapping_add(j * 40503) % 1009;
+				from_f64::<T>(h as f64 / 504.0 - 1.0)
+			});
+			let run = |mut par: Par| {
+				let mut lu = a.clone();
+				let mut perm = vec![0usize; m];
+				let mut perm_inv = vec![0usize; m];
+				let mut mem = MemBuffer::new(lu_in_place_scratch::<usize, T>(m, n, par.shape(), default()));
+				lu_in_place(lu.as_mut(), &mut perm, &mut perm_inv, par.reborrow(), MemStack::new(&mut mem), default());
+				(lu, perm)
+			};
+			let (want, perm_want) = run(Par::Seq);
+			for threads in [4, 8] {
+				for held in [false, true] {
+					let (got, perm_got) = if held {
+						spindle::with_lock(threads, || run(Par::rayon(threads)))
+					} else {
+						run(Par::rayon(threads))
+					};
+					assert_eq!(perm_want, perm_got, "{m}x{n} {threads} threads, held {held}");
+					let mut d: f64 = 0.0;
+					for j in 0..n {
+						for i in 0..m {
+							d = d.max((want[(i, j)].clone() - got[(i, j)].clone()).abs());
+						}
+					}
+					assert!(d < 1e-9, "{m}x{n} {threads} threads, held {held}: {d}");
+				}
+			}
+		}
+		check::<f64>(64, 1024);
+		check::<c64>(64, 1024);
+		check::<f64>(48, 700);
 	}
 
 	#[cfg(feature = "rayon")]
