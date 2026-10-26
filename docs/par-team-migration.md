@@ -128,7 +128,8 @@ a region runs in parallel when `estimate >= PAYS * sections * dispatch_cost(widt
 * The **estimate** is units of work times the serial throughput of the kernel family
   (`utils::cost::rate`, `Rate { real, cplx }` in ns per unit: GEMM per multiply-add, the
   reductions per element of the trailing block, matvec per matrix element, the rank-one Householder
-  apply per target element; `f32` and `c32` are half of `f64` and `c64`). One constant per family,
+  apply per target element, the divide and conquer solves per `m^2`, the triangular inverse per `m^3`, the
+  sparse product per multiply-add; `f32` and `c32` are half of `f64` and `c64`). One constant per family,
   measured with one thread (table in the threadteam `thresholds.md`, section 2.3).
 * **`sections`** is the real number of parallel dispatches the region performs, read from the
   code of the gate and never tuned: one for a fused step, two for a step that runs two products
@@ -147,6 +148,23 @@ a region runs in parallel when `estimate >= PAYS * sections * dispatch_cost(widt
   the Householder reductions, the chunk that must cover the unit block of the row split, and the
   split of the right hand sides of a triangular solve (`k > 64 && n <= 128`, taken for any
   parallelism; only its join is a cost).
+
+* **A join is a section of width 2.** `join_raw` splits the budget into two halves; the dispatch of that split
+  is the cost of the shape at width 2 (team 3.0 us, plain outside 14 us on the M5 table), not at the full
+  degree. `utils::cost::join_pays(par, units, rate, sections)` decides every join of the library this way: the
+  recursion and merge joins of the divide and conquer SVD and EVD, the triangular inverse, the triangular
+  products and the split triangular solve. A flat section over all of the members (a column split, the sparse
+  numeric product, the fused steps) keeps the full degree.
+* **Recursions** (`halves_pays`): the work of a join of size `n` is the two subproblems, `2 (n/2)^power` units of
+  the rate of a whole serial solve of size `n / 2` (`power` 2 for the divide and conquer solves, 3 for the
+  triangular inverse); the merge after the join is not in it.
+* **The block apply column split** is estimated as `products * M * N * K` multiply-adds at the GEMM rate plus
+  `M * K` target elements at the rank one apply rate (`block_apply_estimate`).
+* **A sequential token never pays**: `par_pays`, `join_pays` and `ParThreshold::region_pays` (not `Fixed`)
+  return false before computing the estimate.
+* **Norms, `zip`, elementwise kernels** have no parallel region, so they have no gate.
+* **Probe feature `par-trace`** (`utils::cost::trace`): records site, dimensions, units, sections, estimate,
+  dispatch cost and decision of every gate; off by default.
 
 ## API break list entries for the floors
 

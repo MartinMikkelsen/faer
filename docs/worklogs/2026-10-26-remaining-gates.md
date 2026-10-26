@@ -39,7 +39,7 @@ tensor4all/threadteam-rs `docs/design/thresholds.md` (section 3.4). Code: commit
 | triangular solve join (two sites) | no floor (split for `k > 64 && n <= 128` always) | `n*n*k/2`, 1 |
 | LLT, LDLT, Bunch-Kaufman with partial pivoting | no gate of their own | the product and solve gates above |
 
-Left without a work gate (not listed in the design): the divide and conquer joins of `bidiag_svd.rs` and
+Left without a work gate at `6788b20` (gated afterwards, see [2026-10-26-qr128-and-join-gates.md](2026-10-26-qr128-and-join-gates.md); the norms and `zip` have no parallel region): the divide and conquer joins of `bidiag_svd.rs` and
 `tridiag_evd.rs`, `triangular_inverse.rs`, the norm reductions and `zip`, `sparse/linalg/matmul.rs`.
 
 ## Constants
@@ -74,7 +74,7 @@ EVD and Cholesky unchanged within 4 percent. **QR 128 on a team is worse than be
 
 ## Left
 
-- Divide and conquer joins, triangular inverse, norm reductions: no work gate (above).
+- Divide and conquer joins, triangular inverse, sparse product: gated in [2026-10-26-qr128-and-join-gates.md](2026-10-26-qr128-and-join-gates.md); norm reductions and `zip`: no parallel region.
 - QR 128 on a team (above); the f32 and c32 rates of the families other than GEMM are halved, not measured.
 - The Hessenberg constant comes from busy processes. Acceptance is on a quiet Linux host, including x86_64
   (the x86_64 private GEMM route compiles but is not measured here).
