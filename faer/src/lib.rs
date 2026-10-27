@@ -154,12 +154,19 @@
 //! using [`Mat::self_adjoint_eigenvalues`] (nondecreasing order),
 //! [`Mat::eigenvalues`] with the same conditions described above.
 //!
+//! # parallelism
+//! there is no process wide parallelism setting. Every function that can run in parallel takes a
+//! [`Par`] argument, the high level ones included ([`Mat::svd`], [`Mat::llt`],
+//! [`Mat::singular_values`], the `solve` family of [`linalg::solvers::Solve`], ...). Pass
+//! [`Par::Seq`] for sequential execution, or [`Par::rayon`] for the global rayon threadpool. The
+//! operator overloads (`&a * &b`, `&a + &b`, ...) have no room for the argument and always run
+//! sequentially; use [`linalg::matmul::matmul`] for a parallel product.
+//!
 //! # crate features
 //!
 //! - `std`: enabled by default. links with the standard library to enable
 //!   additional features such as cpu feature detection at runtime
-//! - `rayon`: enabled by default. enables the `rayon` parallel backend and
-//!   enables global parallelism by default
+//! - `rayon`: enabled by default. enables the `rayon` parallel backend
 //! - `npy`: enables conversions to/from numpy's matrix file format
 //! - `perf-warn`: produces performance warnings when matrix operations are
 //!   called with suboptimal
@@ -188,7 +195,6 @@ macro_rules! repeat_n {
 	};
 }
 use core::num::NonZeroUsize;
-use core::sync::atomic::AtomicUsize;
 use equator::{assert, debug_assert};
 use faer_traits::*;
 /// shorthand for `<_ as Auto::<T>>::auto()`
@@ -924,17 +930,158 @@ impl Conj {
 		}
 	}
 }
-/// determines the parallelization configuration
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Par {
+/// determines the parallelization configuration, and carries the right to execute with it
+///
+/// `Par` is neither `Copy` nor `Clone`: a `Team` owns exclusive authority over reserved
+/// threads, so a duplicate could hand the same threads to two concurrent children. Every
+/// function that runs work takes `Par` by value; a caller that needs another phase lends the
+/// parallelism with [`Par::reborrow`], and concurrent children are created by splitting
+/// (see `utils::thread::split`), never by copying. Queries that only need the size (workspace
+/// requirements, thresholds) use [`ParShape`] or [`Par::degree`].
+///
+/// ```
+/// use faer::{Par, ParShape};
+/// // sizes are plain values
+/// fn is_copy<T: Copy>() {}
+/// is_copy::<ParShape>();
+/// // phases lend, they do not copy
+/// fn phase(_: Par<'_>) {}
+/// let mut par = Par::Seq;
+/// phase(par.reborrow());
+/// phase(par);
+/// ```
+///
+/// Not `Copy`:
+///
+/// ```compile_fail
+/// fn is_copy<T: Copy>() {}
+/// is_copy::<faer::Par<'static>>();
+/// ```
+///
+/// Not `Clone`:
+///
+/// ```compile_fail
+/// fn is_clone<T: Clone>() {}
+/// is_clone::<faer::Par<'static>>();
+/// ```
+///
+/// A phase that takes the parallelism consumes it:
+///
+/// ```compile_fail
+/// fn phase(_: faer::Par<'_>) {}
+/// let par = faer::Par::Seq;
+/// phase(par);
+/// phase(par);
+/// ```
+///
+/// Concurrent children cannot both use the parent:
+///
+/// ```compile_fail
+/// fn phase(_: faer::Par<'_>) {}
+/// let par = faer::Par::Seq;
+/// faer::utils::thread::join_raw(|_| phase(par), |_| phase(par), faer::Par::Seq);
+/// ```
+#[derive(Debug)]
+pub enum Par<'team> {
 	/// sequential, non portable across different platforms
 	Seq,
 	/// parallelized using the global rayon threadpool, non portable across
 	/// different platforms
 	#[cfg(feature = "rayon")]
 	Rayon(NonZeroUsize),
+	/// experimental: parallelized on the reserved members of a threadteam team. The value is
+	/// the exclusive authority over them for as long as it lives; the number of participants is
+	/// the size of the team.
+	#[cfg(feature = "threadteam")]
+	Team(threadteam::TeamExec<'team>),
+	#[cfg(not(feature = "threadteam"))]
+	#[doc(hidden)]
+	__Lifetime(core::convert::Infallible, core::marker::PhantomData<&'team ()>),
 }
-impl Par {
+/// the shape of a [`Par`]: which kind of parallelism and how many threads, without the
+/// right to run anything. `Copy`, so workspace queries and thresholds can use it freely; it
+/// cannot be passed to any function that executes work.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ParShape {
+	/// sequential
+	Seq,
+	/// the global rayon threadpool with this many threads
+	#[cfg(feature = "rayon")]
+	Rayon(NonZeroUsize),
+	/// a threadteam team of this many participants, with the dispatch costs of the pool it
+	/// belongs to (see [`ParShape::dispatch_cost`])
+	#[cfg(feature = "threadteam")]
+	Team(NonZeroUsize, threadteam::DispatchCosts),
+}
+impl ParShape {
+	/// sequential
+	#[inline]
+	pub const fn seq() -> Self {
+		Self::Seq
+	}
+
+	/// `Rayon(nthreads)`, or `Rayon(rayon::current_num_threads())` when `nthreads` is zero
+	#[inline]
+	#[cfg(feature = "rayon")]
+	pub fn rayon(nthreads: usize) -> Self {
+		match Par::rayon(nthreads) {
+			Par::Rayon(n) => Self::Rayon(n),
+			_ => unreachable!(),
+		}
+	}
+
+	/// `Team(nthreads)` with the host default dispatch costs, zero treated as one
+	#[inline]
+	#[cfg(feature = "threadteam")]
+	pub fn team(nthreads: usize) -> Self {
+		Self::Team(
+			NonZeroUsize::new(nthreads.max(1)).unwrap(),
+			threadteam::DispatchCosts::host_default(),
+		)
+	}
+
+	/// the number of threads that should ideally execute an operation of this shape
+	#[inline]
+	pub fn degree(self) -> usize {
+		match self {
+			Self::Seq => 1,
+			#[cfg(feature = "rayon")]
+			Self::Rayon(n) => n.get(),
+			#[cfg(feature = "threadteam")]
+			Self::Team(n, _) => n.get(),
+		}
+	}
+}
+impl Par<'_> {
+	/// lends the parallelism for one phase. The parent is exclusively borrowed and unusable
+	/// while the lent value lives, so a phase sequence never holds the authority twice.
+	#[inline]
+	pub fn reborrow(&mut self) -> Par<'_> {
+		match self {
+			Par::Seq => Par::Seq,
+			#[cfg(feature = "rayon")]
+			Par::Rayon(n) => Par::Rayon(*n),
+			#[cfg(feature = "threadteam")]
+			Par::Team(team) => Par::Team(team.reborrow()),
+			#[cfg(not(feature = "threadteam"))]
+			Par::__Lifetime(never, _) => match *never {},
+		}
+	}
+
+	/// the shape of this parallelism, without the right to execute with it
+	#[inline]
+	pub fn shape(&self) -> ParShape {
+		match self {
+			Par::Seq => ParShape::Seq,
+			#[cfg(feature = "rayon")]
+			Par::Rayon(n) => ParShape::Rayon(*n),
+			#[cfg(feature = "threadteam")]
+			Par::Team(team) => ParShape::Team(team.size(), team.dispatch_costs()),
+			#[cfg(not(feature = "threadteam"))]
+			Par::__Lifetime(never, _) => match *never {},
+		}
+	}
+
 	/// returns `Par::Rayon(nthreads)` if `nthreads` is non-zero, or
 	/// `Par::Rayon(rayon::current_num_threads())` otherwise
 	#[inline]
@@ -953,7 +1100,7 @@ impl Par {
 	/// given parallelism
 	#[inline]
 	pub fn degree(&self) -> usize {
-		utils::thread::parallelism_degree(*self)
+		utils::thread::parallelism_degree(self)
 	}
 }
 #[allow(non_camel_case_types)]
@@ -1038,8 +1185,8 @@ mod internal_prelude {
 	}
 	pub(crate) use self::{unzip as uz, zip as z};
 	pub(crate) use crate::{
-		Accum, Conj, ContiguousBwd, ContiguousFwd, DiagStatus, Par, Shape,
-		Stride, Unbind, make_guard, unzip, zip,
+		Accum, Conj, ContiguousBwd, ContiguousFwd, DiagStatus, Par, ParShape,
+		Shape, Stride, Unbind, make_guard, unzip, zip,
 	};
 	pub use dyn_stack::{MemStack, StackReq, alloc as alloca};
 	pub use equator::{
@@ -1067,7 +1214,7 @@ pub mod prelude {
 	pub use super::linalg::solvers::{DenseSolve, Solve, SolveLstsq};
 	#[cfg(feature = "sparse")]
 	pub use super::prelude_sp::*;
-	pub use super::{Par, Scale, c32, c64, col, mat, row, unzip, zip};
+	pub use super::{Par, ParShape, Scale, c32, c64, col, mat, row, unzip, zip};
 	pub use col::{Col, ColMut, ColRef};
 	pub use mat::{Mat, MatMut, MatRef};
 	pub use reborrow::{IntoConst, Reborrow, ReborrowMut};
@@ -1102,50 +1249,6 @@ impl<T> Scale<T> {
 	#[inline(always)]
 	pub fn from_mut(value: &mut T) -> &mut Self {
 		unsafe { &mut *(value as *mut T as *mut Self) }
-	}
-}
-/// 0: disabled
-/// 1: `Seq`
-/// n >= 2: `Rayon(n - 2)`
-///
-/// default: `Rayon(0)`
-static GLOBAL_PARALLELISM: AtomicUsize = {
-	#[cfg(all(not(miri), feature = "rayon"))]
-	{
-		AtomicUsize::new(2)
-	}
-	#[cfg(not(all(not(miri), feature = "rayon")))]
-	{
-		AtomicUsize::new(1)
-	}
-};
-/// causes functions that access global parallelism settings to panic.
-pub fn disable_global_parallelism() {
-	GLOBAL_PARALLELISM.store(0, core::sync::atomic::Ordering::Relaxed);
-}
-/// sets the global parallelism settings.
-pub fn set_global_parallelism(par: Par) {
-	let value = match par {
-		Par::Seq => 1,
-		#[cfg(feature = "rayon")]
-		Par::Rayon(n) => n.get().saturating_add(2),
-	};
-	GLOBAL_PARALLELISM.store(value, core::sync::atomic::Ordering::Relaxed);
-}
-/// gets the global parallelism settings.
-///
-/// # panics
-/// panics if global parallelism is disabled.
-#[track_caller]
-pub fn get_global_parallelism() -> Par {
-	let value = GLOBAL_PARALLELISM.load(core::sync::atomic::Ordering::Relaxed);
-	match value {
-		0 => panic!("Global parallelism is disabled."),
-		1 => Par::Seq,
-		#[cfg(feature = "rayon")]
-		n => Par::rayon(n - 2),
-		#[cfg(not(feature = "rayon"))]
-		_ => unreachable!(),
 	}
 }
 #[doc(hidden)]

@@ -1,4 +1,3 @@
-use crate::get_global_parallelism;
 use crate::internal_prelude_sp::*;
 use crate::linalg::solvers::{ShapeCore, SolveCore, SolveLstsqCore};
 use linalg_sp::{LltError, LuError};
@@ -96,6 +95,7 @@ impl<I: Index, T: ComplexField> Llt<I, T> {
 		symbolic: SymbolicLlt<I>,
 		mat: SparseColMatRef<'_, I, T>,
 		side: Side,
+		mut par: Par<'_>,
 	) -> Result<Self, LltError> {
 		let len_val = symbolic.inner.len_val();
 		let mut numeric = alloc::vec::Vec::new();
@@ -103,16 +103,16 @@ impl<I: Index, T: ComplexField> Llt<I, T> {
 			.try_reserve_exact(len_val)
 			.map_err(|_| FaerError::OutOfMemory)?;
 		numeric.resize(len_val, zero::<T>());
-		let par = get_global_parallelism();
+		let par_shape = par.shape();
 		symbolic.inner.factorize_numeric_llt::<T>(
 			&mut numeric,
 			mat,
 			side,
 			Default::default(),
-			par,
+			par.reborrow(),
 			MemStack::new(&mut MemBuffer::try_new(
 				symbolic.inner.factorize_numeric_llt_scratch::<T>(
-					par,
+					par_shape,
 					Default::default(),
 				),
 			)?),
@@ -129,17 +129,19 @@ impl<I: Index, T: ComplexField> Lu<I, T> {
 	pub fn try_new_with_symbolic(
 		symbolic: SymbolicLu<I>,
 		mat: SparseColMatRef<'_, I, T>,
+		mut par: Par<'_>,
 	) -> Result<Self, LuError> {
 		let mut numeric = linalg_sp::lu::NumericLu::new();
-		let par = get_global_parallelism();
+		let par_shape = par.shape();
 		symbolic.inner.factorize_numeric_lu::<T>(
 			&mut numeric,
 			mat,
-			par,
+			par.reborrow(),
 			MemStack::new(&mut MemBuffer::try_new(
-				symbolic
-					.inner
-					.factorize_numeric_lu_scratch::<T>(par, Default::default()),
+				symbolic.inner.factorize_numeric_lu_scratch::<T>(
+					par_shape,
+					Default::default(),
+				),
 			)?),
 			Default::default(),
 		)?;
@@ -154,6 +156,7 @@ impl<I: Index, T: ComplexField> Qr<I, T> {
 	pub fn try_new_with_symbolic(
 		symbolic: SymbolicQr<I>,
 		mat: SparseColMatRef<'_, I, T>,
+		mut par: Par<'_>,
 	) -> Result<Self, FaerError> {
 		let len_val = symbolic.inner.len_val();
 		let len_idx = symbolic.inner.len_idx();
@@ -167,16 +170,17 @@ impl<I: Index, T: ComplexField> Qr<I, T> {
 			.try_reserve_exact(len_idx)
 			.map_err(|_| FaerError::OutOfMemory)?;
 		indices.resize(len_idx, I::truncate(0));
-		let par = get_global_parallelism();
+		let par_shape = par.shape();
 		symbolic.inner.factorize_numeric_qr::<T>(
 			&mut indices,
 			&mut numeric,
 			mat,
-			par,
+			par.reborrow(),
 			MemStack::new(&mut MemBuffer::try_new(
-				symbolic
-					.inner
-					.factorize_numeric_qr_scratch::<T>(par, Default::default()),
+				symbolic.inner.factorize_numeric_qr_scratch::<T>(
+					par_shape,
+					Default::default(),
+				),
 			)?),
 			Default::default(),
 		);
@@ -222,8 +226,13 @@ impl<I: Index, T: ComplexField> ShapeCore for Lu<I, T> {
 }
 impl<I: Index, T: ComplexField> SolveCore<T> for Llt<I, T> {
 	#[track_caller]
-	fn solve_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let par = get_global_parallelism();
+	fn solve_in_place_with_conj(
+		&self,
+		conj: Conj,
+		rhs: MatMut<'_, T>,
+		mut par: Par<'_>,
+	) {
+		let par_shape = par.shape();
 		let rhs_ncols = rhs.ncols();
 		linalg_sp::cholesky::LltRef::<'_, I, T>::new(
 			&self.symbolic.inner,
@@ -232,11 +241,11 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Llt<I, T> {
 		.solve_in_place_with_conj(
 			conj,
 			rhs,
-			par,
+			par.reborrow(),
 			MemStack::new(&mut MemBuffer::new(
 				self.symbolic
 					.inner
-					.solve_in_place_scratch::<T>(rhs_ncols, par),
+					.solve_in_place_scratch::<T>(rhs_ncols, par_shape),
 			)),
 		);
 	}
@@ -246,8 +255,9 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Llt<I, T> {
 		&self,
 		conj: Conj,
 		rhs: MatMut<'_, T>,
+		mut par: Par<'_>,
 	) {
-		let par = get_global_parallelism();
+		let par_shape = par.shape();
 		let rhs_ncols = rhs.ncols();
 		linalg_sp::cholesky::LltRef::<'_, I, T>::new(
 			&self.symbolic.inner,
@@ -256,19 +266,24 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Llt<I, T> {
 		.solve_in_place_with_conj(
 			conj.compose(Conj::Yes),
 			rhs,
-			par,
+			par.reborrow(),
 			MemStack::new(&mut MemBuffer::new(
 				self.symbolic
 					.inner
-					.solve_in_place_scratch::<T>(rhs_ncols, par),
+					.solve_in_place_scratch::<T>(rhs_ncols, par_shape),
 			)),
 		);
 	}
 }
 impl<I: Index, T: ComplexField> SolveCore<T> for Qr<I, T> {
 	#[track_caller]
-	fn solve_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let par = get_global_parallelism();
+	fn solve_in_place_with_conj(
+		&self,
+		conj: Conj,
+		rhs: MatMut<'_, T>,
+		mut par: Par<'_>,
+	) {
+		let par_shape = par.shape();
 		let rhs_ncols = rhs.ncols();
 		unsafe {
 			linalg_sp::qr::QrRef::<'_, I, T>::new_unchecked(
@@ -280,11 +295,11 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Qr<I, T> {
 		.solve_in_place_with_conj(
 			conj,
 			rhs,
-			par,
+			par.reborrow(),
 			MemStack::new(&mut MemBuffer::new(
 				self.symbolic
 					.inner
-					.solve_in_place_scratch::<T>(rhs_ncols, par),
+					.solve_in_place_scratch::<T>(rhs_ncols, par_shape),
 			)),
 		);
 	}
@@ -294,9 +309,11 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Qr<I, T> {
 		&self,
 		conj: Conj,
 		rhs: MatMut<'_, T>,
+		par: Par<'_>,
 	) {
 		_ = conj;
 		_ = rhs;
+		_ = par;
 		panic!(
 			"the sparse QR decomposition doesn't support \
 			 solve_transpose.\nconsider using the sparse LU or Cholesky \
@@ -306,8 +323,13 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Qr<I, T> {
 }
 impl<I: Index, T: ComplexField> SolveLstsqCore<T> for Qr<I, T> {
 	#[track_caller]
-	fn solve_lstsq_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let par = get_global_parallelism();
+	fn solve_lstsq_in_place_with_conj(
+		&self,
+		conj: Conj,
+		rhs: MatMut<'_, T>,
+		mut par: Par<'_>,
+	) {
+		let par_shape = par.shape();
 		let rhs_ncols = rhs.ncols();
 		unsafe {
 			linalg_sp::qr::QrRef::<'_, I, T>::new_unchecked(
@@ -319,19 +341,24 @@ impl<I: Index, T: ComplexField> SolveLstsqCore<T> for Qr<I, T> {
 		.solve_in_place_with_conj(
 			conj,
 			rhs,
-			par,
+			par.reborrow(),
 			MemStack::new(&mut MemBuffer::new(
 				self.symbolic
 					.inner
-					.solve_in_place_scratch::<T>(rhs_ncols, par),
+					.solve_in_place_scratch::<T>(rhs_ncols, par_shape),
 			)),
 		);
 	}
 }
 impl<I: Index, T: ComplexField> SolveCore<T> for Lu<I, T> {
 	#[track_caller]
-	fn solve_in_place_with_conj(&self, conj: Conj, rhs: MatMut<'_, T>) {
-		let par = get_global_parallelism();
+	fn solve_in_place_with_conj(
+		&self,
+		conj: Conj,
+		rhs: MatMut<'_, T>,
+		mut par: Par<'_>,
+	) {
+		let par_shape = par.shape();
 		let rhs_ncols = rhs.ncols();
 
 		linalg_sp::lu::LuRef::<'_, I, T>::new_unchecked(
@@ -341,11 +368,11 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Lu<I, T> {
 		.solve_in_place_with_conj(
 			conj,
 			rhs,
-			par,
+			par.reborrow(),
 			MemStack::new(&mut MemBuffer::new(
 				self.symbolic
 					.inner
-					.solve_in_place_scratch::<T>(rhs_ncols, par),
+					.solve_in_place_scratch::<T>(rhs_ncols, par_shape),
 			)),
 		);
 	}
@@ -355,8 +382,9 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Lu<I, T> {
 		&self,
 		conj: Conj,
 		rhs: MatMut<'_, T>,
+		mut par: Par<'_>,
 	) {
-		let par = get_global_parallelism();
+		let par_shape = par.shape();
 		let rhs_ncols = rhs.ncols();
 
 		linalg_sp::lu::LuRef::<'_, I, T>::new_unchecked(
@@ -366,11 +394,11 @@ impl<I: Index, T: ComplexField> SolveCore<T> for Lu<I, T> {
 		.solve_transpose_in_place_with_conj(
 			conj,
 			rhs,
-			par,
+			par.reborrow(),
 			MemStack::new(&mut MemBuffer::new(
-				self.symbolic
-					.inner
-					.solve_transpose_in_place_scratch::<T>(rhs_ncols, par),
+				self.symbolic.inner.solve_transpose_in_place_scratch::<T>(
+					rhs_ncols, par_shape,
+				),
 			)),
 		);
 	}
@@ -392,6 +420,7 @@ impl<
 	pub fn sp_solve_lower_triangular_in_place(
 		&self,
 		mut rhs: impl AsMatMut<T = C::Canonical, Rows = usize>,
+		par: Par<'_>,
 	) {
 		let this = self.rb().canonical();
 		let conj = if C::IS_CANONICAL { Conj::No } else { Conj::Yes };
@@ -399,7 +428,7 @@ impl<
 			this,
 			conj,
 			rhs.as_mat_mut().as_dyn_cols_mut(),
-			get_global_parallelism(),
+			par,
 		);
 	}
 
@@ -414,6 +443,7 @@ impl<
 	pub fn sp_solve_upper_triangular_in_place(
 		&self,
 		mut rhs: impl AsMatMut<T = C::Canonical, Rows = usize>,
+		par: Par<'_>,
 	) {
 		let this = self.rb().canonical();
 		let conj = if C::IS_CANONICAL { Conj::No } else { Conj::Yes };
@@ -421,7 +451,7 @@ impl<
 			this,
 			conj,
 			rhs.as_mat_mut().as_dyn_cols_mut(),
-			get_global_parallelism(),
+			par,
 		);
 	}
 
@@ -436,6 +466,7 @@ impl<
 	pub fn sp_solve_unit_lower_triangular_in_place(
 		&self,
 		mut rhs: impl AsMatMut<T = C::Canonical, Rows = usize>,
+		par: Par<'_>,
 	) {
 		let this = self.rb().canonical();
 		let conj = if C::IS_CANONICAL { Conj::No } else { Conj::Yes };
@@ -443,7 +474,7 @@ impl<
 			this,
 			conj,
 			rhs.as_mat_mut().as_dyn_cols_mut(),
-			get_global_parallelism(),
+			par,
 		);
 	}
 
@@ -458,6 +489,7 @@ impl<
 	pub fn sp_solve_unit_upper_triangular_in_place(
 		&self,
 		mut rhs: impl AsMatMut<T = C::Canonical, Rows = usize>,
+		par: Par<'_>,
 	) {
 		let this = self.rb().canonical();
 		let conj = if C::IS_CANONICAL { Conj::No } else { Conj::Yes };
@@ -465,7 +497,7 @@ impl<
 			this,
 			conj,
 			rhs.as_mat_mut().as_dyn_cols_mut(),
-			get_global_parallelism(),
+			par,
 		);
 	}
 }
@@ -480,27 +512,40 @@ impl<
 	/// accessed
 	#[track_caller]
 	#[doc(alias = "sp_llt")]
-	pub fn sp_cholesky(&self, side: Side) -> Result<Llt<I, T>, LltError> {
+	pub fn sp_cholesky(
+		&self,
+		side: Side,
+		par: Par<'_>,
+	) -> Result<Llt<I, T>, LltError> {
 		let this = self.rb();
 		Llt::try_new_with_symbolic(
 			SymbolicLlt::try_new(this.symbolic(), side)?,
 			this,
 			side,
+			par,
 		)
 	}
 
 	/// returns the $LU$ decomposition of `self` with partial (row) pivoting
 	#[track_caller]
-	pub fn sp_lu(&self) -> Result<Lu<I, T>, LuError> {
+	pub fn sp_lu(&self, par: Par<'_>) -> Result<Lu<I, T>, LuError> {
 		let this = self.rb();
-		Lu::try_new_with_symbolic(SymbolicLu::try_new(this.symbolic())?, this)
+		Lu::try_new_with_symbolic(
+			SymbolicLu::try_new(this.symbolic())?,
+			this,
+			par,
+		)
 	}
 
 	/// returns the $QR$ decomposition of `self`
 	#[track_caller]
-	pub fn sp_qr(&self) -> Result<Qr<I, T>, FaerError> {
+	pub fn sp_qr(&self, par: Par<'_>) -> Result<Qr<I, T>, FaerError> {
 		let this = self.rb();
-		Qr::try_new_with_symbolic(SymbolicQr::try_new(this.symbolic())?, this)
+		Qr::try_new_with_symbolic(
+			SymbolicQr::try_new(this.symbolic())?,
+			this,
+			par,
+		)
 	}
 }
 impl<
@@ -520,12 +565,13 @@ impl<
 	pub fn sp_solve_lower_triangular_in_place(
 		&self,
 		mut rhs: impl AsMatMut<T = T, Rows = usize>,
+		par: Par<'_>,
 	) {
 		linalg_sp::triangular_solve::solve_upper_triangular_transpose_in_place(
 			self.rb().transpose(),
 			Conj::No,
 			rhs.as_mat_mut().as_dyn_cols_mut(),
-			get_global_parallelism(),
+			par,
 		);
 	}
 
@@ -540,12 +586,13 @@ impl<
 	pub fn sp_solve_upper_triangular_in_place(
 		&self,
 		mut rhs: impl AsMatMut<T = T, Rows = usize>,
+		par: Par<'_>,
 	) {
 		linalg_sp::triangular_solve::solve_lower_triangular_transpose_in_place(
 			self.rb().transpose(),
 			Conj::No,
 			rhs.as_mat_mut().as_dyn_cols_mut(),
-			get_global_parallelism(),
+			par,
 		);
 	}
 
@@ -560,12 +607,13 @@ impl<
 	pub fn sp_solve_unit_lower_triangular_in_place(
 		&self,
 		mut rhs: impl AsMatMut<T = T, Rows = usize>,
+		par: Par<'_>,
 	) {
 		linalg_sp::triangular_solve::solve_unit_upper_triangular_transpose_in_place(
 			self.rb().transpose(),
 			Conj::No,
 			rhs.as_mat_mut().as_dyn_cols_mut(),
-			get_global_parallelism(),
+			par,
 		);
 	}
 
@@ -580,12 +628,13 @@ impl<
 	pub fn sp_solve_unit_upper_triangular_in_place(
 		&self,
 		mut rhs: impl AsMatMut<T = T, Rows = usize>,
+		par: Par<'_>,
 	) {
 		linalg_sp::triangular_solve::solve_unit_lower_triangular_transpose_in_place(
 			self.rb().transpose(),
 			Conj::No,
 			rhs.as_mat_mut().as_dyn_cols_mut(),
-			get_global_parallelism(),
+			par,
 		);
 	}
 
@@ -593,30 +642,43 @@ impl<
 	/// accessed
 	#[track_caller]
 	#[doc(alias = "sp_llt")]
-	pub fn sp_cholesky(&self, side: Side) -> Result<Llt<I, T>, LltError> {
+	pub fn sp_cholesky(
+		&self,
+		side: Side,
+		par: Par<'_>,
+	) -> Result<Llt<I, T>, LltError> {
 		let this = self.rb().to_col_major()?;
 		let this = this.rb();
 		Llt::try_new_with_symbolic(
 			SymbolicLlt::try_new(this.symbolic(), side)?,
 			this,
 			side,
+			par,
 		)
 	}
 
 	/// returns the $LU$ decomposition of `self` with partial (row) pivoting
 	#[track_caller]
-	pub fn sp_lu(&self) -> Result<Lu<I, T>, LuError> {
+	pub fn sp_lu(&self, par: Par<'_>) -> Result<Lu<I, T>, LuError> {
 		let this = self.rb().to_col_major()?;
 		let this = this.rb();
-		Lu::try_new_with_symbolic(SymbolicLu::try_new(this.symbolic())?, this)
+		Lu::try_new_with_symbolic(
+			SymbolicLu::try_new(this.symbolic())?,
+			this,
+			par,
+		)
 	}
 
 	/// returns the $QR$ decomposition of `self`
 	#[track_caller]
-	pub fn sp_qr(&self) -> Result<Qr<I, T>, FaerError> {
+	pub fn sp_qr(&self, par: Par<'_>) -> Result<Qr<I, T>, FaerError> {
 		let this = self.rb().to_col_major()?;
 		let this = this.rb();
-		Qr::try_new_with_symbolic(SymbolicQr::try_new(this.symbolic())?, this)
+		Qr::try_new_with_symbolic(
+			SymbolicQr::try_new(this.symbolic())?,
+			this,
+			par,
+		)
 	}
 }
 
@@ -662,7 +724,7 @@ mod tests {
 			],
 		)
 		.unwrap();
-		let _ = mat.sp_lu();
+		let _ = mat.sp_lu(Par::Seq);
 	}
 
 	#[test]
@@ -707,8 +769,8 @@ mod tests {
 			.unwrap();
 			let rhs = faer::col::Col::from_fn(n, |i| b[i]);
 
-			let lu = mat.sp_lu().expect("sp_lu factorization");
-			let x = lu.solve(&rhs);
+			let lu = mat.sp_lu(Par::Seq).expect("sp_lu factorization");
+			let x = lu.solve(&rhs, Par::Seq);
 
 			// Residual check: ||A x - b|| / ||b||
 			let ax = &mat * &x;

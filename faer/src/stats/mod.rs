@@ -91,6 +91,8 @@ mod rand {
 			Row::from_fn(self.ncols, |_| self.dist.sample(rng))
 		}
 	}
+	/// `Distribution::sample` has no parallelism argument, so the QR factorization that builds the
+	/// sample runs sequentially.
 	impl<T: ComplexField, D: Distribution<T>> Distribution<Mat<T>>
 		for UnitaryMat<usize, D>
 	{
@@ -104,9 +106,9 @@ mod rand {
 				dist: &self.standard_normal,
 			}
 			.sample(rng)
-			.qr();
+			.qr(Par::Seq);
 			let r_diag = qr.R().diagonal().column_vector();
-			let mut q = qr.compute_Q();
+			let mut q = qr.compute_Q(Par::Seq);
 			for j in 0..self.dim {
 				let ref r = r_diag[j];
 				let ref r = if *r == zero() {

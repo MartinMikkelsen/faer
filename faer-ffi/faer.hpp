@@ -285,19 +285,6 @@ inline namespace v0_24 {
         }
     };
 
-    inline auto get_global_par() -> Par {
-        auto par = libfaer_v0_24_get_global_par();
-        return Par {
-            par.tag == FaerV0_24_ParTag::FaerV0_24_ParTag_Seq ? Par::Seq
-                                                              : Par::Rayon,
-            par.nthreads,
-        };
-    }
-
-    inline auto set_global_par(Par par) {
-        libfaer_v0_24_set_global_par(par.ffi());
-    }
-
     struct Layout {
         size_t size;
         size_t align;
@@ -363,7 +350,7 @@ inline namespace v0_24 {
                     template<typename T>
                     auto in_place_scratch(
                         size_t n,
-                        Par par = get_global_par(),
+                        Par par,
                         Params params = factor::params<T>()
                     ) -> Layout {
                         constexpr auto ptr = LIBFAER_SCALAR_DISPATCH(
@@ -376,7 +363,7 @@ inline namespace v0_24 {
                     void in_place(
                         Mat<T> A,
                         Regularization<T> regularization = {},
-                        Par par = get_global_par(),
+                        Par par,
                         Mem mem = {},
                         Params params = factor::params<T>()
                     ) {
@@ -417,7 +404,7 @@ inline namespace v0_24 {
                         Mat<T const> L,
                         Conj conj_A,
                         Mat<T> rhs,
-                        Par par = get_global_par(),
+                        Par par,
                         Mem mem = {}
                     ) {
                         constexpr auto ptr =
@@ -447,7 +434,7 @@ inline namespace v0_24 {
                     template<typename I, typename T>
                     auto in_place_scratch(
                         size_t n,
-                        Par par = get_global_par(),
+                        Par par,
                         Params params = factor::params<T>()
                     ) -> Layout {
                         constexpr auto ptr = LIBFAER_INDEX_DISPATCH(
@@ -461,7 +448,7 @@ inline namespace v0_24 {
                         Mat<T> A,
                         Slice<I> perm_fwd,
                         Slice<I> perm_bwd,
-                        Par par = get_global_par(),
+                        Par par,
                         Mem mem = {},
                         Params params = factor::params<T>()
                     ) {
@@ -495,7 +482,7 @@ inline namespace v0_24 {
                         Slice<I const> perm_bwd,
                         Conj conj_A,
                         Mat<T> rhs,
-                        Par par = get_global_par(),
+                        Par par,
                         Mem mem = {}
                     ) {
                         constexpr auto ptr =
@@ -535,7 +522,7 @@ inline namespace v0_24 {
                     template<typename T>
                     auto in_place_scratch(
                         size_t n,
-                        Par par = get_global_par(),
+                        Par par,
                         Params params = factor::params<T>()
                     ) -> Layout {
                         constexpr auto ptr = LIBFAER_SCALAR_DISPATCH(
@@ -548,7 +535,7 @@ inline namespace v0_24 {
                     void in_place(
                         Mat<T> A,
                         Regularization<T> regularization = {},
-                        Par par = get_global_par(),
+                        Par par,
                         Mem mem = {},
                         Params params = factor::params<T>()
                     ) {
@@ -593,7 +580,7 @@ inline namespace v0_24 {
                         Vec<T const> D,
                         Conj conj_A,
                         Mat<T> rhs,
-                        Par par = get_global_par(),
+                        Par par,
                         Mem mem = {}
                     ) {
                         constexpr auto ptr =
@@ -624,7 +611,7 @@ inline namespace v0_24 {
                     template<typename I, typename T>
                     auto in_place_scratch(
                         size_t n,
-                        Par par = get_global_par(),
+                        Par par,
                         Params params = factor::params<T>()
                     ) -> Layout {
                         constexpr auto ptr = LIBFAER_INDEX_DISPATCH(
@@ -639,7 +626,7 @@ inline namespace v0_24 {
                         Vec<T> subdiag,
                         Slice<I> perm_fwd,
                         Slice<I> perm_bwd,
-                        Par par = get_global_par(),
+                        Par par,
                         Mem mem = {},
                         Params params = factor::params<T>()
                     ) {
@@ -675,7 +662,7 @@ inline namespace v0_24 {
                         Slice<I const> perm_bwd,
                         Conj conj_A,
                         Mat<T> rhs,
-                        Par par = get_global_par(),
+                        Par par,
                         Mem mem = {}
                     ) {
                         constexpr auto ptr =
@@ -712,7 +699,7 @@ inline namespace v0_24 {
                         size_t nrows,
                         size_t ncols,
                         size_t block_size,
-                        Par par = get_global_par(),
+                        Par par,
                         Params params = factor::params<T>()
                     ) -> Layout {
                         constexpr auto ptr =
@@ -726,7 +713,7 @@ inline namespace v0_24 {
                     void in_place(
                         Mat<T> A,
                         Mat<T> Q_coeff,
-                        Par par = get_global_par(),
+                        Par par,
                         Mem mem = {},
                         Params params = factor::params<T>()
                     ) {
@@ -770,7 +757,7 @@ inline namespace v0_24 {
                         Mat<T const> R,
                         Conj conj_A,
                         Mat<T> rhs,
-                        Par par = get_global_par(),
+                        Par par,
                         Mem mem = {}
                     ) {
                         constexpr auto ptr =
@@ -817,7 +804,7 @@ inline namespace v0_24 {
                         Mat<T const> R,
                         Conj conj_A,
                         Mat<T> rhs,
-                        Par par = get_global_par(),
+                        Par par,
                         Mem mem = {}
                     ) {
                         constexpr auto ptr =
@@ -857,7 +844,7 @@ inline namespace v0_24 {
                         size_t nrows,
                         size_t ncols,
                         size_t block_size,
-                        Par par = get_global_par(),
+                        Par par,
                         Params params = factor::params<T>()
                     ) -> Layout {
                         constexpr auto ptr = LIBFAER_INDEX_DISPATCH(
@@ -874,7 +861,7 @@ inline namespace v0_24 {
                         Mat<T> Q_coeff,
                         Slice<I> perm_fwd,
                         Slice<I> perm_bwd,
-                        Par par = get_global_par(),
+                        Par par,
                         Mem mem = {},
                         Params params = factor::params<T>()
                     ) {
@@ -923,7 +910,7 @@ inline namespace v0_24 {
                         Slice<I const> perm_bwd,
                         Conj conj_A,
                         Mat<T> rhs,
-                        Par par = get_global_par(),
+                        Par par,
                         Mem mem = {}
                     ) {
                         constexpr auto ptr =
@@ -974,7 +961,7 @@ inline namespace v0_24 {
                         Slice<I const> perm_bwd,
                         Conj conj_A,
                         Mat<T> rhs,
-                        Par par = get_global_par(),
+                        Par par,
                         Mem mem = {}
                     ) {
                         constexpr auto ptr = LIBFAER_INDEX_DISPATCH(
@@ -1018,7 +1005,7 @@ inline namespace v0_24 {
                     auto in_place_scratch(
                         size_t nrows,
                         size_t ncols,
-                        Par par = get_global_par(),
+                        Par par,
                         Params params = factor::params<T>()
                     ) -> Layout {
                         constexpr auto ptr = LIBFAER_INDEX_DISPATCH(
@@ -1034,7 +1021,7 @@ inline namespace v0_24 {
                         Mat<T> A,
                         Slice<I> perm_fwd,
                         Slice<I> perm_bwd,
-                        Par par = get_global_par(),
+                        Par par,
                         Mem mem = {},
                         Params params = factor::params<T>()
                     ) {
@@ -1075,7 +1062,7 @@ inline namespace v0_24 {
                         Slice<I const> perm_bwd,
                         Conj conj_A,
                         Mat<T> rhs,
-                        Par par = get_global_par(),
+                        Par par,
                         Mem mem = {}
                     ) {
                         constexpr auto ptr = LIBFAER_INDEX_DISPATCH(
@@ -1110,7 +1097,7 @@ inline namespace v0_24 {
                     auto in_place_scratch(
                         size_t nrows,
                         size_t ncols,
-                        Par par = get_global_par(),
+                        Par par,
                         Params params = factor::params<T>()
                     ) -> Layout {
                         constexpr auto ptr = LIBFAER_INDEX_DISPATCH(
@@ -1128,7 +1115,7 @@ inline namespace v0_24 {
                         Slice<I> row_perm_bwd,
                         Slice<I> col_perm_fwd,
                         Slice<I> col_perm_bwd,
-                        Par par = get_global_par(),
+                        Par par,
                         Mem mem = {},
                         Params params = factor::params<T>()
                     ) {
@@ -1172,7 +1159,7 @@ inline namespace v0_24 {
                         Slice<I const> col_perm_bwd,
                         Conj conj_A,
                         Mat<T> rhs,
-                        Par par = get_global_par(),
+                        Par par,
                         Mem mem = {}
                     ) {
                         constexpr auto ptr =
@@ -1209,7 +1196,7 @@ inline namespace v0_24 {
                 size_t ncols,
                 ComputeSvdVectors U,
                 ComputeSvdVectors V,
-                Par par = get_global_par(),
+                Par par,
                 Params params = svd::params<T>()
             ) -> Layout {
                 constexpr auto ptr = LIBFAER_SCALAR_DISPATCH(svd_scratch);
@@ -1224,7 +1211,7 @@ inline namespace v0_24 {
                 Mat<T> U,
                 Vec<T> S,
                 Mat<T> V,
-                Par par = get_global_par(),
+                Par par,
                 Mem mem = {},
                 Params params = svd::params<T>()
             ) {
@@ -1272,7 +1259,7 @@ inline namespace v0_24 {
             auto scratch(
                 size_t n,
                 ComputeEigenvectors U,
-                Par par = get_global_par(),
+                Par par,
                 Params params = self_adjoint_evd::params<T>()
             ) -> Layout {
                 constexpr auto ptr =
@@ -1286,7 +1273,7 @@ inline namespace v0_24 {
                 Mat<T> U,
                 Vec<T> S,
                 Vec<T> S_im,
-                Par par = get_global_par(),
+                Par par,
                 Mem mem = {},
                 Params params = self_adjoint_evd::params<T>()
             ) {
@@ -1325,7 +1312,7 @@ inline namespace v0_24 {
                 size_t n,
                 ComputeEigenvectors UL,
                 ComputeEigenvectors UR,
-                Par par = get_global_par(),
+                Par par,
                 Params params = evd::params<T>()
             ) -> Layout {
                 constexpr auto ptr = LIBFAER_SCALAR_DISPATCH(evd_scratch);
@@ -1341,7 +1328,7 @@ inline namespace v0_24 {
                 Mat<T> UR,
                 Vec<T> S,
                 Vec<T> S_im,
-                Par par = get_global_par(),
+                Par par,
                 Mem mem = {},
                 Params params = evd::params<T>()
             ) {
@@ -1385,7 +1372,7 @@ inline namespace v0_24 {
                 size_t n,
                 ComputeEigenvectors UL,
                 ComputeEigenvectors UR,
-                Par par = get_global_par(),
+                Par par,
                 Params params = generalized_evd::params<T>()
             ) -> Layout {
                 constexpr auto ptr =
@@ -1404,7 +1391,7 @@ inline namespace v0_24 {
                 Vec<T> alpha,
                 Vec<T> alpha_im,
                 Vec<T> beta,
-                Par par = get_global_par(),
+                Par par,
                 Mem mem = {},
                 Params params = generalized_evd::params<T>()
             ) {

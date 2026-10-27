@@ -153,12 +153,26 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 	// size the recursion halves every level, so a `128 x 128` QR pays the fork-join cost of
 	// `n`-wide reductions ~50 times for work the floor itself calls too small to split. The
 	// decision here is the floor, asked once: no region at all when the products below would not
-	// split either.
-	let threads = crate::utils::thread::parallelism_degree(par);
+	// split either. Two of the three conditions are shapes, not costs, and stay as such: the
+	// reduction must be deep against its `n x n` output (`2 * n`, else the partials are not
+	// small against the basis) and give every thread at least four rows (`4 * threads`). The
+	// third is the cost rule: `deep_rows * n * n` multiply-adds at the GEMM rate must pay for one
+	// section.
+	let threads = crate::utils::thread::parallelism_degree(&par);
 	let deep_rows = essentials.nrows().unbound().saturating_sub(n);
-	let above_floor =
-		deep_rows >= 2 * n && deep_rows >= 4 * threads && deep_rows * n * n >= 8 * 1024;
-	let par = if above_floor { par } else { Par::Seq };
+	#[cfg(feature = "par-trace")]
+	crate::utils::cost::trace::shape("upgrade_above_floor", deep_rows, n, n);
+	let above_floor = deep_rows >= 2 * n
+		&& deep_rows >= 4 * threads
+		&& crate::utils::cost::par_pays::<T>(
+			&par,
+			deep_rows.saturating_mul(n).saturating_mul(n),
+			crate::utils::cost::rate::gemm_mac(),
+			1,
+		);
+	#[cfg(feature = "par-trace")]
+	crate::utils::cost::trace::shape("", 0, 0, 0);
+	let mut par = if above_floor { par } else { Par::Seq };
 	let mut householder_factor = householder_factor;
 	let essentials = essentials;
 	assert!(householder_factor.nrows() == householder_factor.ncols());
@@ -207,7 +221,7 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 			basis_top,
 			BlockStructure::UnitTriangularLower,
 			one(),
-			par,
+			par.reborrow(),
 		);
 		// `T += V_bot^H V_bot` reduces over every row below the basis' diagonal, so on a tall panel
 		// it is one serial kernel per task with an `n x n` output -- the same shape as the reduction
@@ -215,13 +229,23 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 		// threads for `m = 4096, n = 16`, against 0.040 when its rows are split. The partials here
 		// are `n x n` each, tiny against the basis, and only the strict upper triangle is stored
 		// (the diagonal is the caller's `tau`), so the split costs almost nothing.
-		let threads = crate::utils::thread::parallelism_degree(par);
+		let threads = crate::utils::thread::parallelism_degree(&par);
 		let rows = basis_bot.nrows().unbound();
+		// shape conditions (`2 * n`, `4 * threads`) as above, then the cost rule
+		#[cfg(feature = "par-trace")]
+		crate::utils::cost::trace::shape("upgrade_deep", rows, n, n);
 		let deep = cfg!(feature = "rayon")
 			&& threads > 1
 			&& rows >= 2 * n
 			&& rows >= 4 * threads
-			&& rows * n * n >= 8 * 1024;
+			&& crate::utils::cost::par_pays::<T>(
+				&par,
+				rows.saturating_mul(n).saturating_mul(n),
+				crate::utils::cost::rate::gemm_mac(),
+				1,
+			);
+		#[cfg(feature = "par-trace")]
+		crate::utils::cost::trace::shape("", 0, 0, 0);
 		if deep {
 			#[cfg(feature = "rayon")]
 			{
@@ -230,7 +254,9 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 				let n_chunks = rows.div_ceil(chunk);
 				let mut partials = vec![T::zero(); n_chunks * n * n];
 				let source = basis_bot;
-				partials.par_chunks_mut(n * n).enumerate().for_each(
+				crate::utils::thread::par_for_each(
+					par,
+					partials.par_chunks_mut(n * n).enumerate(),
 					|(index, part)| {
 						let lo = index * chunk;
 						let hi = rows.min(lo + chunk);
@@ -308,7 +334,7 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 					parallelism,
 				);
 			},
-			|parallelism| {
+			|mut parallelism| {
 				let basis_left = basis_left.split_at_row(mid).1;
 				let row_mid = basis_right.ncols();
 				let (basis_left_top, basis_left_bot) =
@@ -324,7 +350,7 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 					basis_right_top,
 					BlockStructure::UnitTriangularLower,
 					one(),
-					parallelism,
+					parallelism.reborrow(),
 				);
 				matmul(
 					tau_tr.rb_mut(),
@@ -447,7 +473,7 @@ fn apply_block_householder_on_the_left_in_place_generic<
 	conj_lhs: Conj,
 	matrix: MatMut<'_, T, Dim<'M>, Dim<'K>>,
 	forward: bool,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	assert!(all(
@@ -465,18 +491,53 @@ fn apply_block_householder_on_the_left_in_place_generic<
 	if N.unbound() == 0 {
 		return;
 	}
+	// The floor of the whole apply, asked once. Every parallel decision below (the rank-one split, the
+	// row split, the column split, and the gates inside the products and the triangular steps) is
+	// over a part of the work of the two products and the streaming of the target, at one section or
+	// more, so none can pay when the whole apply does not at one section of the cheapest width (`min_cost`): the sequential path is the
+	// result of all of them, and the nested calls need not ask. A QR 128 applies 59 blocks, and
+	// asking each product's gate for a token that cannot pay costs 0.3 to 0.9 us per apply
+	// (`Par::Team` against `Par::Seq`, 10 to 20 % of the factorization).
+	if par.degree() > 1
+		&& !crate::utils::cost::par_can_pay_time(
+			&par,
+			crate::utils::cost::block_apply_estimate::<T>(
+				M.unbound(),
+				N.unbound(),
+				matrix.ncols().unbound(),
+				2,
+			),
+			1,
+		) {
+		par = Par::Seq;
+	}
 	make_guard!(TAIL);
 	let midpoint = M.head_partition(N, TAIL);
 	// The N == 1 kernel below is one sequential rank-one update per target column, and a panel of a
 	// tall blocked QR is made almost entirely of those. When the caller asks for parallelism and
 	// there is enough work to pay for its temporaries, the generic path below is the better one: it
 	// partitions the target's columns and threads its two matrix products, which this one cannot.
-	let big_rank_one = householder_basis.nrows().unbound()
-		* matrix.ncols().unbound()
-		>= 8 * 1024;
+	// "Enough work" is the cost rule: one section (the column split of the generic path), the
+	// unit an element of the target.
+	#[cfg(feature = "par-trace")]
+	crate::utils::cost::trace::shape(
+"big_rank_one",
+		householder_basis.nrows().unbound(),
+		N.unbound(),
+		matrix.ncols().unbound(),
+	);
+	let big_rank_one = crate::utils::cost::par_pays::<T>(
+		&par,
+		householder_basis
+			.nrows()
+			.unbound()
+			.saturating_mul(matrix.ncols().unbound()),
+		crate::utils::cost::rate::householder_rank_one(),
+		1,
+	);
 	let use_simd = N.unbound() == 1
 		&& T::SIMD_CAPABILITIES.is_simd()
-		&& !(crate::utils::thread::parallelism_degree(par) > 1 && big_rank_one);
+		&& !(crate::utils::thread::parallelism_degree(&par) > 1 && big_rank_one);
 	if let (Some(householder_basis), Some(matrix), true) = (
 		householder_basis.try_as_col_major(),
 		matrix.rb_mut().try_as_col_major_mut(),
@@ -593,19 +654,34 @@ fn apply_block_householder_on_the_left_in_place_generic<
 		let K = matrix.ncols();
 		let (mut tmp, _) = unsafe { temp_mat_uninit::<T, _, _>(N, K, stack) };
 		let mut tmp = tmp.as_mat_mut();
-		let threads = crate::utils::thread::parallelism_degree(par);
+		let threads = crate::utils::thread::parallelism_degree(&par);
 		// The split below slices the reduction's rows, but the top `n` rows carry the unit
 		// diagonal and are applied through their own `n x n` factor -- a chunk whose rows
 		// are a *subrange* of those `n` would need that factor column-sliced, and the
 		// triangular kernel cannot express the trapezoid that leaves. So the split is taken
 		// only while one chunk swallows the whole top block. Below that the products further
 		// down stay exactly as they were.
+		// `2 * K` (depth against width), `4 * threads` (rows per task) and the chunk covering the
+		// unit block (`div_ceil(threads) >= N`) are shape conditions; the work floor is the
+		// cost rule: the reduction `V^H C`, `M * N * K` multiply-adds at the GEMM rate, one
+		// section.
+		#[cfg(feature = "par-trace")]
+		crate::utils::cost::trace::shape("row_split", M.unbound(), N.unbound(), K.unbound());
 		let row_split = cfg!(feature = "rayon")
 			&& threads > 1
 			&& M.unbound() >= 2 * K.unbound()
 			&& M.unbound() >= 4 * threads
-			&& M.unbound() * K.unbound() >= 8 * 1024
-			&& M.unbound().div_ceil(threads) >= N.unbound();
+			&& M.unbound().div_ceil(threads) >= N.unbound()
+			&& crate::utils::cost::par_pays::<T>(
+				&par,
+				M.unbound()
+					.saturating_mul(N.unbound())
+					.saturating_mul(K.unbound()),
+				crate::utils::cost::rate::gemm_mac(),
+				1,
+			);
+		#[cfg(feature = "par-trace")]
+		crate::utils::cost::trace::shape("", 0, 0, 0);
 		// The column split is the only parallelism when the rows are not split, so it takes
 		// the whole budget and leaves `inner_parallelism` at one thread: the block apply a
 		// blocked QR performs is short and wide (`N` columns of basis against the whole
@@ -620,23 +696,43 @@ fn apply_block_householder_on_the_left_in_place_generic<
 			Ord::min(threads, K.unbound()),
 			if row_split { 4 } else { threads },
 		);
-		if (M.unbound() * K.unbound()).saturating_mul(4 * M.unbound())
-			< gemm::get_threading_threshold()
-		{
-			n_tasks = 1;
+		// The column split is one section over `n_tasks` participants; its work is the two
+		// products of the update, `2 * M * N * K` multiply-adds (one of them when the row split
+		// already did the reduction), plus the streaming of the `M * K` target
+		// (`cost::block_apply_estimate`). With the multiply-adds alone this estimate was 0.6 to
+		// 0.8 of the measured serial time of an `N = 8` block (`QR 128`).
+		if n_tasks > 1 {
+			let width = core::num::NonZeroUsize::new(n_tasks).unwrap();
+			let est = crate::utils::cost::block_apply_estimate::<T>(
+				M.unbound(),
+				N.unbound(),
+				K.unbound(),
+				if row_split { 1 } else { 2 },
+			);
+			#[cfg(feature = "par-trace")]
+			{
+				crate::utils::cost::trace::shape("n_tasks", M.unbound(), N.unbound(), K.unbound());
+				crate::utils::cost::trace_pub(
+					M.unbound() * N.unbound() * K.unbound(),
+					1,
+					est,
+					par.shape().dispatch_cost(width),
+					par.shape().pays(est, 1, width),
+					core::panic::Location::caller(),
+				);
+			}
+			let pays = par.shape().pays(est, 1, width);
+			#[cfg(feature = "par-trace")]
+			let pays = match crate::utils::cost::trace::N_TASKS_MODE.load(core::sync::atomic::Ordering::Relaxed) {
+				1 => (M.unbound() * K.unbound()).saturating_mul(4 * M.unbound()) >= gemm::get_threading_threshold(),
+				2 => true,
+				3 => false,
+				_ => pays,
+			};
+			if !pays {
+				n_tasks = 1;
+			}
 		}
-		let inner_parallelism = match par {
-			Par::Seq => Par::Seq,
-			#[cfg(feature = "rayon")]
-			Par::Rayon(par) => {
-				let par = par.get();
-				if par >= 2 * n_tasks {
-					Par::rayon(par / n_tasks)
-				} else {
-					Par::Seq
-				}
-			},
-		};
 		// The reduction `tmp = V^H C` has an `N x K` output and reduces over every row of the
 		// target. The products below are good at that while the output is wide; with `N` small and
 		// the target long they are one serial reduction inside one task, so the column split cannot
@@ -665,7 +761,9 @@ fn apply_block_householder_on_the_left_in_place_generic<
 				let top_basis = essentials_top.as_dyn_rows().as_dyn_cols();
 				let bot_basis = essentials_bot.as_dyn_rows().as_dyn_cols();
 				let conj = Conj::Yes.compose(conj_lhs);
-				partials.par_chunks_mut(n * k).enumerate().for_each(
+				crate::utils::thread::par_for_each(
+					par.reborrow(),
+					partials.par_chunks_mut(n * k).enumerate(),
 					|(index, part)| {
 						let lo = index * chunk;
 						let hi = rows.min(lo + chunk);
@@ -725,7 +823,8 @@ fn apply_block_householder_on_the_left_in_place_generic<
 		let func = |(mut tmp, mut matrix): (
 			MatMut<'_, T, Dim<'N>>,
 			MatMut<'_, T, Dim<'M>>,
-		)| {
+		),
+		            mut inner_parallelism: Par| {
 			let (mut top, mut bot) =
 				matrix.rb_mut().split_rows_with_mut(midpoint);
 			if !row_split {
@@ -740,7 +839,7 @@ fn apply_block_householder_on_the_left_in_place_generic<
 					BlockStructure::Rectangular,
 					Conj::No,
 					one(),
-					inner_parallelism,
+					inner_parallelism.reborrow(),
 				);
 				matmul_with_conj(
 					tmp.rb_mut(),
@@ -750,7 +849,7 @@ fn apply_block_householder_on_the_left_in_place_generic<
 					bot.rb(),
 					Conj::No,
 					one(),
-					inner_parallelism,
+					inner_parallelism.reborrow(),
 				);
 			}
 			if forward {
@@ -758,14 +857,14 @@ fn apply_block_householder_on_the_left_in_place_generic<
 					householder_factor.transpose(),
 					Conj::Yes.compose(conj_lhs),
 					tmp.rb_mut(),
-					inner_parallelism,
+					inner_parallelism.reborrow(),
 				);
 			} else {
 				triangular_solve::solve_upper_triangular_in_place_with_conj(
 					householder_factor,
 					Conj::No.compose(conj_lhs),
 					tmp.rb_mut(),
-					inner_parallelism,
+					inner_parallelism.reborrow(),
 				);
 			}
 			triangular::matmul_with_conj(
@@ -779,7 +878,7 @@ fn apply_block_householder_on_the_left_in_place_generic<
 				BlockStructure::Rectangular,
 				Conj::No,
 				-one::<T>(),
-				inner_parallelism,
+				inner_parallelism.reborrow(),
 			);
 			matmul_with_conj(
 				bot.rb_mut(),
@@ -793,13 +892,13 @@ fn apply_block_householder_on_the_left_in_place_generic<
 			);
 		};
 		if n_tasks <= 1 {
-			func((tmp.as_dyn_cols_mut(), matrix.as_dyn_cols_mut()));
+			func((tmp.as_dyn_cols_mut(), matrix.as_dyn_cols_mut()), par);
 			return;
 		} else {
 			#[cfg(feature = "rayon")]
 			{
 				use rayon::prelude::*;
-				spindle::for_each(
+				crate::utils::thread::for_each_with_par(par,
 					n_tasks,
 					tmp.rb_mut()
 						.par_col_partition_mut(n_tasks)
@@ -920,7 +1019,7 @@ pub fn apply_block_householder_sequence_on_the_left_in_place_with_conj<
 	householder_factor: MatRef<'_, T>,
 	conj_lhs: Conj,
 	matrix: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let mut matrix = matrix;
@@ -949,7 +1048,7 @@ pub fn apply_block_householder_sequence_on_the_left_in_place_with_conj<
 			householder,
 			conj_lhs,
 			matrix,
-			par,
+			par.reborrow(),
 			stack.rb_mut(),
 		);
 		j = j_prev;
@@ -966,7 +1065,7 @@ pub fn apply_block_householder_sequence_transpose_on_the_left_in_place_with_conj
 	householder_factor: MatRef<'_, T>,
 	conj_lhs: Conj,
 	matrix: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let mut matrix = matrix;
@@ -992,7 +1091,7 @@ pub fn apply_block_householder_sequence_transpose_on_the_left_in_place_with_conj
 			householder,
 			conj_lhs,
 			matrix,
-			par,
+			par.reborrow(),
 			stack.rb_mut(),
 		);
 		j += block_size;
@@ -1363,6 +1462,198 @@ mod tests {
 				.map(|i| (out[(i, 0)] + a[(i, 0)]).abs())
 				.fold(0.0, f64::max);
 			assert!(err < 1e-12, "{err}");
+		}
+	}
+}
+#[cfg(all(test, feature = "rayon"))]
+mod gate_tests {
+	//! The parallel routes behind the cost gates (`utils::cost`) agree with the serial ones, at
+	//! sizes where the derived floors of a plain token from outside the pool (`Par::rayon(4)`,
+	//! 18 us of dispatch, 54 us of serial work per section) are exceeded, and the decision itself
+	//! is what `utils::cost` tests.
+	use super::*;
+	use crate::c64;
+	use crate::linalg::matmul::triangular::{BlockStructure, matmul as tmatmul};
+
+	fn fill<T: ComplexField<Real = f64>>(m: usize, n: usize, seed: usize) -> Mat<T> {
+		Mat::from_fn(m, n, |i, j| {
+			let h = (i * 2654435761usize)
+				.wrapping_add(j * 40503)
+				.wrapping_add(seed * 977)
+				% 1000;
+			from_f64::<T>(h as f64 / 500.0 - 1.0)
+		})
+	}
+	fn close<T: ComplexField<Real = f64>>(a: MatRef<'_, T>, b: MatRef<'_, T>) {
+		let mut err = 0.0f64;
+		let mut scale = 1.0f64;
+		for j in 0..a.ncols() {
+			for i in 0..a.nrows() {
+				err = err.max((a[(i, j)].clone() - b[(i, j)].clone()).abs());
+				scale = scale.max(a[(i, j)].abs());
+			}
+		}
+		core::assert!(err <= 1e-9 * scale, "error {err}, scale {scale}");
+	}
+
+	fn apply<T: ComplexField<Real = f64>>(m: usize, n: usize, k: usize, par: Par) -> Mat<T> {
+		let basis = fill::<T>(m, n, 1);
+		let mut factor = fill::<T>(n, n, 2);
+		for i in 0..n {
+			factor[(i, i)] = from_f64::<T>(2.0 + i as f64 * 0.01);
+		}
+		let mut target = fill::<T>(m, k, 3);
+		let mut mem = dyn_stack::MemBuffer::new(
+			apply_block_householder_on_the_left_in_place_scratch::<T>(m, n, k),
+		);
+		apply_block_householder_on_the_left_in_place_with_conj(
+			basis.as_ref(),
+			factor.as_ref(),
+			Conj::No,
+			target.as_mut(),
+			par,
+			MemStack::new(&mut mem),
+		);
+		target
+	}
+
+	fn check_apply<T: ComplexField<Real = f64>>() {
+		// row split: tall, `M >= 2 K`, 3.1 million multiply-adds
+		// rank one: `N == 1`, 0.5 million target elements
+		// column split: wide target
+		for (m, n, k) in
+			[(2048, 16, 96), (2048, 1, 256), (512, 16, 1024), (4096, 32, 64)]
+		{
+			let seq = apply::<T>(m, n, k, Par::Seq);
+			let par = apply::<T>(m, n, k, Par::rayon(4));
+			close(seq.as_ref(), par.as_ref());
+		}
+	}
+
+	#[test]
+	fn block_apply_gates_agree_with_serial() {
+		check_apply::<f64>();
+		check_apply::<c64>();
+	}
+
+	fn upgrade<T: ComplexField<Real = f64>>(m: usize, n: usize, par: Par) -> Mat<T> {
+		let essentials = fill::<T>(m, n, 4);
+		let mut factor = Mat::<T>::zeros(n, n);
+		for i in 0..n {
+			factor[(i, i)] = from_f64::<T>(1.5);
+		}
+		upgrade_householder_factor(factor.as_mut(), essentials.as_ref(), n, 1, par);
+		factor
+	}
+
+	#[test]
+	fn upgrade_factor_gate_agrees_with_serial() {
+		for (m, n) in [(4096, 8), (4096, 32), (1024, 64)] {
+			close(
+				upgrade::<f64>(m, n, Par::Seq).as_ref(),
+				upgrade::<f64>(m, n, Par::rayon(4)).as_ref(),
+			);
+			close(
+				upgrade::<c64>(m, n, Par::Seq).as_ref(),
+				upgrade::<c64>(m, n, Par::rayon(4)).as_ref(),
+			);
+		}
+	}
+
+	fn matvec<T: ComplexField<Real = f64>>(n: usize, row_major: bool, par: Par) -> Mat<T> {
+		let a = fill::<T>(n, n, 5);
+		let x = fill::<T>(n, 1, 6);
+		let mut y = Mat::<T>::zeros(n, 1);
+		let lhs = if row_major { a.as_ref().transpose() } else { a.as_ref() };
+		crate::linalg::matmul::matmul(
+			y.as_mut(),
+			Accum::Replace,
+			lhs,
+			x.as_ref(),
+			one::<T>(),
+			par,
+		);
+		y
+	}
+
+	#[test]
+	fn matvec_gate_agrees_with_serial() {
+		for n in [128, 512, 1024] {
+			for row_major in [false, true] {
+				close(
+					matvec::<f64>(n, row_major, Par::Seq).as_ref(),
+					matvec::<f64>(n, row_major, Par::rayon(4)).as_ref(),
+				);
+				close(
+					matvec::<c64>(n, row_major, Par::Seq).as_ref(),
+					matvec::<c64>(n, row_major, Par::rayon(4)).as_ref(),
+				);
+			}
+		}
+	}
+
+	fn tri_products(n: usize, mut par: Par) -> (Mat<f64>, Mat<f64>) {
+		let lhs = fill::<f64>(n, n, 7);
+		let rhs = fill::<f64>(n, n, 8);
+		let mut a = Mat::<f64>::zeros(n, n);
+		let mut b = Mat::<f64>::zeros(n, n);
+		// product with a triangular right-hand side (`mat_x_lower`, `m n^2 / 2` multiply-adds)
+		tmatmul(
+			a.as_mut(),
+			BlockStructure::Rectangular,
+			Accum::Replace,
+			lhs.as_ref(),
+			BlockStructure::Rectangular,
+			rhs.as_ref(),
+			BlockStructure::TriangularLower,
+			1.0,
+			par.reborrow(),
+		);
+		// product into one triangle of the destination (`n^2 k / 2`)
+		tmatmul(
+			b.as_mut(),
+			BlockStructure::TriangularLower,
+			Accum::Replace,
+			lhs.as_ref(),
+			BlockStructure::Rectangular,
+			rhs.as_ref(),
+			BlockStructure::Rectangular,
+			1.0,
+			par,
+		);
+		(a, b)
+	}
+
+	#[test]
+	fn triangular_gates_agree_with_serial() {
+		let (a0, b0) = tri_products(384, Par::Seq);
+		let (a, b) = tri_products(384, Par::rayon(4));
+		close(a0.as_ref(), a.as_ref());
+		close(b0.as_ref(), b.as_ref());
+	}
+
+	#[test]
+	fn triangular_solve_split_gate_agrees_with_serial() {
+		// short triangle, many right hand sides: the split of `triangular_solve.rs`
+		for (n, k) in [(64, 4096), (128, 2048), (16, 200)] {
+			let mut tri = fill::<f64>(n, n, 9);
+			for i in 0..n {
+				tri[(i, i)] = n as f64;
+			}
+			let rhs0 = fill::<f64>(n, k, 10);
+			let mut seq = rhs0.clone();
+			let mut par = rhs0.clone();
+			crate::linalg::triangular_solve::solve_lower_triangular_in_place(
+				tri.as_ref(),
+				seq.as_mut(),
+				Par::Seq,
+			);
+			crate::linalg::triangular_solve::solve_lower_triangular_in_place(
+				tri.as_ref(),
+				par.as_mut(),
+				Par::rayon(4),
+			);
+			close(seq.as_ref(), par.as_ref());
 		}
 	}
 }

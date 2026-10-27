@@ -30,7 +30,7 @@ pub struct IdentityPrecond {
 pub trait LinOp<T: ComplexField>: Sync + core::fmt::Debug {
 	/// computes the workspace layout required to apply `self` or the conjugate
 	/// o `self` to a matrix with `rhs_ncols` columns
-	fn apply_scratch(&self, rhs_ncols: usize, par: Par) -> StackReq;
+	fn apply_scratch(&self, rhs_ncols: usize, par: ParShape) -> StackReq;
 	/// output dimension of the operator
 	fn nrows(&self) -> usize;
 	/// input dimension of the operator
@@ -55,7 +55,7 @@ pub trait LinOp<T: ComplexField>: Sync + core::fmt::Debug {
 impl<T: ComplexField> LinOp<T> for IdentityPrecond {
 	#[inline]
 	#[track_caller]
-	fn apply_scratch(&self, _rhs_ncols: usize, _par: Par) -> StackReq {
+	fn apply_scratch(&self, _rhs_ncols: usize, _par: ParShape) -> StackReq {
 		StackReq::EMPTY
 	}
 
@@ -98,7 +98,7 @@ impl<T: ComplexField> BiLinOp<T> for IdentityPrecond {
 	fn transpose_apply_scratch(
 		&self,
 		_rhs_ncols: usize,
-		_par: Par,
+		_par: ParShape,
 	) -> StackReq {
 		StackReq::EMPTY
 	}
@@ -128,7 +128,7 @@ impl<T: ComplexField> BiLinOp<T> for IdentityPrecond {
 	}
 }
 impl<T: ComplexField> Precond<T> for IdentityPrecond {
-	fn apply_in_place_scratch(&self, _rhs_ncols: usize, _par: Par) -> StackReq {
+	fn apply_in_place_scratch(&self, _rhs_ncols: usize, _par: ParShape) -> StackReq {
 		StackReq::EMPTY
 	}
 
@@ -152,7 +152,7 @@ impl<T: ComplexField> BiPrecond<T> for IdentityPrecond {
 	fn transpose_apply_in_place_scratch(
 		&self,
 		_rhs_ncols: usize,
-		_par: Par,
+		_par: ParShape,
 	) -> StackReq {
 		StackReq::EMPTY
 	}
@@ -177,7 +177,7 @@ impl<T: ComplexField> BiPrecond<T> for IdentityPrecond {
 pub trait BiLinOp<T: ComplexField>: LinOp<T> {
 	/// computes the workspace layout required to apply the transpose or adjoint
 	/// o `self` to a matrix with `rhs_ncols` columns
-	fn transpose_apply_scratch(&self, rhs_ncols: usize, par: Par) -> StackReq;
+	fn transpose_apply_scratch(&self, rhs_ncols: usize, par: ParShape) -> StackReq;
 	/// applies the transpose of `self` to `rhs`, and stores the result in `out`
 	fn transpose_apply(
 		&self,
@@ -201,7 +201,7 @@ pub trait BiLinOp<T: ComplexField>: LinOp<T> {
 pub trait Precond<T: ComplexField>: LinOp<T> {
 	/// computes the workspace layout required to apply `self` or the conjugate
 	/// of `self` to a matrix with `rhs_ncols` columns in place
-	fn apply_in_place_scratch(&self, rhs_ncols: usize, par: Par) -> StackReq {
+	fn apply_in_place_scratch(&self, rhs_ncols: usize, par: ParShape) -> StackReq {
 		temp_mat_scratch::<T>(self.nrows(), rhs_ncols)
 			.and(self.apply_scratch(rhs_ncols, par))
 	}
@@ -246,7 +246,7 @@ pub trait BiPrecond<T: ComplexField>: Precond<T> + BiLinOp<T> {
 	fn transpose_apply_in_place_scratch(
 		&self,
 		rhs_ncols: usize,
-		par: Par,
+		par: ParShape,
 	) -> StackReq {
 		temp_mat_scratch::<T>(self.nrows(), rhs_ncols)
 			.and(self.transpose_apply_scratch(rhs_ncols, par))
@@ -285,7 +285,7 @@ pub trait BiPrecond<T: ComplexField>: Precond<T> + BiLinOp<T> {
 impl<T: ComplexField, M: Sized + LinOp<T>> LinOp<T> for &M {
 	#[inline]
 	#[track_caller]
-	fn apply_scratch(&self, rhs_ncols: usize, par: Par) -> StackReq {
+	fn apply_scratch(&self, rhs_ncols: usize, par: ParShape) -> StackReq {
 		(**self).apply_scratch(rhs_ncols, par)
 	}
 
@@ -326,7 +326,7 @@ impl<T: ComplexField, M: Sized + LinOp<T>> LinOp<T> for &M {
 impl<T: ComplexField, M: Sized + BiLinOp<T>> BiLinOp<T> for &M {
 	#[inline]
 	#[track_caller]
-	fn transpose_apply_scratch(&self, rhs_ncols: usize, par: Par) -> StackReq {
+	fn transpose_apply_scratch(&self, rhs_ncols: usize, par: ParShape) -> StackReq {
 		(**self).transpose_apply_scratch(rhs_ncols, par)
 	}
 
@@ -355,7 +355,7 @@ impl<T: ComplexField, M: Sized + BiLinOp<T>> BiLinOp<T> for &M {
 	}
 }
 impl<T: ComplexField, M: Sized + Precond<T>> Precond<T> for &M {
-	fn apply_in_place_scratch(&self, rhs_ncols: usize, par: Par) -> StackReq {
+	fn apply_in_place_scratch(&self, rhs_ncols: usize, par: ParShape) -> StackReq {
 		(**self).apply_in_place_scratch(rhs_ncols, par)
 	}
 
@@ -381,7 +381,7 @@ impl<T: ComplexField, M: Sized + BiPrecond<T>> BiPrecond<T> for &M {
 	fn transpose_apply_in_place_scratch(
 		&self,
 		rhs_ncols: usize,
-		par: Par,
+		par: ParShape,
 	) -> StackReq {
 		(**self).transpose_apply_in_place_scratch(rhs_ncols, par)
 	}

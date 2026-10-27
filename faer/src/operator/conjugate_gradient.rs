@@ -61,13 +61,13 @@ pub fn conjugate_gradient_scratch<T: ComplexField>(
 	precond: impl Precond<T>,
 	mat: impl LinOp<T>,
 	rhs_ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	fn implementation<T: ComplexField>(
 		M: &dyn Precond<T>,
 		A: &dyn LinOp<T>,
 		rhs_ncols: usize,
-		par: Par,
+		par: ParShape,
 	) -> StackReq {
 		let n = A.nrows();
 		let k = rhs_ncols;
@@ -123,7 +123,7 @@ pub fn conjugate_gradient<T: ComplexField>(
 		b: MatRef<'_, T>,
 		params: CgParams<T::Real>,
 		callback: &mut dyn FnMut(MatRef<'_, T>),
-		par: Par,
+		mut par: Par,
 		mut stack: &mut MemStack,
 	) -> Result<CgInfo<T::Real>, CgError<T::Real>> {
 		assert!(A.nrows() == A.ncols());
@@ -163,7 +163,7 @@ pub fn conjugate_gradient<T: ComplexField>(
 			unsafe { stack.rb_mut().make_raw::<usize>(k) };
 		let abs_residual =
 			if params.initial_guess == InitialGuessStatus::MaybeNonZero {
-				A.apply(r.rb_mut(), x.rb(), par, stack.rb_mut());
+				A.apply(r.rb_mut(), x.rb(), par.reborrow(), stack.rb_mut());
 				z!(&mut r, &b).for_each(|uz!(res, rhs)| *res = rhs - &*res);
 				r.norm_l2()
 			} else {
@@ -180,7 +180,7 @@ pub fn conjugate_gradient<T: ComplexField>(
 		}
 		let tril = BlockStructure::TriangularLower;
 		{
-			M.apply(p.rb_mut(), r.rb(), par, stack.rb_mut());
+			M.apply(p.rb_mut(), r.rb(), par.reborrow(), stack.rb_mut());
 			crate::linalg::matmul::triangular::matmul(
 				rtz.rb_mut(),
 				tril,
@@ -190,7 +190,7 @@ pub fn conjugate_gradient<T: ComplexField>(
 				p.rb(),
 				BlockStructure::Rectangular,
 				one::<T>(),
-				par,
+				par.reborrow(),
 			);
 		}
 		for iter in 0..params.max_iters {
@@ -201,7 +201,7 @@ pub fn conjugate_gradient<T: ComplexField>(
 				let (mut ptAp, mut stack) =
 					unsafe { temp_mat_uninit::<T, _, _>(k, k, stack.rb_mut()) };
 				let mut ptAp = ptAp.as_mat_mut();
-				A.apply(Ap.rb_mut(), p.rb(), par, stack.rb_mut());
+				A.apply(Ap.rb_mut(), p.rb(), par.reborrow(), stack.rb_mut());
 				crate::linalg::matmul::triangular::matmul(
 					ptAp.rb_mut(),
 					tril,
@@ -211,13 +211,13 @@ pub fn conjugate_gradient<T: ComplexField>(
 					Ap.rb(),
 					BlockStructure::Rectangular,
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				let (info, llt_perm) = match piv_llt::cholesky_in_place(
 					ptAp.rb_mut(),
 					perm,
 					perm_inv,
-					par,
+					par.reborrow(),
 					stack.rb_mut(),
 					Default::default(),
 				) {
@@ -244,12 +244,12 @@ pub fn conjugate_gradient<T: ComplexField>(
 				crate::linalg::triangular_solve::solve_lower_triangular_in_place(
 					ptAp.rb().get(..info.rank, ..info.rank),
 					alpha_perm.rb_mut().get_mut(..info.rank, ..),
-					par,
+					par.reborrow(),
 				);
 				crate::linalg::triangular_solve::solve_upper_triangular_in_place(
 					ptAp.rb().get(..info.rank, ..info.rank).adjoint(),
 					alpha_perm.rb_mut().get_mut(..info.rank, ..),
-					par,
+					par.reborrow(),
 				);
 				alpha_perm.rb_mut().get_mut(info.rank.., ..).fill(zero());
 				crate::perm::permute_rows(
@@ -269,7 +269,7 @@ pub fn conjugate_gradient<T: ComplexField>(
 					p.rb(),
 					alpha.rb(),
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				crate::linalg::matmul::matmul(
 					r.rb_mut(),
@@ -277,7 +277,7 @@ pub fn conjugate_gradient<T: ComplexField>(
 					Ap.rb(),
 					alpha.rb(),
 					-one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				callback(x.rb());
 			}
@@ -290,7 +290,7 @@ pub fn conjugate_gradient<T: ComplexField>(
 					non_exhaustive: NonExhaustive(()),
 				});
 			}
-			M.apply(z.rb_mut(), r.rb(), par, stack.rb_mut());
+			M.apply(z.rb_mut(), r.rb(), par.reborrow(), stack.rb_mut());
 			let (mut rtz_new, mut stack) =
 				unsafe { temp_mat_uninit::<T, _, _>(k, k, stack.rb_mut()) };
 			let mut rtz_new = rtz_new.as_mat_mut();
@@ -303,14 +303,14 @@ pub fn conjugate_gradient<T: ComplexField>(
 				z.rb(),
 				BlockStructure::Rectangular,
 				one::<T>(),
-				par,
+				par.reborrow(),
 			);
 			{
 				let (info, llt_perm) = match piv_llt::cholesky_in_place(
 					rtz.rb_mut(),
 					perm,
 					perm_inv,
-					par,
+					par.reborrow(),
 					stack.rb_mut(),
 					Default::default(),
 				) {
@@ -337,12 +337,12 @@ pub fn conjugate_gradient<T: ComplexField>(
 				crate::linalg::triangular_solve::solve_lower_triangular_in_place(
 					rtz.rb().get(..info.rank, ..info.rank),
 					beta_perm.rb_mut().get_mut(..info.rank, ..),
-					par,
+					par.reborrow(),
 				);
 				crate::linalg::triangular_solve::solve_upper_triangular_in_place(
 					rtz.rb().get(..info.rank, ..info.rank).adjoint(),
 					beta_perm.rb_mut().get_mut(..info.rank, ..),
-					par,
+					par.reborrow(),
 				);
 				beta_perm.rb_mut().get_mut(info.rank.., ..).fill(zero());
 				crate::perm::permute_rows(
@@ -357,7 +357,7 @@ pub fn conjugate_gradient<T: ComplexField>(
 					p.rb(),
 					beta.rb(),
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				p.copy_from(&z);
 			}
@@ -406,7 +406,7 @@ mod tests {
 				precond,
 				A.as_ref(),
 				2,
-				Par::Seq,
+				ParShape::Seq,
 			))),
 		);
 		let ref out = *out;
@@ -471,7 +471,7 @@ mod tests {
 					diag.as_ref(),
 					A.as_ref(),
 					k,
-					Par::Seq,
+					ParShape::Seq,
 				),
 			)),
 		);
@@ -492,7 +492,7 @@ mod tests {
 			initial_guess: InitialGuessStatus::Zero,
 			..CgParams::default()
 		};
-		let req = conjugate_gradient_scratch(precond, A.as_ref(), 1, Par::Seq);
+		let req = conjugate_gradient_scratch(precond, A.as_ref(), 1, ParShape::Seq);
 		for fill in [0x00u8, 0x3F, 0xFF] {
 			// the workspace is uninitialized memory: any byte pattern must work
 			let mut buffer = alloc::vec![

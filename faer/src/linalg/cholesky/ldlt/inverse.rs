@@ -1,7 +1,7 @@
 use crate::assert;
 use crate::internal_prelude::*;
 use linalg::matmul::triangular::BlockStructure;
-pub fn inverse_scratch<T: ComplexField>(dim: usize, par: Par) -> StackReq {
+pub fn inverse_scratch<T: ComplexField>(dim: usize, par: ParShape) -> StackReq {
 	_ = par;
 	temp_mat_scratch::<T>(dim, dim)
 }
@@ -10,7 +10,7 @@ pub fn inverse<T: ComplexField>(
 	out: MatMut<'_, T>,
 	L: MatRef<'_, T>,
 	D: DiagRef<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let mut out = out;
@@ -27,7 +27,7 @@ pub fn inverse<T: ComplexField>(
 	linalg::triangular_inverse::invert_unit_lower_triangular(
 		L_inv.rb_mut(),
 		L,
-		par,
+		par.reborrow(),
 	);
 	{
 		with_dim!(N, n);
@@ -84,7 +84,7 @@ mod tests {
 			MemStack::new(&mut {
 				MemBuffer::new(factor::cholesky_in_place_scratch::<c64>(
 					n,
-					Par::Seq,
+					ParShape::Seq,
 					default(),
 				))
 			}),
@@ -99,7 +99,7 @@ mod tests {
 			L.diagonal(),
 			Par::Seq,
 			MemStack::new(&mut MemBuffer::new(
-				inverse::inverse_scratch::<c64>(n, Par::Seq),
+				inverse::inverse_scratch::<c64>(n, ParShape::Seq),
 			)),
 		);
 		for j in 0..n {

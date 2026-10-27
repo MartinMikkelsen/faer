@@ -4,7 +4,7 @@ pub fn reconstruct_scratch<T: ComplexField>(
 	nrows: usize,
 	ncols: usize,
 	block_size: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	_ = par;
 	linalg::householder::apply_block_householder_sequence_on_the_left_in_place_scratch::<T>(nrows, block_size, ncols)
@@ -67,7 +67,7 @@ mod tests {
 						m,
 						n,
 						4,
-						Par::Seq,
+						ParShape::Seq,
 						default(),
 					))
 				}),
@@ -82,7 +82,7 @@ mod tests {
 				QR.get(..size, ..),
 				Par::Seq,
 				MemStack::new(&mut MemBuffer::new(
-					reconstruct::reconstruct_scratch::<c64>(m, n, 4, Par::Seq),
+					reconstruct::reconstruct_scratch::<c64>(m, n, 4, ParShape::Seq),
 				)),
 			);
 			assert!(A_rec ~ A);

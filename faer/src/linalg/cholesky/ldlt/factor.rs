@@ -374,7 +374,7 @@ pub(crate) fn cholesky_recursion_right_looking<T: ComplexField>(
 	eps: &T::Real,
 	delta: &T::Real,
 	signs: Option<&[i8]>,
-	par: Par,
+	mut par: Par,
 ) -> Result<usize, usize> {
 	let n = A.ncols();
 	if n <= recursion_threshold {
@@ -412,7 +412,7 @@ pub(crate) fn cholesky_recursion_right_looking<T: ComplexField>(
 				eps,
 				delta,
 				signs,
-				par,
+				par.reborrow(),
 			) {
 				Ok(local_count) => count += local_count,
 				Err(fail_idx) => return Err(j + fail_idx),
@@ -422,13 +422,13 @@ pub(crate) fn cholesky_recursion_right_looking<T: ComplexField>(
 				linalg::triangular_solve::solve_lower_triangular_in_place(
 					A00.conjugate(),
 					A10.rb_mut().transpose_mut(),
-					par,
+					par.reborrow(),
 				)
 			} else {
 				linalg::triangular_solve::solve_unit_lower_triangular_in_place(
 					A00.conjugate(),
 					A10.rb_mut().transpose_mut(),
-					par,
+					par.reborrow(),
 				)
 			}
 			let mut A10 = A10.rb_mut();
@@ -442,7 +442,7 @@ pub(crate) fn cholesky_recursion_right_looking<T: ComplexField>(
 					A10.rb().adjoint(),
 					BlockStructure::Rectangular,
 					-one::<T>(),
-					par,
+					par.reborrow(),
 				);
 			} else {
 				if has_spicy_matmul::<T>() {
@@ -465,7 +465,7 @@ pub(crate) fn cholesky_recursion_right_looking<T: ComplexField>(
 						Conj::Yes,
 						Some(D0.rb().transpose().as_diagonal()),
 						-one::<T>(),
-						par,
+						par.reborrow(),
 						MemStack::new(&mut []),
 					);
 				} else {
@@ -487,7 +487,7 @@ pub(crate) fn cholesky_recursion_right_looking<T: ComplexField>(
 						L10xD0.adjoint(),
 						BlockStructure::Rectangular,
 						-one::<T>(),
-						par,
+						par.reborrow(),
 					);
 				}
 			};
@@ -507,11 +507,11 @@ pub(crate) fn cholesky_block_left_looking<T: ComplexField>(
 	eps: &T::Real,
 	delta: &T::Real,
 	signs: Option<&[i8]>,
-	par: Par,
+	mut par: Par,
 ) -> Result<usize, usize> {
 	let n = A.nrows();
 	let cholesky =
-		|A: MatMut<'_, T>, D: RowMut<'_, T>, signs: Option<&[i8]>| {
+		|A: MatMut<'_, T>, D: RowMut<'_, T>, signs: Option<&[i8]>, par: Par| {
 			cholesky_recursion_right_looking(
 				A,
 				D,
@@ -526,7 +526,7 @@ pub(crate) fn cholesky_block_left_looking<T: ComplexField>(
 			)
 		};
 	if true || n < right_looking_threshold {
-		cholesky(A, D, signs)
+		cholesky(A, D, signs, par)
 	} else {
 		let mut A = A;
 		let mut D = D;
@@ -553,7 +553,7 @@ pub(crate) fn cholesky_block_left_looking<T: ComplexField>(
 					AL0.rb().adjoint(),
 					BlockStructure::Rectangular,
 					-one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				linalg::matmul::matmul(
 					AR1.rb_mut(),
@@ -561,7 +561,7 @@ pub(crate) fn cholesky_block_left_looking<T: ComplexField>(
 					AL1.rb(),
 					AL0.rb().adjoint(),
 					-one::<T>(),
-					par,
+					par.reborrow(),
 				);
 			} else {
 				if has_spicy_matmul::<T>() {
@@ -577,7 +577,7 @@ pub(crate) fn cholesky_block_left_looking<T: ComplexField>(
 						Conj::Yes,
 						Some(D0.rb().transpose().as_diagonal()),
 						-one::<T>(),
-						par,
+						par.reborrow(),
 						MemStack::new(&mut []),
 					);
 					spicy_matmul::<usize, T>(
@@ -592,7 +592,7 @@ pub(crate) fn cholesky_block_left_looking<T: ComplexField>(
 						Conj::Yes,
 						Some(D0.rb().transpose().as_diagonal()),
 						-one::<T>(),
-						par,
+						par.reborrow(),
 						MemStack::new(&mut []),
 					);
 				} else {
@@ -612,7 +612,7 @@ pub(crate) fn cholesky_block_left_looking<T: ComplexField>(
 						AL0xD0.adjoint(),
 						BlockStructure::Rectangular,
 						-one::<T>(),
-						par,
+						par.reborrow(),
 					);
 					linalg::matmul::matmul(
 						AR1.rb_mut(),
@@ -620,7 +620,7 @@ pub(crate) fn cholesky_block_left_looking<T: ComplexField>(
 						AL1,
 						AL0xD0.adjoint(),
 						-one::<T>(),
-						par,
+						par.reborrow(),
 					);
 				}
 			};
@@ -628,6 +628,7 @@ pub(crate) fn cholesky_block_left_looking<T: ComplexField>(
 				AR0.rb_mut(),
 				D1.rb_mut(),
 				signs.map(|signs| &signs[j..][..bj]),
+				par.reborrow(),
 			) {
 				Ok(local_count) => count += local_count,
 				Err(fail_idx) => return Err(j + fail_idx),
@@ -636,13 +637,13 @@ pub(crate) fn cholesky_block_left_looking<T: ComplexField>(
 				linalg::triangular_solve::solve_lower_triangular_in_place(
 					AR0.conjugate(),
 					AR1.rb_mut().transpose_mut(),
-					par,
+					par.reborrow(),
 				);
 			} else {
 				linalg::triangular_solve::solve_unit_lower_triangular_in_place(
 					AR0.conjugate(),
 					AR1.rb_mut().transpose_mut(),
-					par,
+					par.reborrow(),
 				);
 				for k in 0..bj {
 					let d = &D1[k].real().recip();
@@ -715,7 +716,7 @@ impl<T: ComplexField> Auto<T> for LdltParams {
 #[inline]
 pub fn cholesky_in_place_scratch<T: ComplexField>(
 	dim: usize,
-	par: Par,
+	par: ParShape,
 	params: Spec<LdltParams, T>,
 ) -> StackReq {
 	_ = par;

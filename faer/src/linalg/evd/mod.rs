@@ -106,7 +106,7 @@ pub enum ComputeEigenvectors {
 pub fn self_adjoint_evd_scratch<T: ComplexField>(
 	dim: usize,
 	compute_u: ComputeEigenvectors,
-	par: Par,
+	par: ParShape,
 	params: Spec<SelfAdjointEvdParams, T>,
 ) -> StackReq {
 	let n = dim;
@@ -162,14 +162,14 @@ pub fn self_adjoint_evd_scratch<T: ComplexField>(
 /// 	dyn_stack::MemBuffer::new(tridiagonal_self_adjoint_evd_scratch::<f64>(
 /// 		3,
 /// 		ComputeEigenvectors::Yes,
-/// 		Par::Seq,
+/// 		faer::ParShape::Seq,
 /// 		Default::default(),
 /// 	));
 /// ```
 pub fn tridiagonal_self_adjoint_evd_scratch<T: ComplexField>(
 	dim: usize,
 	compute_u: ComputeEigenvectors,
-	par: Par,
+	par: ParShape,
 	params: Spec<SelfAdjointEvdParams, T>,
 ) -> StackReq {
 	let n = dim;
@@ -323,7 +323,7 @@ pub fn self_adjoint_evd<T: ComplexField>(
 	A: MatRef<'_, T>,
 	s: DiagMut<'_, T>,
 	u: Option<MatMut<'_, T>>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 	params: Spec<SelfAdjointEvdParams, T>,
 ) -> Result<(), EvdError> {
@@ -365,7 +365,7 @@ pub fn self_adjoint_evd<T: ComplexField>(
 		tridiag::tridiag_in_place(
 			trid.rb_mut(),
 			householder.rb_mut(),
-			par,
+			par.reborrow(),
 			stack,
 			params.tridiag.into(),
 		);
@@ -428,7 +428,7 @@ pub fn self_adjoint_evd<T: ComplexField>(
 			diag.rb_mut(),
 			offdiag.rb_mut(),
 			u_evd.rb_mut(),
-			par,
+			par.reborrow(),
 			stack,
 			params.recursion_threshold,
 		)?;
@@ -478,7 +478,7 @@ pub fn self_adjoint_evd<T: ComplexField>(
 /// matrix's pseudoinverse, given the eigendecomposition
 pub fn pseudoinverse_from_self_adjoint_evd_scratch<T: ComplexField>(
 	dim: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	_ = par;
 	temp_mat_scratch::<T>(dim, dim).array(2)
@@ -644,7 +644,7 @@ fn eigenvectors_ok<T: ComplexField>(u: MatRef<'_, T>) -> bool {
 pub(crate) fn evd_from_real_schur_imp<T: RealField>(
 	A: MatRef<'_, T>,
 	V: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	params: EvdFromSchurParams,
 ) {
 	let one = one::<T>;
@@ -674,7 +674,7 @@ pub(crate) fn evd_from_real_schur_imp<T: RealField>(
 				p.copy(),
 				V.rb_mut().subrows_mut(0, k).col_mut(k),
 				norm.copy(),
-				par,
+				par.reborrow(),
 				params,
 			);
 			// The pivot is not part of the back-substituted slice, so it must
@@ -703,7 +703,7 @@ pub(crate) fn evd_from_real_schur_imp<T: RealField>(
 				q.copy(),
 				V.rb_mut().submatrix_mut(0, k - 1, k - 1, 2),
 				norm.copy(),
-				par,
+				par.reborrow(),
 				params,
 			);
 			V[(k - 1, k - 1)] *= scale.copy();
@@ -716,7 +716,7 @@ pub(crate) fn evd_from_cplx_schur_imp<T: ComplexField>(
 	A: MatRef<'_, T>,
 	conj_A: Conj,
 	V: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	params: EvdFromSchurParams,
 ) {
 	let one = one::<T>;
@@ -755,7 +755,7 @@ pub(crate) fn evd_from_cplx_schur_imp<T: ComplexField>(
 			p.copy(),
 			V.rb_mut().subrows_mut(0, k).col_mut(k),
 			norm.copy(),
-			par,
+			par.reborrow(),
 			params,
 		);
 		let scale: T = scale.to_cplx();
@@ -767,7 +767,7 @@ fn solve_real_shifted_upper_quasi_triangular_system<T: RealField>(
 	p: T,
 	x: ColMut<'_, T>,
 	norm: T,
-	par: Par,
+	mut par: Par,
 	params: EvdFromSchurParams,
 ) -> T {
 	let n = A.nrows();
@@ -856,7 +856,7 @@ fn solve_real_shifted_upper_quasi_triangular_system<T: RealField>(
 			p.copy(),
 			x1.rb_mut(),
 			norm.copy(),
-			par,
+			par.reborrow(),
 			params,
 		);
 		// The right block may have been rescaled; the left block's pending
@@ -871,7 +871,7 @@ fn solve_real_shifted_upper_quasi_triangular_system<T: RealField>(
 			A01,
 			x1.rb().as_mat(),
 			-one(),
-			par,
+			par.reborrow(),
 		);
 		let f0 = solve_real_shifted_upper_quasi_triangular_system(
 			A00,
@@ -893,7 +893,7 @@ fn solve_cplx_shifted_upper_quasi_triangular_system<T: RealField>(
 	q: T,
 	x: MatMut<'_, T>,
 	norm: T,
-	par: Par,
+	mut par: Par,
 	params: EvdFromSchurParams,
 ) -> T {
 	let n = A.nrows();
@@ -1023,7 +1023,7 @@ fn solve_cplx_shifted_upper_quasi_triangular_system<T: RealField>(
 			q.copy(),
 			x1.rb_mut(),
 			norm.copy(),
-			par,
+			par.reborrow(),
 			params,
 		);
 		for j in 0..x0.nrows() {
@@ -1036,7 +1036,7 @@ fn solve_cplx_shifted_upper_quasi_triangular_system<T: RealField>(
 			A01,
 			x1.rb(),
 			-one(),
-			par,
+			par.reborrow(),
 		);
 		let f0 = solve_cplx_shifted_upper_quasi_triangular_system(
 			A00,
@@ -1060,7 +1060,7 @@ fn solve_shifted_upper_triangular_system<T: ComplexField>(
 	p: T,
 	x: ColMut<'_, T>,
 	norm: T::Real,
-	par: Par,
+	mut par: Par,
 	params: EvdFromSchurParams,
 ) -> T::Real {
 	let n = A.nrows();
@@ -1118,7 +1118,7 @@ fn solve_shifted_upper_triangular_system<T: ComplexField>(
 			p.copy(),
 			x1.rb_mut(),
 			norm.copy(),
-			par,
+			par.reborrow(),
 			params,
 		);
 		let f1c: T = f1.to_cplx();
@@ -1133,7 +1133,7 @@ fn solve_shifted_upper_triangular_system<T: ComplexField>(
 			x1.rb().as_mat(),
 			Conj::No,
 			-one(),
-			par,
+			par.reborrow(),
 		);
 		let f0 = solve_shifted_upper_triangular_system(
 			A00,
@@ -1157,7 +1157,7 @@ pub fn evd_scratch<T: ComplexField>(
 	dim: usize,
 	eigen_left: ComputeEigenvectors,
 	eigen_right: ComputeEigenvectors,
-	par: Par,
+	par: ParShape,
 	params: Spec<EvdParams, T>,
 ) -> StackReq {
 	let n = dim;
@@ -1208,13 +1208,13 @@ pub fn evd_scratch<T: ComplexField>(
 /// use faer::Par;
 /// use faer::linalg::evd::hessenberg_schur_scratch;
 /// let req =
-/// 	hessenberg_schur_scratch::<f64>(3, true, Par::Seq, Default::default());
+/// 	hessenberg_schur_scratch::<f64>(3, true, faer::ParShape::Seq, Default::default());
 /// let _buffer = dyn_stack::MemBuffer::new(req);
 /// ```
 pub fn hessenberg_schur_scratch<T: ComplexField>(
 	dim: usize,
 	compute_z: bool,
-	par: Par,
+	par: ParShape,
 	params: Spec<SchurParams, T>,
 ) -> StackReq {
 	schur::multishift_qr_scratch::<T>(dim, dim, true, compute_z, par, *params)
@@ -1245,7 +1245,7 @@ pub fn hessenberg_schur_scratch<T: ComplexField>(
 /// let mut mem = MemBuffer::new(hessenberg_schur_scratch::<f64>(
 /// 	2,
 /// 	true,
-/// 	Par::Seq,
+/// 	faer::ParShape::Seq,
 /// 	Default::default(),
 /// ));
 /// hessenberg_schur_real(
@@ -1329,7 +1329,7 @@ pub fn hessenberg_schur_real<T: RealField>(
 /// let mut mem = MemBuffer::new(hessenberg_schur_scratch::<c64>(
 /// 	2,
 /// 	false,
-/// 	Par::Seq,
+/// 	faer::ParShape::Seq,
 /// 	Default::default(),
 /// ));
 /// hessenberg_schur_cplx(
@@ -1655,7 +1655,7 @@ pub fn eigenvectors_from_schur_real<T: RealField>(
 	t: MatRef<'_, T>,
 	q: Option<MatRef<'_, T>>,
 	mut x: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 	params: Spec<EvdFromSchurParams, T>,
 ) -> Result<(), EvdError> {
@@ -1669,7 +1669,7 @@ pub fn eigenvectors_from_schur_real<T: RealField>(
 	}
 	let (mut v, _) = temp_mat_zeroed::<T, _, _>(n, n, stack);
 	let mut v = v.as_mat_mut();
-	evd_from_real_schur_imp(t, v.rb_mut(), par, *params);
+	evd_from_real_schur_imp(t, v.rb_mut(), par.reborrow(), *params);
 	if let Some(q) = q {
 		linalg::matmul::matmul(
 			x.rb_mut(),
@@ -1724,7 +1724,7 @@ pub fn eigenvectors_from_schur_cplx<T: ComplexField>(
 	t: MatRef<'_, T>,
 	q: Option<MatRef<'_, T>>,
 	mut x: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 	params: Spec<EvdFromSchurParams, T>,
 ) -> Result<(), EvdError> {
@@ -1738,7 +1738,7 @@ pub fn eigenvectors_from_schur_cplx<T: ComplexField>(
 	}
 	let (mut v, _) = temp_mat_zeroed::<T, _, _>(n, n, stack);
 	let mut v = v.as_mat_mut();
-	evd_from_cplx_schur_imp(t, Conj::No, v.rb_mut(), par, *params);
+	evd_from_cplx_schur_imp(t, Conj::No, v.rb_mut(), par.reborrow(), *params);
 	if let Some(q) = q {
 		linalg::matmul::matmul(
 			x.rb_mut(),
@@ -1764,7 +1764,7 @@ fn evd_imp<T: ComplexField>(
 	s_im: Option<ColMut<'_, T>>,
 	u_left: Option<MatMut<'_, T>>,
 	u_right: Option<MatMut<'_, T>>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 	params: EvdParams,
 ) -> Result<(), EvdError> {
@@ -1811,7 +1811,7 @@ fn evd_imp<T: ComplexField>(
 		hessenberg::hessenberg_in_place(
 			H.rb_mut(),
 			householder.rb_mut(),
-			par,
+			par.reborrow(),
 			stack,
 			params.hessenberg.into(),
 		);
@@ -1823,7 +1823,7 @@ fn evd_imp<T: ComplexField>(
 				householder.rb(),
 				Conj::No,
 				Z.rb_mut().submatrix_mut(1, 1, n - 1, n - 1),
-				par,
+				par.reborrow(),
 				stack,
 			);
 		}
@@ -1842,7 +1842,7 @@ fn evd_imp<T: ComplexField>(
 			unsafe { core::mem::transmute(s_im.rb_mut().unwrap()) },
 			0,
 			n,
-			par,
+			par.reborrow(),
 			stack,
 			params.schur,
 		);
@@ -1857,7 +1857,7 @@ fn evd_imp<T: ComplexField>(
 			s.rb_mut(),
 			0,
 			n,
-			par,
+			par.reborrow(),
 			stack,
 			params.schur,
 		);
@@ -1873,7 +1873,7 @@ fn evd_imp<T: ComplexField>(
 			evd_from_real_schur_imp::<T::Real>(
 				unsafe { core::mem::transmute(H) },
 				unsafe { core::mem::transmute(X.rb_mut()) },
-				par,
+				par.reborrow(),
 				params.evd_from_schur,
 			);
 		} else {
@@ -1881,7 +1881,7 @@ fn evd_imp<T: ComplexField>(
 				H,
 				Conj::No,
 				X.rb_mut(),
-				par,
+				par.reborrow(),
 				params.evd_from_schur,
 			);
 		}
@@ -1894,7 +1894,7 @@ fn evd_imp<T: ComplexField>(
 			X.rb(),
 			BlockStructure::TriangularUpper,
 			one(),
-			par,
+			par.reborrow(),
 		);
 		normalize_eigenvectors(u.rb_mut(), H);
 		if !eigenvectors_ok(u.rb()) {
@@ -1910,7 +1910,7 @@ fn evd_imp<T: ComplexField>(
 					core::mem::transmute(H.transpose().reverse_rows_and_cols())
 				},
 				unsafe { core::mem::transmute(X.rb_mut()) },
-				par,
+				par.reborrow(),
 				params.evd_from_schur,
 			);
 		} else {
@@ -1918,7 +1918,7 @@ fn evd_imp<T: ComplexField>(
 				H.transpose().reverse_rows_and_cols(),
 				Conj::Yes,
 				X.rb_mut(),
-				par,
+				par.reborrow(),
 				params.evd_from_schur,
 			);
 		}
@@ -2056,7 +2056,7 @@ mod general_tests {
 					n,
 					ComputeEigenvectors::Yes,
 					ComputeEigenvectors::Yes,
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				))),
 				params,
@@ -2095,7 +2095,7 @@ mod general_tests {
 					n,
 					ComputeEigenvectors::Yes,
 					ComputeEigenvectors::Yes,
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				))),
 				params,
@@ -2214,7 +2214,7 @@ mod eig_2131_tests {
 			n,
 			ComputeEigenvectors::Yes,
 			ComputeEigenvectors::Yes,
-			Par::Seq,
+			ParShape::Seq,
 			params,
 		));
 		evd_real(
@@ -2367,7 +2367,7 @@ mod eig_2131_tests {
 				n,
 				ComputeEigenvectors::No,
 				ComputeEigenvectors::Yes,
-				Par::Seq,
+				ParShape::Seq,
 				params,
 			));
 			evd_cplx(
@@ -2420,7 +2420,7 @@ mod self_adjoint_tests {
 					self_adjoint_evd_scratch::<T>(
 						n,
 						ComputeEigenvectors::Yes,
-						Par::Seq,
+						ParShape::Seq,
 						params,
 					),
 				)),
@@ -2441,7 +2441,7 @@ mod self_adjoint_tests {
 					self_adjoint_evd_scratch::<T>(
 						n,
 						ComputeEigenvectors::No,
-						Par::Seq,
+						ParShape::Seq,
 						params,
 					),
 				)),
@@ -2501,7 +2501,7 @@ mod self_adjoint_tests {
 		}
 		.rand::<Mat<f64>>(rng);
 		let mat = &mat + mat.adjoint();
-		let pinv = mat.self_adjoint_eigen(Side::Lower).unwrap().pseudoinverse();
+		let pinv = mat.self_adjoint_eigen(Side::Lower, Par::Seq).unwrap().pseudoinverse(Par::Seq);
 		let err = &mat * &pinv - Mat::<f64>::identity(n, n);
 		assert!(err.norm_max() < 1e-10);
 	}
@@ -2516,11 +2516,11 @@ mod scale_and_empty_tests {
 	#[test]
 	fn two_by_two_finite_spectrum_at_the_range_limit() {
 		let a = crate::mat![[1e308f64, 0.0], [0.0, 1e308]];
-		let eig = a.self_adjoint_eigen(Side::Lower).unwrap();
+		let eig = a.self_adjoint_eigen(Side::Lower, Par::Seq).unwrap();
 		assert_eq!(eig.S()[0], 1e308);
 		assert_eq!(eig.S()[1], 1e308);
 		let a = crate::mat![[1e38f32, 0.0], [0.0, 1e38]];
-		let eig = a.self_adjoint_eigen(Side::Lower).unwrap();
+		let eig = a.self_adjoint_eigen(Side::Lower, Par::Seq).unwrap();
 		assert_eq!(eig.S()[0], 1e38);
 		assert_eq!(eig.S()[1], 1e38);
 	}
@@ -2530,14 +2530,14 @@ mod scale_and_empty_tests {
 	fn two_by_two_subnormal_diagonal() {
 		let q = f64::from_bits(1);
 		let a = Mat::<f64>::from_fn(2, 2, |i, j| if i == j { q } else { 0.0 });
-		let eig = a.self_adjoint_eigen(Side::Lower).unwrap();
+		let eig = a.self_adjoint_eigen(Side::Lower, Par::Seq).unwrap();
 		assert_eq!(eig.S()[0], q);
 		assert_eq!(eig.S()[1], q);
 	}
 	#[test]
 	fn empty_matrix() {
 		let a = Mat::<f64>::zeros(0, 0);
-		let eig = a.self_adjoint_eigen(Side::Lower).unwrap();
+		let eig = a.self_adjoint_eigen(Side::Lower, Par::Seq).unwrap();
 		assert_eq!(eig.U().shape(), (0, 0));
 		assert_eq!(eig.S().dim(), 0);
 	}
@@ -2600,7 +2600,7 @@ mod tridiagonal_range_tests {
 			MemBuffer::new(tridiagonal_self_adjoint_evd_scratch::<f64>(
 				n,
 				ComputeEigenvectors::Yes,
-				Par::Seq,
+				crate::ParShape::Seq,
 				params,
 			));
 		tridiagonal_self_adjoint_evd(

@@ -36,7 +36,7 @@ pub struct PivLltInfo {
 #[inline]
 pub fn cholesky_in_place_scratch<I: Index, T: ComplexField>(
 	dim: usize,
-	par: Par,
+	par: ParShape,
 	params: Spec<PivLltParams, T>,
 ) -> StackReq {
 	_ = par;
@@ -48,7 +48,7 @@ pub fn cholesky_in_place<'out, I: Index, T: ComplexField>(
 	a: MatMut<'_, T>,
 	perm: &'out mut [I],
 	perm_inv: &'out mut [I],
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 	params: Spec<PivLltParams, T>,
 ) -> Result<(PivLltInfo, PermRef<'out, I>), LltError> {
@@ -164,7 +164,7 @@ pub fn cholesky_in_place<'out, I: Index, T: ComplexField>(
 							a.rb().get(j + 1.., k..j),
 							a.rb().get(j, k..j).adjoint(),
 							-one::<T>(),
-							par,
+							par.reborrow(),
 						);
 					}
 					let ajj = &ajj.recip();
@@ -180,7 +180,7 @@ pub fn cholesky_in_place<'out, I: Index, T: ComplexField>(
 					a.rb().get(k + bs.., k..k + bs).adjoint(),
 					BlockStructure::Rectangular,
 					-one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				k += bs;
 			}

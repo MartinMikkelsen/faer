@@ -137,7 +137,7 @@ fn eigenvalues_and_right_eigenvectors_survive_balancing() {
 			n,
 			ComputeEigenvectors::No,
 			ComputeEigenvectors::Yes,
-			Par::Seq,
+			ParShape::Seq,
 			Default::default(),
 		));
 		evd_cplx(

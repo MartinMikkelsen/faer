@@ -1070,7 +1070,7 @@ fn aggressive_early_deflation<T: RealField>(
 	ilo: usize,
 	ihi: usize,
 	nw: usize,
-	par: Par,
+	mut par: Par,
 	mut stack: &mut MemStack,
 	params: SchurParams,
 ) -> (usize, usize) {
@@ -1146,7 +1146,7 @@ fn aggressive_early_deflation<T: RealField>(
 			s_im_window.rb_mut(),
 			0,
 			jw,
-			par,
+			par.reborrow(),
 			stack.rb_mut(),
 			params,
 		)
@@ -1307,7 +1307,7 @@ fn aggressive_early_deflation<T: RealField>(
 					vv.rb().adjoint().as_mat(),
 					tw_slice.rb(),
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				matmul(
 					tw_slice.rb_mut(),
@@ -1315,7 +1315,7 @@ fn aggressive_early_deflation<T: RealField>(
 					vv.rb().as_mat(),
 					tmp.as_ref(),
 					-tau,
-					par,
+					par.reborrow(),
 				);
 			}
 			{
@@ -1328,7 +1328,7 @@ fn aggressive_early_deflation<T: RealField>(
 					tw_slice2.rb(),
 					vv.rb().as_mat(),
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				matmul(
 					tw_slice2.rb_mut(),
@@ -1336,7 +1336,7 @@ fn aggressive_early_deflation<T: RealField>(
 					tmp.as_ref(),
 					vv.rb().adjoint().as_mat(),
 					-tau,
-					par,
+					par.reborrow(),
 				);
 			}
 			{
@@ -1349,7 +1349,7 @@ fn aggressive_early_deflation<T: RealField>(
 					v_slice.rb(),
 					vv.rb().as_mat(),
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				matmul(
 					v_slice.rb_mut(),
@@ -1357,7 +1357,7 @@ fn aggressive_early_deflation<T: RealField>(
 					tmp.as_ref(),
 					vv.rb().adjoint().as_mat(),
 					-tau,
-					par,
+					par.reborrow(),
 				);
 			}
 			vv[0] = beta;
@@ -1367,7 +1367,7 @@ fn aggressive_early_deflation<T: RealField>(
 			hessenberg::hessenberg_in_place(
 				tw.rb_mut().submatrix_mut(0, 0, ns, ns),
 				householder.rb_mut().as_mat_mut().transpose_mut(),
-				par,
+				par.reborrow(),
 				stack.rb_mut(),
 				Default::default(),
 			);
@@ -1376,7 +1376,7 @@ fn aggressive_early_deflation<T: RealField>(
 				householder.rb().transpose().as_mat(),
 				Conj::Yes,
 				unsafe { tw.rb().submatrix(1, ns, ns - 1, jw - ns).const_cast() },
-				par,
+				par.reborrow(),
 				stack.rb_mut(),
 			);
 			apply_block_householder_sequence_on_the_right_in_place_with_conj(
@@ -1384,7 +1384,7 @@ fn aggressive_early_deflation<T: RealField>(
 				householder.rb().transpose().as_mat(),
 				Conj::No,
 				v.rb_mut().submatrix_mut(0, 1, jw, ns - 1),
-				par,
+				par.reborrow(),
 				stack.rb_mut(),
 			);
 		}
@@ -1425,7 +1425,7 @@ fn aggressive_early_deflation<T: RealField>(
 				v.rb().adjoint(),
 				a_slice.rb(),
 				one::<T>(),
-				par,
+				par.reborrow(),
 			);
 			a_slice.copy_from(wh_slice.rb());
 			i += iblock;
@@ -1449,7 +1449,7 @@ fn aggressive_early_deflation<T: RealField>(
 				a_slice.rb(),
 				v.rb(),
 				one::<T>(),
-				par,
+				par.reborrow(),
 			);
 			a_slice.copy_from(wv_slice.rb());
 			i += iblock;
@@ -1473,7 +1473,7 @@ fn aggressive_early_deflation<T: RealField>(
 				z_slice.rb(),
 				v.rb(),
 				one::<T>(),
-				par,
+				par.reborrow(),
 			);
 			z_slice.copy_from(wv_slice.rb());
 			i += iblock;
@@ -1545,7 +1545,7 @@ fn multishift_qr_sweep<T: RealField>(
 	s_im: ColMut<T>,
 	ilo: usize,
 	ihi: usize,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let n = a.nrows();
@@ -1605,7 +1605,7 @@ fn multishift_qr_sweep<T: RealField>(
 		s_re.rb(),
 		s_im.rb(),
 		&mut i_pos_block,
-		par,
+		par.reborrow(),
 	);
 	move_bulges_down(
 		ilo,
@@ -1623,7 +1623,7 @@ fn multishift_qr_sweep<T: RealField>(
 		s_re.rb(),
 		s_im.rb(),
 		&mut i_pos_block,
-		par,
+		par.reborrow(),
 	);
 	remove_bulges(
 		ilo,
@@ -1660,7 +1660,7 @@ fn introduce_bulges<T: RealField>(
 	s_re: ColRef<'_, T>,
 	s_im: ColRef<'_, T>,
 	i_pos_block: &mut usize,
-	parallelism: Par,
+	mut parallelism: Par,
 ) {
 	let n = a.nrows();
 	let ref eps = eps::<T>();
@@ -1832,7 +1832,7 @@ fn introduce_bulges<T: RealField>(
 				u2.rb().adjoint(),
 				a_slice.rb(),
 				one::<T>(),
-				parallelism,
+				parallelism.reborrow(),
 			);
 			a_slice.copy_from(wh_slice.rb());
 			i += iblock;
@@ -1855,7 +1855,7 @@ fn introduce_bulges<T: RealField>(
 				a_slice.rb(),
 				u2.rb(),
 				one::<T>(),
-				parallelism,
+				parallelism.reborrow(),
 			);
 			a_slice.copy_from(wv_slice.rb());
 			i += iblock;
@@ -1878,7 +1878,7 @@ fn introduce_bulges<T: RealField>(
 				z_slice.rb(),
 				u2.rb(),
 				one::<T>(),
-				parallelism,
+				parallelism.reborrow(),
 			);
 			z_slice.copy_from(wv_slice.rb());
 			i += iblock;
@@ -1903,7 +1903,7 @@ fn move_bulges_down<T: RealField>(
 	s_re: ColRef<'_, T>,
 	s_im: ColRef<'_, T>,
 	i_pos_block: &mut usize,
-	parallelism: Par,
+	mut parallelism: Par,
 ) {
 	let n = a.nrows();
 	let ref eps = eps::<T>();
@@ -2067,7 +2067,7 @@ fn move_bulges_down<T: RealField>(
 					u2.rb().adjoint(),
 					a_slice.rb(),
 					one::<T>(),
-					parallelism,
+					parallelism.reborrow(),
 				);
 				a_slice.copy_from(wh_slice.rb());
 				i += iblock;
@@ -2091,7 +2091,7 @@ fn move_bulges_down<T: RealField>(
 					a_slice.rb(),
 					u2.rb(),
 					one::<T>(),
-					parallelism,
+					parallelism.reborrow(),
 				);
 				a_slice.copy_from(wv_slice.rb());
 				i += iblock;
@@ -2115,7 +2115,7 @@ fn move_bulges_down<T: RealField>(
 					z_slice.rb(),
 					u2.rb(),
 					one::<T>(),
-					parallelism,
+					parallelism.reborrow(),
 				);
 				z_slice.copy_from(wv_slice.rb());
 				i += iblock;
@@ -2140,7 +2140,7 @@ fn remove_bulges<T: RealField>(
 	s_re: ColRef<'_, T>,
 	s_im: ColRef<'_, T>,
 	i_pos_block: &mut usize,
-	parallelism: Par,
+	mut parallelism: Par,
 ) {
 	let n = a.nrows();
 	let ref eps = eps::<T>();
@@ -2351,7 +2351,7 @@ fn remove_bulges<T: RealField>(
 					u2.rb().adjoint(),
 					a_slice.rb(),
 					one::<T>(),
-					parallelism,
+					parallelism.reborrow(),
 				);
 				a_slice.copy_from(wh_slice.rb());
 				i += iblock;
@@ -2375,7 +2375,7 @@ fn remove_bulges<T: RealField>(
 					a_slice.rb(),
 					u2.rb(),
 					one::<T>(),
-					parallelism,
+					parallelism.reborrow(),
 				);
 				a_slice.copy_from(wv_slice.rb());
 				i += iblock;
@@ -2399,7 +2399,7 @@ fn remove_bulges<T: RealField>(
 					z_slice.rb(),
 					u2.rb(),
 					one::<T>(),
-					parallelism,
+					parallelism.reborrow(),
 				);
 				z_slice.copy_from(wv_slice.rb());
 				i += iblock;
@@ -2415,7 +2415,7 @@ pub fn multishift_qr<T: RealField>(
 	w_im: ColMut<'_, T>,
 	ilo: usize,
 	ihi: usize,
-	parallelism: Par,
+	mut parallelism: Par,
 	stack: &mut MemStack,
 	params: SchurParams,
 ) -> (isize, usize, usize) {
@@ -2511,7 +2511,7 @@ pub fn multishift_qr<T: RealField>(
 			istart,
 			istop,
 			nw,
-			parallelism,
+			parallelism.reborrow(),
 			stack.rb_mut(),
 			params,
 		);
@@ -2636,7 +2636,7 @@ pub fn multishift_qr<T: RealField>(
 			shifts_im.rb_mut(),
 			istart,
 			istop,
-			parallelism,
+			parallelism.reborrow(),
 			stack.rb_mut(),
 		);
 		count_sweep += 1;
@@ -3080,7 +3080,7 @@ mod tests {
 							n,
 							true,
 							true,
-							Par::Seq,
+							ParShape::Seq,
 							auto!(f64),
 						),
 					)),

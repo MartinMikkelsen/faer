@@ -10,7 +10,7 @@ fn iterate_lanczos<T: ComplexField>(
 	V: MatMut<'_, T>,
 	start: usize,
 	end: usize,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let mut V = V;
@@ -24,7 +24,7 @@ fn iterate_lanczos<T: ComplexField>(
 		A.apply(
 			Vnext.rb_mut().as_mat_mut(),
 			V.col(j - 1).as_mat(),
-			par,
+			par.reborrow(),
 			stack,
 		);
 		let (mut converged, _) = stack.collect(core::iter::repeat_n(false, j));
@@ -79,7 +79,7 @@ pub fn partial_self_adjoint_eigen_imp<T: ComplexField>(
 	n_eigval: usize,
 	tol: T::Real,
 	restarts: usize,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) -> usize {
 	let n = A.nrows();
@@ -110,7 +110,7 @@ pub fn partial_self_adjoint_eigen_imp<T: ComplexField>(
 			let f = n.sqrt().recip();
 			zip!(V.rb_mut().col_mut(0)).for_each(|unzip!(y)| *y = f.copy());
 		}
-		iterate_lanczos(A, H.as_mut(), V.as_mut(), 1, min_dim, par, stack);
+		iterate_lanczos(A, H.as_mut(), V.as_mut(), 1, min_dim, par.reborrow(), stack);
 		let mut k = min_dim;
 		for _ in 0..restarts {
 			iterate_lanczos(
@@ -119,7 +119,7 @@ pub fn partial_self_adjoint_eigen_imp<T: ComplexField>(
 				V.as_mut(),
 				k + 1,
 				max_dim,
-				par,
+				par.reborrow(),
 				stack,
 			);
 			let ref Hmm = H[(max_dim, max_dim - 1)].copy();
@@ -137,7 +137,7 @@ pub fn partial_self_adjoint_eigen_imp<T: ComplexField>(
 					H_slice.rb(),
 					s.rb_mut(),
 					Some(Q_slice.rb_mut()),
-					par,
+					par.reborrow(),
 					stack,
 					default(),
 				)
@@ -241,7 +241,7 @@ pub fn partial_self_adjoint_eigen_imp<T: ComplexField>(
 				V.rb().get(.., purge..max_dim),
 				Q.rb().get(purge..max_dim, purge..k),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			V.rb_mut().get_mut(.., purge..k).copy_from(&V_tmp);
 			let mut b_tmp = tmp.rb_mut().get_mut(0, ..);
@@ -251,7 +251,7 @@ pub fn partial_self_adjoint_eigen_imp<T: ComplexField>(
 				H.rb().get(max_dim, ..),
 				Q.rb(),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			H.rb_mut().get_mut(max_dim, ..).copy_from(b_tmp);
 			let (mut x, y) = V.rb_mut().two_cols_mut(k, max_dim);
@@ -323,7 +323,7 @@ mod tests {
 			crate::matrix_free::eigen::partial_eigen_scratch(
 				&A,
 				n_eigval,
-				par,
+				par.shape(),
 				default(),
 			),
 		);
