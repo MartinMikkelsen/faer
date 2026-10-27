@@ -1,6 +1,6 @@
 [package]
 name = "t4a-faer-traits"
-version = "0.24.0"
+version = "0.24.1"
 edition = "2021"
 authors = ["sarah quiñones <sarah@veganb.tw>"]
 description = "Temporary tensor4all fork of faer-traits."

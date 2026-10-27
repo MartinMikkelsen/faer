@@ -1,6 +1,6 @@
 [package]
 name = "t4a-faer"
-version = "0.25.0"
+version = "0.25.1"
 edition = "2021"
 authors = ["sarah quiñones <sarah@veganb.tw>"]
 description = "Temporary tensor4all fork of faer: an AI-driven experiment build for tenferro-rs."
@@ -35,7 +35,7 @@ dyn-stack = { version = "0.13.2", default-features = false, features = ["core-er
 pulp = { version = "0.22.2", default-features = false, features = ["x86-v3"] }
 equator = { version = "0.6.0" }
 
-faer-traits = { package = "t4a-faer-traits", path = "../faer-traits", version = "0.24.0", default-features = false }
+faer-traits = { package = "t4a-faer-traits", path = "../faer-traits", version = "0.24.1", default-features = false }
 
 gemm = { version = "0.19.0", default-features = false }
 nano-gemm = { version = "0.2.2", default-features = false }
