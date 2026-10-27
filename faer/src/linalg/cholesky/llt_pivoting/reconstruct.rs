@@ -151,4 +151,45 @@ mod tests {
 			}
 		}
 	}
+	/// a zero first pivot means rank zero, as LAPACK `dpstrf` reports, not a
+	/// factorization error (`tensor4all/faer#31`)
+	#[test]
+	fn test_zero_matrix_rank_zero() {
+		for n in [1, 2, 5] {
+			let mut L = Mat::<f64>::zeros(n, n);
+			let perm_fwd = &mut *vec![0usize; n];
+			let perm_bwd = &mut *vec![0usize; n];
+			let (info, perm) = factor::cholesky_in_place(
+				L.as_mut(),
+				perm_fwd,
+				perm_bwd,
+				Par::Seq,
+				MemStack::new(&mut MemBuffer::new(
+					factor::cholesky_in_place_scratch::<usize, f64>(
+						n,
+						ParShape::Seq,
+						default(),
+					),
+				)),
+				default(),
+			)
+			.unwrap();
+			assert_eq!(info.rank, 0);
+			let mut A_rec = Mat::full(n, n, f64::NAN);
+			reconstruct::reconstruct(
+				A_rec.as_mut(),
+				L.as_ref(),
+				perm,
+				Par::Seq,
+				MemStack::new(&mut MemBuffer::new(
+					reconstruct::reconstruct_scratch::<usize, f64>(n, ParShape::Seq),
+				)),
+			);
+			for j in 0..n {
+				for i in j..n {
+					assert_eq!(A_rec[(i, j)], 0.0);
+				}
+			}
+		}
+	}
 }
