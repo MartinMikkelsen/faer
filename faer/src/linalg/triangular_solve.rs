@@ -717,4 +717,37 @@ mod tests {
 		check(1e-310f64);
 		check(1e-44f32);
 	}
+	/// a purely imaginary subnormal pivot (`tensor4all/faer#31`)
+	#[test]
+	fn tiny_imaginary_pivot_scalar_solve() {
+		fn check<T: ComplexField + Clone>(pivot: T) {
+			let a = Mat::<T>::from_fn(1, 1, |_, _| pivot.clone());
+			for conj in [Conj::No, Conj::Yes] {
+				let mut rhs = Mat::<T>::from_fn(1, 1, |_, _| match conj {
+					Conj::No => pivot.clone(),
+					Conj::Yes => pivot.conj(),
+				});
+				solve_lower_triangular_in_place_with_conj(
+					a.as_ref(),
+					conj,
+					rhs.as_mut(),
+					Par::Seq,
+				);
+				assert_eq!(rhs[(0, 0)].clone(), one::<T>());
+				let mut rhs = Mat::<T>::from_fn(1, 1, |_, _| match conj {
+					Conj::No => pivot.clone(),
+					Conj::Yes => pivot.conj(),
+				});
+				solve_upper_triangular_in_place_with_conj(
+					a.as_ref(),
+					conj,
+					rhs.as_mut(),
+					Par::Seq,
+				);
+				assert_eq!(rhs[(0, 0)].clone(), one::<T>());
+			}
+		}
+		check(c64::new(0.0, f64::MIN_POSITIVE / 2.0));
+		check(c32::new(0.0, f32::MIN_POSITIVE / 2.0));
+	}
 }
