@@ -7,6 +7,10 @@ assignees: ''
 
 ---
 
+**Review rules**
+
+- [ ] I have read the [faer fork review rules](https://github.com/tensor4all/faer/blob/main/docs/review-rules.md).
+
 **Is your feature request related to a problem? Please describe.**
 A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
 

@@ -12,6 +12,10 @@ rule files the task needs.
 Verification and adoption of a change: [docs/adoption-protocol.md](docs/adoption-protocol.md) — the
 blast-radius acceptance grid, the measure-once rule and the exact commands.
 
+Read [the fork's review rules](docs/review-rules.md) before opening an issue,
+preparing a change, or reviewing a PR. They define the faer-specific naming,
+file-layout and test-placement overrides to the shared rules.
+
 
 ## Repository-specific rules
 
