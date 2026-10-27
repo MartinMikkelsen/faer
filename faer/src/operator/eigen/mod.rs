@@ -44,7 +44,7 @@ fn iterate_arnoldi<T: ComplexField>(
 	V: MatMut<'_, T>,
 	start: usize,
 	end: usize,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let mut V = V;
@@ -58,7 +58,7 @@ fn iterate_arnoldi<T: ComplexField>(
 		A.apply(
 			Vnext.rb_mut().as_mat_mut(),
 			V.col(j - 1).as_mat(),
-			par,
+			par.reborrow(),
 			stack,
 		);
 		let (mut converged, _) = stack.collect(core::iter::repeat_n(false, j));
@@ -277,7 +277,7 @@ fn partial_schur_real_imp<T: RealField>(
 	n_eigval: usize,
 	tol: T,
 	restarts: usize,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) -> usize {
 	let n = A.nrows();
@@ -321,7 +321,7 @@ fn partial_schur_real_imp<T: RealField>(
 			let f = n.sqrt().recip();
 			zip!(V.rb_mut().col_mut(0)).for_each(|unzip!(y)| *y = f.copy());
 		}
-		iterate_arnoldi(A, H.as_mut(), V.as_mut(), 1, min_dim, par, stack);
+		iterate_arnoldi(A, H.as_mut(), V.as_mut(), 1, min_dim, par.reborrow(), stack);
 		let mut k = min_dim;
 		for iter in 0..restarts {
 			_ = iter;
@@ -331,7 +331,7 @@ fn partial_schur_real_imp<T: RealField>(
 				V.as_mut(),
 				k + 1,
 				max_dim,
-				par,
+				par.reborrow(),
 				stack,
 			);
 			let ref Hmm = H[(max_dim, max_dim - 1)].abs();
@@ -355,7 +355,7 @@ fn partial_schur_real_imp<T: RealField>(
 				linalg::evd::hessenberg::hessenberg_in_place(
 					H_slice.rb_mut(),
 					householder.rb_mut(),
-					par,
+					par.reborrow(),
 					stack,
 					default(),
 				);
@@ -364,7 +364,7 @@ fn partial_schur_real_imp<T: RealField>(
 					householder.rb(),
 					Conj::No,
 					Q_slice.rb_mut().submatrix_mut(1, 1, n - 1, n - 1),
-					par,
+					par.reborrow(),
 					stack,
 				);
 				for j in 0..n {
@@ -381,7 +381,7 @@ fn partial_schur_real_imp<T: RealField>(
 				w_im.rb_mut(),
 				0,
 				n,
-				par,
+				par.reborrow(),
 				stack,
 				auto!(T),
 			);
@@ -433,7 +433,7 @@ fn partial_schur_real_imp<T: RealField>(
 			linalg::evd::evd_from_real_schur_imp(
 				H_slice.rb(),
 				X.as_mut(),
-				par,
+				par.reborrow(),
 				auto!(T),
 			);
 			let mut vecs = vecs.rb_mut().get_mut(..n, ..n);
@@ -443,7 +443,7 @@ fn partial_schur_real_imp<T: RealField>(
 				Q_slice.rb(),
 				X.rb(),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			let vecs = vecs.rb();
 			let mut H_tmp = tmp.rb_mut().get_mut(..active, ..);
@@ -453,7 +453,7 @@ fn partial_schur_real_imp<T: RealField>(
 				H.rb().get(..active, ..),
 				Q.rb(),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			H.rb_mut().get_mut(..active, ..).copy_from(&H_tmp);
 			let mut j = 0usize;
@@ -555,7 +555,7 @@ fn partial_schur_real_imp<T: RealField>(
 				V.rb().get(.., purge..max_dim),
 				Q.rb().get(purge..max_dim, purge..k),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			V.rb_mut().get_mut(.., purge..k).copy_from(&V_tmp);
 			let mut b_tmp = tmp.rb_mut().get_mut(0, ..);
@@ -565,7 +565,7 @@ fn partial_schur_real_imp<T: RealField>(
 				H.rb().get(max_dim, ..),
 				Q.rb(),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			H.rb_mut().get_mut(max_dim, ..).copy_from(b_tmp);
 			let (mut x, y) = V.rb_mut().two_cols_mut(k, max_dim);
@@ -582,7 +582,7 @@ fn partial_schur_real_imp<T: RealField>(
 		let mut H = H.rb_mut().get_mut(..n, ..n);
 		let mut V = V.rb_mut().get_mut(..n, ..n);
 		V.rb_mut().diagonal_mut().fill(one());
-		A.apply(H.rb_mut(), V.rb(), par, stack);
+		A.apply(H.rb_mut(), V.rb(), par.reborrow(), stack);
 		let (mut w, stack) = temp_mat_zeroed::<T, _, _>(n, 2, stack);
 		let mut w = w.as_mat_mut();
 		let (mut w_re, mut w_im) =
@@ -598,7 +598,7 @@ fn partial_schur_real_imp<T: RealField>(
 			linalg::evd::hessenberg::hessenberg_in_place(
 				H.rb_mut(),
 				householder.rb_mut(),
-				par,
+				par.reborrow(),
 				stack,
 				default(),
 			);
@@ -607,7 +607,7 @@ fn partial_schur_real_imp<T: RealField>(
 				householder.rb(),
 				Conj::No,
 				V.rb_mut().submatrix_mut(1, 1, n - 1, n - 1),
-				par,
+				par.reborrow(),
 				stack,
 			);
 			for j in 0..n {
@@ -624,7 +624,7 @@ fn partial_schur_real_imp<T: RealField>(
 			w_im.rb_mut(),
 			0,
 			n,
-			par,
+			par.reborrow(),
 			stack,
 			auto!(T),
 		);
@@ -634,7 +634,7 @@ fn partial_schur_real_imp<T: RealField>(
 	let H = H.rb().get(..n, ..n);
 	let V = V.rb().get(.., ..n);
 	let mut X = X.rb_mut().get_mut(..n, ..n);
-	linalg::evd::evd_from_real_schur_imp(H, X.as_mut(), par, auto!(T));
+	linalg::evd::evd_from_real_schur_imp(H, X.as_mut(), par.reborrow(), auto!(T));
 	let mut vecs = tmp.rb_mut().get_mut(.., ..n);
 	matmul(vecs.rb_mut(), Accum::Replace, V, X.rb(), one(), par);
 	let V = vecs.rb();
@@ -729,7 +729,7 @@ fn partial_schur_cplx_imp<T: ComplexField>(
 	n_eigval: usize,
 	tol: T::Real,
 	restarts: usize,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) -> usize {
 	let n = A.nrows();
@@ -773,7 +773,7 @@ fn partial_schur_cplx_imp<T: ComplexField>(
 			let f = n.sqrt().recip();
 			zip!(V.rb_mut().col_mut(0)).for_each(|unzip!(y)| *y = f.copy());
 		}
-		iterate_arnoldi(A, H.as_mut(), V.as_mut(), 1, min_dim, par, stack);
+		iterate_arnoldi(A, H.as_mut(), V.as_mut(), 1, min_dim, par.reborrow(), stack);
 		let mut k = min_dim;
 		for iter in 0..restarts {
 			_ = iter;
@@ -783,7 +783,7 @@ fn partial_schur_cplx_imp<T: ComplexField>(
 				V.as_mut(),
 				k + 1,
 				max_dim,
-				par,
+				par.reborrow(),
 				stack,
 			);
 			let ref Hmm = H[(max_dim, max_dim - 1)].copy();
@@ -806,7 +806,7 @@ fn partial_schur_cplx_imp<T: ComplexField>(
 				linalg::evd::hessenberg::hessenberg_in_place(
 					H_slice.rb_mut(),
 					householder.rb_mut(),
-					par,
+					par.reborrow(),
 					stack,
 					default(),
 				);
@@ -815,7 +815,7 @@ fn partial_schur_cplx_imp<T: ComplexField>(
 					householder.rb(),
 					Conj::No,
 					Q_slice.rb_mut().submatrix_mut(1, 1, n - 1, n - 1),
-					par,
+					par.reborrow(),
 					stack,
 				);
 				for j in 0..n {
@@ -831,7 +831,7 @@ fn partial_schur_cplx_imp<T: ComplexField>(
 				w.rb_mut(),
 				0,
 				n,
-				par,
+				par.reborrow(),
 				stack,
 				auto!(T),
 			);
@@ -863,7 +863,7 @@ fn partial_schur_cplx_imp<T: ComplexField>(
 				H_slice.rb(),
 				Conj::No,
 				X.as_mut(),
-				par,
+				par.reborrow(),
 				auto!(T),
 			);
 			let mut vecs = vecs.rb_mut().get_mut(..n, ..n);
@@ -873,7 +873,7 @@ fn partial_schur_cplx_imp<T: ComplexField>(
 				Q_slice.rb(),
 				X.rb(),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			let vecs = vecs.rb();
 			let mut H_tmp = tmp.rb_mut().get_mut(..active, ..);
@@ -883,7 +883,7 @@ fn partial_schur_cplx_imp<T: ComplexField>(
 				H.rb().get(..active, ..),
 				Q.rb(),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			H.rb_mut().get_mut(..active, ..).copy_from(&H_tmp);
 			let ref Hmm_abs = Hmm.abs();
@@ -963,7 +963,7 @@ fn partial_schur_cplx_imp<T: ComplexField>(
 				V.rb().get(.., purge..max_dim),
 				Q.rb().get(purge..max_dim, purge..k),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			V.rb_mut().get_mut(.., purge..k).copy_from(&V_tmp);
 			let mut b_tmp = tmp.rb_mut().get_mut(0, ..);
@@ -973,7 +973,7 @@ fn partial_schur_cplx_imp<T: ComplexField>(
 				H.rb().get(max_dim, ..),
 				Q.rb(),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			H.rb_mut().get_mut(max_dim, ..).copy_from(b_tmp);
 			let (mut x, y) = V.rb_mut().two_cols_mut(k, max_dim);
@@ -990,7 +990,7 @@ fn partial_schur_cplx_imp<T: ComplexField>(
 		let mut H = H.rb_mut().get_mut(..n, ..n);
 		let mut V = V.rb_mut().get_mut(..n, ..n);
 		V.rb_mut().diagonal_mut().fill(one());
-		A.apply(H.rb_mut(), V.rb(), par, stack);
+		A.apply(H.rb_mut(), V.rb(), par.reborrow(), stack);
 		let (mut w, stack) = temp_mat_zeroed::<T, _, _>(n, 1, stack);
 		let mut w = w.as_mat_mut();
 		{
@@ -1004,7 +1004,7 @@ fn partial_schur_cplx_imp<T: ComplexField>(
 			linalg::evd::hessenberg::hessenberg_in_place(
 				H.rb_mut(),
 				householder.rb_mut(),
-				par,
+				par.reborrow(),
 				stack,
 				default(),
 			);
@@ -1013,7 +1013,7 @@ fn partial_schur_cplx_imp<T: ComplexField>(
 				householder.rb(),
 				Conj::No,
 				V.rb_mut().submatrix_mut(1, 1, n - 1, n - 1),
-				par,
+				par.reborrow(),
 				stack,
 			);
 			for j in 0..n {
@@ -1029,7 +1029,7 @@ fn partial_schur_cplx_imp<T: ComplexField>(
 			w.rb_mut().col_mut(0),
 			0,
 			n,
-			par,
+			par.reborrow(),
 			stack,
 			auto!(T),
 		);
@@ -1043,7 +1043,7 @@ fn partial_schur_cplx_imp<T: ComplexField>(
 		H,
 		Conj::No,
 		X.as_mut(),
-		par,
+		par.reborrow(),
 		auto!(T),
 	);
 	let mut vecs = tmp.rb_mut().get_mut(.., ..n);
@@ -1085,7 +1085,7 @@ fn partial_schur_cplx_imp<T: ComplexField>(
 pub fn partial_eigen_scratch<T: ComplexField>(
 	A: &dyn LinOp<T>,
 	n_eigval: usize,
-	par: Par,
+	par: ParShape,
 	params: PartialEigenParams,
 ) -> StackReq {
 	let n = A.nrows();
@@ -1146,7 +1146,7 @@ pub fn partial_eigen_scratch<T: ComplexField>(
 pub fn partial_self_adjoint_eigen_scratch<T: ComplexField>(
 	A: &dyn LinOp<T>,
 	n_eigval: usize,
-	par: Par,
+	par: ParShape,
 	params: PartialEigenParams,
 ) -> StackReq {
 	let n = A.nrows();
@@ -1204,7 +1204,7 @@ pub fn partial_self_adjoint_eigen_scratch<T: ComplexField>(
 pub fn partial_svd_scratch<T: ComplexField>(
 	A: &dyn BiLinOp<T>,
 	n_sval: usize,
-	par: Par,
+	par: ParShape,
 	params: PartialEigenParams,
 ) -> StackReq {
 	let m = A.nrows();
@@ -1485,7 +1485,7 @@ mod tests {
 		let mem = &mut MemBuffer::new(partial_eigen_scratch(
 			&A,
 			n_eigval,
-			par,
+			par.shape(),
 			PartialEigenParams {
 				min_dim,
 				max_dim,
@@ -1542,7 +1542,7 @@ mod tests {
 		let mem = &mut MemBuffer::new(partial_eigen_scratch(
 			&A,
 			n_eigval,
-			par,
+			par.shape(),
 			PartialEigenParams {
 				min_dim,
 				max_dim,
@@ -1601,7 +1601,7 @@ mod tests {
 		let mem = &mut MemBuffer::new(partial_eigen_scratch(
 			&A,
 			n_eigval,
-			par,
+			par.shape(),
 			PartialEigenParams {
 				min_dim,
 				max_dim,
@@ -1655,7 +1655,7 @@ mod tests {
 		let mem = &mut MemBuffer::new(partial_eigen_scratch(
 			&A,
 			n_eigval,
-			par,
+			par.shape(),
 			default(),
 		));
 		let mut V = Mat::zeros(n, n_eigval);
@@ -1699,7 +1699,7 @@ mod tests {
 		let mem = &mut MemBuffer::new(partial_eigen_scratch(
 			&A,
 			n_eigval,
-			par,
+			par.shape(),
 			default(),
 		));
 		let mut V = Mat::zeros(n, n_eigval);

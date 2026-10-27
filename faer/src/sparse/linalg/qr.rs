@@ -406,7 +406,7 @@ pub mod supernodal {
 		pub fn apply_Q_transpose_in_place_scratch<T>(
 			&self,
 			rhs_ncols: usize,
-			par: Par,
+			par: ParShape,
 		) -> StackReq
 		where
 			T: ComplexField,
@@ -423,7 +423,7 @@ pub mod supernodal {
 		pub fn solve_in_place_scratch<T: ComplexField>(
 			&self,
 			rhs_ncols: usize,
-			par: Par,
+			par: ParShape,
 		) -> StackReq {
 			self.apply_Q_transpose_in_place_scratch::<T>(rhs_ncols, par)
 		}
@@ -720,7 +720,7 @@ pub mod supernodal {
 			&self,
 			conj_qr: Conj,
 			rhs: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) where
 			T: ComplexField,
@@ -793,7 +793,7 @@ pub mod supernodal {
 							b_tau.rb(),
 							conj_qr,
 							tmp.rb_mut().subrows_mut(start, nrows),
-							par,
+							par.reborrow(),
 							stack.rb_mut(),
 						);
 						start += ncols;
@@ -825,7 +825,7 @@ pub mod supernodal {
 			&self,
 			conj: Conj,
 			rhs: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) where
 			T: ComplexField,
@@ -836,7 +836,7 @@ pub mod supernodal {
 			self.apply_Q_transpose_in_place_with_conj(
 				conj.compose(Conj::Yes),
 				rhs.rb_mut(),
-				par,
+				par.reborrow(),
 				stack,
 			);
 			let L_symbolic = self.symbolic().R_adjoint();
@@ -870,13 +870,13 @@ pub mod supernodal {
 						tmp.rb(),
 						Conj::No,
 						-one::<T>(),
-						par,
+						par.reborrow(),
 					);
 					linalg::triangular_solve::solve_upper_triangular_in_place_with_conj(
 						s_L_top.transpose(),
 						conj.compose(Conj::Yes),
 						x_top.rb_mut(),
-						par,
+						par.reborrow(),
 					);
 				}
 			}
@@ -891,7 +891,7 @@ pub mod supernodal {
 		T: ComplexField,
 	>(
 		symbolic: &SymbolicSupernodalQr<I>,
-		par: Par,
+		par: ParShape,
 		params: Spec<QrParams, T>,
 	) -> StackReq {
 		let n_supernodes = symbolic.L.n_supernodes();
@@ -1041,7 +1041,7 @@ pub mod supernodal {
 		index_to_super: &[I],
 		child_head: &[I::Signed],
 		child_next: &[I::Signed],
-		par: Par,
+		mut par: Par,
 		stack: &mut MemStack,
 		params: Spec<QrParams, T>,
 	) -> usize {
@@ -1288,7 +1288,7 @@ pub mod supernodal {
 							linalg::qr::no_pivoting::factor::qr_in_place(
 								left.rb_mut(),
 								s_tau.rb_mut(),
-								par,
+								par.reborrow(),
 								stack.rb_mut(),
 								params,
 							);
@@ -1298,7 +1298,7 @@ pub mod supernodal {
 									s_tau.rb(),
 									Conj::Yes,
 									right.rb_mut(),
-									par,
+									par.reborrow(),
 									stack.rb_mut(),
 								);
 							}
@@ -1431,7 +1431,7 @@ pub mod simplicial {
 		pub fn apply_Q_transpose_in_place_scratch<T>(
 			&self,
 			rhs_ncols: usize,
-			par: Par,
+			par: ParShape,
 		) -> StackReq
 		where
 			T: ComplexField,
@@ -1445,7 +1445,7 @@ pub mod simplicial {
 		pub fn solve_in_place_scratch<T>(
 			&self,
 			rhs_ncols: usize,
-			par: Par,
+			par: ParShape,
 		) -> StackReq
 		where
 			T: ComplexField,
@@ -1657,7 +1657,7 @@ pub mod simplicial {
 			&self,
 			conj_qr: Conj,
 			rhs: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) where
 			T: ComplexField,
@@ -1666,7 +1666,7 @@ pub mod simplicial {
 			self.apply_Q_transpose_in_place_with_conj(
 				conj_qr,
 				rhs.rb_mut(),
-				par,
+				par.reborrow(),
 				stack,
 			);
 			let _ = par;
@@ -2193,7 +2193,7 @@ impl<I: Index> SymbolicQr<I> {
 	pub fn solve_in_place_scratch<T>(
 		&self,
 		rhs_ncols: usize,
-		par: Par,
+		par: ParShape,
 	) -> StackReq
 	where
 		T: ComplexField,
@@ -2212,7 +2212,7 @@ impl<I: Index> SymbolicQr<I> {
 	/// factorization
 	pub fn factorize_numeric_qr_scratch<T>(
 		&self,
-		par: Par,
+		par: ParShape,
 		params: Spec<QrParams, T>,
 	) -> StackReq
 	where
@@ -2680,7 +2680,7 @@ mod tests {
 			MemStack::new(&mut MemBuffer::new(
 				supernodal::factorize_supernodal_numeric_qr_scratch::<usize, f64>(
 					&symbolic,
-					Par::Seq,
+					ParShape::Seq,
 					Default::default(),
 				),
 			)),
@@ -2815,7 +2815,7 @@ mod tests {
 			MemStack::new(&mut MemBuffer::new(
 				supernodal::factorize_supernodal_numeric_qr_scratch::<usize, T>(
 					&symbolic,
-					Par::Seq,
+					ParShape::Seq,
 					Default::default(),
 				),
 			)),
@@ -2831,7 +2831,7 @@ mod tests {
 			x.as_mut(),
 			Par::Seq,
 			MemStack::new(&mut MemBuffer::new(
-				symbolic.solve_in_place_scratch::<T>(2, Par::Seq),
+				symbolic.solve_in_place_scratch::<T>(2, ParShape::Seq),
 			)),
 		);
 		let x = x.as_ref().subrows(0, n);
@@ -2955,14 +2955,14 @@ mod tests {
 				Par::Seq,
 				MemStack::new(&mut MemBuffer::new(
 					qr.symbolic()
-						.solve_in_place_scratch::<T>(rhs.ncols(), Par::Seq),
+						.solve_in_place_scratch::<T>(rhs.ncols(), ParShape::Seq),
 				)),
 			);
 			let mut y = rhs.clone();
 			A.to_dense()
 				.as_dyn()
-				.qr()
-				.solve_lstsq_in_place_with_conj(Conj::No, y.as_mut());
+				.qr(Par::Seq)
+				.solve_lstsq_in_place_with_conj(Conj::No, y.as_mut(), Par::Seq);
 			let x = x.as_ref().subrows(0, n);
 			let linsolve_diff = a.adjoint() * (&a * &x - &rhs);
 			assert!(linsolve_diff.norm_max() <= 1e-10);
@@ -2975,7 +2975,7 @@ mod tests {
 				Par::Seq,
 				MemStack::new(&mut MemBuffer::new(
 					qr.symbolic()
-						.solve_in_place_scratch::<T>(rhs.ncols(), Par::Seq),
+						.solve_in_place_scratch::<T>(rhs.ncols(), ParShape::Seq),
 				)),
 			);
 			let x = x.as_ref().subrows(0, n);
@@ -3056,7 +3056,7 @@ mod tests {
 				Par::Seq,
 				MemStack::new(&mut MemBuffer::new(
 					symbolic.factorize_numeric_qr_scratch::<T>(
-						Par::Seq,
+						ParShape::Seq,
 						Default::default(),
 					),
 				)),
@@ -3069,7 +3069,7 @@ mod tests {
 					x.as_mut(),
 					Par::Seq,
 					MemStack::new(&mut MemBuffer::new(
-						symbolic.solve_in_place_scratch::<T>(2, Par::Seq),
+						symbolic.solve_in_place_scratch::<T>(2, ParShape::Seq),
 					)),
 				);
 				let x = x.as_ref().subrows(0, n);
@@ -3083,7 +3083,7 @@ mod tests {
 					x.as_mut(),
 					Par::Seq,
 					MemStack::new(&mut MemBuffer::new(
-						symbolic.solve_in_place_scratch::<T>(2, Par::Seq),
+						symbolic.solve_in_place_scratch::<T>(2, ParShape::Seq),
 					)),
 				);
 				let x = x.as_ref().subrows(0, n);
@@ -3156,7 +3156,7 @@ mod tests {
 					Par::Seq,
 					MemStack::new(&mut MemBuffer::new(
 						symbolic.factorize_numeric_qr_scratch::<T>(
-							Par::Seq,
+							ParShape::Seq,
 							Default::default(),
 						),
 					)),

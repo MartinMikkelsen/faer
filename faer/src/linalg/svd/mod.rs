@@ -66,11 +66,11 @@ fn svd_imp_scratch<T: ComplexField>(
 		n: usize,
 		compute_u: bool,
 		compute_v: bool,
-		par: Par,
+		par: ParShape,
 		params: SvdParams,
 	) -> StackReq,
 	params: SvdParams,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	assert!(m >= n);
 	let householder_block_size =
@@ -131,7 +131,7 @@ fn bidiag_cplx_svd_scratch<T: ComplexField>(
 	n: usize,
 	compute_u: bool,
 	compute_v: bool,
-	par: Par,
+	par: ParShape,
 	params: SvdParams,
 ) -> StackReq {
 	StackReq::all_of(&[
@@ -147,7 +147,7 @@ fn bidiag_real_svd_scratch<T: RealField>(
 	n: usize,
 	compute_u: bool,
 	compute_v: bool,
-	par: Par,
+	par: ParShape,
 	params: SvdParams,
 ) -> StackReq {
 	if n < params.recursion_threshold {
@@ -356,13 +356,13 @@ fn compute_bidiag_real_svd<T: RealField>(
 /// use faer::linalg::svd::bidiagonal_svd_scratch;
 /// let _buffer = dyn_stack::MemBuffer::new(bidiagonal_svd_scratch::<f64>(
 /// 	3,
-/// 	Par::Seq,
+/// 	faer::ParShape::Seq,
 /// 	Default::default(),
 /// ));
 /// ```
 pub fn bidiagonal_svd_scratch<T: ComplexField>(
 	dim: usize,
-	par: Par,
+	par: ParShape,
 	params: Spec<SvdParams, T>,
 ) -> StackReq {
 	let n = dim;
@@ -401,7 +401,7 @@ pub fn bidiagonal_svd_scratch<T: ComplexField>(
 /// let (mut u, mut v) = (Mat::zeros(2, 2), Mat::zeros(2, 2));
 /// let mut mem = MemBuffer::new(bidiagonal_svd_scratch::<f64>(
 /// 	2,
-/// 	Par::Seq,
+/// 	faer::ParShape::Seq,
 /// 	Default::default(),
 /// ));
 /// bidiagonal_svd(
@@ -507,7 +507,7 @@ fn svd_imp<T: ComplexField>(
 		par: Par,
 		stack: &mut MemStack,
 	) -> Result<(), SvdError>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 	params: SvdParams,
 ) -> Result<(), SvdError> {
@@ -527,7 +527,7 @@ fn svd_imp<T: ComplexField>(
 		bid.rb_mut(),
 		Hl.rb_mut(),
 		Hr.rb_mut(),
-		par,
+		par.reborrow(),
 		stack,
 		params.bidiag.into(),
 	);
@@ -566,7 +566,7 @@ fn svd_imp<T: ComplexField>(
 		v.rb().map(|_| ub.rb_mut()),
 		u.rb().map(|_| vb.rb_mut()),
 		params,
-		par,
+		par.reborrow(),
 		stack,
 	)?;
 	{ s }.copy_from(diag);
@@ -579,7 +579,7 @@ fn svd_imp<T: ComplexField>(
 			.submatrix_mut(n, n, ncols - n, ncols - n)
 			.diagonal_mut()
 			.fill(one());
-		linalg::householder::apply_block_householder_sequence_on_the_left_in_place_with_conj(bid.rb(), Hl.rb(), Conj::No, u, par, stack);
+		linalg::householder::apply_block_householder_sequence_on_the_left_in_place_with_conj(bid.rb(), Hl.rb(), Conj::No, u, par.reborrow(), stack);
 	}
 	if let Some(mut v) = v {
 		v.copy_from(ub.rb().submatrix(0, 0, n, n));
@@ -638,7 +638,7 @@ pub fn svd_scratch<T: ComplexField>(
 	ncols: usize,
 	compute_u: ComputeSvdVectors,
 	compute_v: ComputeSvdVectors,
-	par: Par,
+	par: ParShape,
 	params: Spec<SvdParams, T>,
 ) -> StackReq {
 	let params = params.config;
@@ -702,7 +702,7 @@ pub fn svd<T: ComplexField>(
 	s: DiagMut<'_, T>,
 	u: Option<MatMut<'_, T>>,
 	v: Option<MatMut<'_, T>>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 	params: Spec<SvdParams, T>,
 ) -> Result<(), SvdError> {
@@ -784,7 +784,7 @@ pub fn svd<T: ComplexField>(
 			linalg::qr::no_pivoting::factor::qr_in_place(
 				qr.rb_mut(),
 				householder.rb_mut(),
-				par,
+				par.reborrow(),
 				stack,
 				params.qr.into(),
 			);
@@ -807,7 +807,7 @@ pub fn svd<T: ComplexField>(
 				s,
 				u.rb_mut().map(|u| u.submatrix_mut(0, 0, n, n)),
 				v.rb_mut(),
-				par,
+				par.reborrow(),
 				stack,
 				params,
 			)?;
@@ -848,7 +848,7 @@ pub fn svd<T: ComplexField>(
 pub fn pseudoinverse_from_svd_scratch<T: ComplexField>(
 	nrows: usize,
 	ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	_ = par;
 	let size = Ord::min(nrows, ncols);
@@ -969,7 +969,7 @@ mod tests {
 					n,
 					ComputeSvdVectors::Full,
 					ComputeSvdVectors::Full,
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				))),
 				params,
@@ -994,7 +994,7 @@ mod tests {
 					n,
 					ComputeSvdVectors::Thin,
 					ComputeSvdVectors::Thin,
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				))),
 				params,
@@ -1017,7 +1017,7 @@ mod tests {
 					n,
 					ComputeSvdVectors::Thin,
 					ComputeSvdVectors::No,
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				))),
 				params,
@@ -1040,7 +1040,7 @@ mod tests {
 					n,
 					ComputeSvdVectors::No,
 					ComputeSvdVectors::Thin,
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				))),
 				params,
@@ -1062,7 +1062,7 @@ mod tests {
 					n,
 					ComputeSvdVectors::No,
 					ComputeSvdVectors::No,
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				))),
 				params,
@@ -1100,7 +1100,7 @@ mod tests {
 					n,
 					vectors(want_u),
 					vectors(want_v),
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				))),
 				params,
@@ -1199,7 +1199,7 @@ mod tests {
 					n,
 					vectors(want_u),
 					vectors(want_v),
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				))),
 				params,
@@ -1280,7 +1280,7 @@ mod tests {
 					2,
 					ComputeSvdVectors::Thin,
 					ComputeSvdVectors::Thin,
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				))),
 				params,
@@ -1474,7 +1474,7 @@ mod tests {
 				n,
 				false,
 				false,
-				Par::Seq,
+				ParShape::Seq,
 				params,
 			))),
 		)
@@ -1492,7 +1492,7 @@ mod tests {
 			dist: StandardNormal,
 		}
 		.rand::<Mat<f64>>(rng);
-		let pinv = mat.svd().unwrap().pseudoinverse();
+		let pinv = mat.svd(Par::Seq).unwrap().pseudoinverse(Par::Seq);
 		let err = &mat * &pinv - Mat::<f64>::identity(m, m);
 		assert!(err.norm_max() < 1e-10);
 	}
@@ -1507,7 +1507,7 @@ mod tests {
 			dist: StandardNormal,
 		}
 		.rand::<Mat<f64>>(rng);
-		let pinv = mat.svd().unwrap().pseudoinverse();
+		let pinv = mat.svd(Par::Seq).unwrap().pseudoinverse(Par::Seq);
 		let err = &pinv * &mat - Mat::<f64>::identity(n, n);
 		assert!(err.norm_max() < 1e-10);
 	}
@@ -1545,7 +1545,7 @@ mod tests {
 						n,
 						true,
 						true,
-						Par::Seq,
+						ParShape::Seq,
 						params,
 					),
 				)),
@@ -1599,7 +1599,7 @@ mod tests {
 					n,
 					ComputeSvdVectors::Full,
 					ComputeSvdVectors::Full,
-					Par::Seq,
+					ParShape::Seq,
 					default(),
 				))),
 				default(),

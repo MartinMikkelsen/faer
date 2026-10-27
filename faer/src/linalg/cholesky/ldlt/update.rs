@@ -409,7 +409,7 @@ pub fn delete_rows_and_cols_clobber_scratch<T: ComplexField>(
 #[track_caller]
 pub fn insert_rows_and_cols_clobber_scratch<T: ComplexField>(
 	n_inserted: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	super::factor::cholesky_in_place_scratch::<T>(n_inserted, par, default())
 }
@@ -517,7 +517,7 @@ mod tests {
 					Par::Seq,
 					MemStack::new(&mut MemBuffer::new(linalg::cholesky::ldlt::factor::cholesky_in_place_scratch::<c64>(
 						n,
-						Par::Seq,
+						ParShape::Seq,
 						default(),
 					))),
 					default(),

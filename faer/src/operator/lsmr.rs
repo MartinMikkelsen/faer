@@ -58,13 +58,13 @@ pub fn lsmr_scratch<T: ComplexField>(
 	right_precond: impl BiPrecond<T>,
 	mat: impl BiLinOp<T>,
 	rhs_ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	fn implementation<T: ComplexField>(
 		M: &dyn BiPrecond<T>,
 		A: &dyn BiLinOp<T>,
 		rhs_ncols: usize,
-		par: Par,
+		par: ParShape,
 	) -> StackReq {
 		let m = A.nrows();
 		let n = A.ncols();
@@ -157,14 +157,14 @@ pub fn lsmr<T: ComplexField>(
 		b: MatRef<'_, T>,
 		params: LsmrParams<T::Real>,
 		callback: &mut dyn FnMut(MatRef<'_, T>),
-		par: Par,
+		mut par: Par,
 		stack: &mut MemStack,
 	) -> Result<LsmrInfo<T::Real>, LsmrError<T::Real>> {
 		fn thin_qr<T: ComplexField>(
 			mut Q: MatMut<'_, T>,
 			mut R: MatMut<'_, T>,
 			mut mat: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) {
 			let k = R.nrows();
@@ -183,7 +183,7 @@ pub fn lsmr<T: ComplexField>(
 			qr::no_pivoting::factor::qr_in_place(
 				mat.rb_mut(),
 				house.rb_mut(),
-				par,
+				par.reborrow(),
 				stack.rb_mut(),
 				Default::default(),
 			);
@@ -281,7 +281,7 @@ pub fn lsmr<T: ComplexField>(
 				A.apply(
 					qr.rb_mut().rb_mut().get_mut(.., ..actual_k),
 					x.rb(),
-					par,
+					par.reborrow(),
 					stack.rb_mut(),
 				);
 				z!(qr.rb_mut().get_mut(.., ..actual_k), &b)
@@ -296,7 +296,7 @@ pub fn lsmr<T: ComplexField>(
 					u.rb_mut().get_mut(.., start..end),
 					beta.rb_mut().get_mut(..len, start..end),
 					qr.rb_mut().get_mut(.., start..end),
-					par,
+					par.reborrow(),
 					stack.rb_mut(),
 				);
 				start = end;
@@ -306,8 +306,8 @@ pub fn lsmr<T: ComplexField>(
 			let (mut qr, mut stack) =
 				unsafe { temp_mat_uninit::<T, _, _>(n, k, stack.rb_mut()) };
 			let mut qr = qr.as_mat_mut();
-			A.adjoint_apply(qr.rb_mut(), u.rb(), par, stack.rb_mut());
-			M.adjoint_apply_in_place(qr.rb_mut(), par, stack.rb_mut());
+			A.adjoint_apply(qr.rb_mut(), u.rb(), par.reborrow(), stack.rb_mut());
+			M.adjoint_apply_in_place(qr.rb_mut(), par.reborrow(), stack.rb_mut());
 			let mut start = 0;
 			while start < k {
 				let end = Ord::min(k - start, s) + start;
@@ -316,7 +316,7 @@ pub fn lsmr<T: ComplexField>(
 					v.rb_mut().get_mut(.., start..end),
 					alpha.rb_mut().get_mut(..len, start..end),
 					qr.rb_mut().get_mut(.., start..end),
-					par,
+					par.reborrow(),
 					stack.rb_mut(),
 				);
 				start = end;
@@ -333,7 +333,7 @@ pub fn lsmr<T: ComplexField>(
 				alpha.rb().get(..len, start..end),
 				beta.rb().get(..len, start..end),
 				one::<T>(),
-				par,
+				par.reborrow(),
 			);
 			start = end;
 		}
@@ -364,8 +364,8 @@ pub fn lsmr<T: ComplexField>(
 				temp_mat_uninit::<T, _, _>(n, actual_k, stack.rb_mut())
 			};
 			let mut tmp = tmp.as_mat_mut();
-			A.adjoint_apply(tmp.rb_mut(), b, par, stack.rb_mut());
-			M.adjoint_apply_in_place(tmp.rb_mut(), par, stack.rb_mut());
+			A.adjoint_apply(tmp.rb_mut(), b, par.reborrow(), stack.rb_mut());
+			M.adjoint_apply_in_place(tmp.rb_mut(), par.reborrow(), stack.rb_mut());
 			tmp.norm_l2()
 		};
 		let threshold = &norm_ref * params.rel_tolerance;
@@ -395,8 +395,8 @@ pub fn lsmr<T: ComplexField>(
 					unsafe { temp_mat_uninit::<T, _, _>(m, k, stack.rb_mut()) };
 				let mut qr = qr.as_mat_mut();
 				vold.copy_from(&v);
-				M.apply_in_place(v.rb_mut(), par, stack.rb_mut());
-				A.apply(qr.rb_mut(), v.rb(), par, stack.rb_mut());
+				M.apply_in_place(v.rb_mut(), par.reborrow(), stack.rb_mut());
+				A.apply(qr.rb_mut(), v.rb(), par.reborrow(), stack.rb_mut());
 				let mut start = 0;
 				while start < k {
 					let s = Ord::min(k - start, s);
@@ -407,13 +407,13 @@ pub fn lsmr<T: ComplexField>(
 						u.rb().get(.., start..end),
 						alpha.rb().get(..s, start..end).adjoint(),
 						-one::<T>(),
-						par,
+						par.reborrow(),
 					);
 					thin_qr(
 						u.rb_mut().get_mut(.., start..end),
 						beta.rb_mut().get_mut(..s, start..end),
 						qr.rb_mut().get_mut(.., start..end),
-						par,
+						par.reborrow(),
 						stack.rb_mut(),
 					);
 					start = end;
@@ -423,8 +423,8 @@ pub fn lsmr<T: ComplexField>(
 				let (mut qr, mut stack) =
 					unsafe { temp_mat_uninit::<T, _, _>(n, k, stack.rb_mut()) };
 				let mut qr = qr.as_mat_mut();
-				A.adjoint_apply(qr.rb_mut(), u.rb(), par, stack.rb_mut());
-				M.adjoint_apply_in_place(qr.rb_mut(), par, stack.rb_mut());
+				A.adjoint_apply(qr.rb_mut(), u.rb(), par.reborrow(), stack.rb_mut());
+				M.adjoint_apply_in_place(qr.rb_mut(), par.reborrow(), stack.rb_mut());
 				let mut start = 0;
 				while start < k {
 					let s = Ord::min(k - start, s);
@@ -435,7 +435,7 @@ pub fn lsmr<T: ComplexField>(
 						vold.rb().get(.., start..end),
 						beta.rb().get(..s, start..end).adjoint(),
 						-one::<T>(),
-						par,
+						par.reborrow(),
 					);
 					vold.rb_mut()
 						.get_mut(.., start..end)
@@ -444,7 +444,7 @@ pub fn lsmr<T: ComplexField>(
 						v.rb_mut().get_mut(.., start..end),
 						alpha.rb_mut().get_mut(..s, start..end),
 						qr.rb_mut().get_mut(.., start..end),
-						par,
+						par.reborrow(),
 						stack.rb_mut(),
 					);
 					start = end;
@@ -502,7 +502,7 @@ pub fn lsmr<T: ComplexField>(
 						p_adjoint.rb_mut(),
 						rho.rb_mut(),
 						qr.rb_mut(),
-						par,
+						par.reborrow(),
 						stack.rb_mut(),
 					);
 				}
@@ -513,7 +513,7 @@ pub fn lsmr<T: ComplexField>(
 					alpha.rb(),
 					p_adjoint.rb().get(s.., ..s),
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				matmul(
 					alphabar.rb_mut(),
@@ -521,7 +521,7 @@ pub fn lsmr<T: ComplexField>(
 					alpha.rb(),
 					p_adjoint.rb().get(s.., s..),
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				matmul(
 					thetabar.rb_mut(),
@@ -529,7 +529,7 @@ pub fn lsmr<T: ComplexField>(
 					rho.rb(),
 					pbar_adjoint.rb().get(s.., ..s),
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				{
 					let (mut qr, mut stack) = unsafe {
@@ -542,14 +542,14 @@ pub fn lsmr<T: ComplexField>(
 						pbar_adjoint.rb().adjoint().get(s.., s..),
 						rho.rb().adjoint(),
 						one::<T>(),
-						par,
+						par.reborrow(),
 					);
 					qr.rb_mut().get_mut(s.., ..).copy_from(&theta);
 					thin_qr(
 						pbar_adjoint.rb_mut(),
 						rhobar.rb_mut(),
 						qr.rb_mut(),
-						par,
+						par.reborrow(),
 						stack.rb_mut(),
 					);
 				}
@@ -559,7 +559,7 @@ pub fn lsmr<T: ComplexField>(
 					pbar_adjoint.rb().adjoint().get(..s, ..s),
 					zetabar.rb(),
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				matmul(
 					zetabar_tmp.rb_mut(),
@@ -567,7 +567,7 @@ pub fn lsmr<T: ComplexField>(
 					pbar_adjoint.rb().adjoint().get(s.., ..s),
 					zetabar.rb(),
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				zetabar.copy_from(&zetabar_tmp);
 				matmul(
@@ -576,9 +576,9 @@ pub fn lsmr<T: ComplexField>(
 					w.rb(),
 					thetaold.rb().adjoint(),
 					-one::<T>(),
-					par,
+					par.reborrow(),
 				);
-				crate::linalg::triangular_solve::solve_lower_triangular_in_place(rho.rb().transpose(), Mvold.rb_mut().transpose_mut(), par);
+				crate::linalg::triangular_solve::solve_lower_triangular_in_place(rho.rb().transpose(), Mvold.rb_mut().transpose_mut(), par.reborrow());
 				w.copy_from(&Mvold);
 				matmul(
 					Mvold.rb_mut(),
@@ -586,9 +586,9 @@ pub fn lsmr<T: ComplexField>(
 					wbar.rb(),
 					thetabar.rb().adjoint(),
 					-one::<T>(),
-					par,
+					par.reborrow(),
 				);
-				crate::linalg::triangular_solve::solve_lower_triangular_in_place(rhobar.rb().transpose(), Mvold.rb_mut().transpose_mut(), par);
+				crate::linalg::triangular_solve::solve_lower_triangular_in_place(rhobar.rb().transpose(), Mvold.rb_mut().transpose_mut(), par.reborrow());
 				wbar.copy_from(&Mvold);
 				let actual_s = x.ncols();
 				matmul(
@@ -603,7 +603,7 @@ pub fn lsmr<T: ComplexField>(
 					wbar.rb(),
 					zeta.rb().get(.., ..actual_s),
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				start = end;
 			}
@@ -689,7 +689,7 @@ mod tests {
 					diag.as_ref(),
 					A.as_ref(),
 					k,
-					Par::Seq,
+					ParShape::Seq,
 				))),
 			);
 			assert!(result.is_ok());
@@ -747,7 +747,7 @@ mod tests {
 					diag.as_ref(),
 					A.as_ref(),
 					k,
-					Par::Seq,
+					ParShape::Seq,
 				))),
 			);
 			assert!(result.is_ok());

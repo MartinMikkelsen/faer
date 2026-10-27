@@ -1,4 +1,5 @@
 use crate::internal_prelude::*;
+use crate::utils::cost::{ParThreshold, rate};
 use crate::{assert, perm};
 use linalg::matmul::triangular::BlockStructure;
 const TOP_BIT: usize = 1 << (usize::BITS - 1);
@@ -29,8 +30,11 @@ pub struct LbltParams {
 	pub pivoting: PivotingStrategy,
 	/// block size of the algorithm
 	pub block_size: usize,
-	/// threshold at which size parallelism should be disabled
-	pub par_threshold: usize,
+	/// floor of the parallel regions of the full-pivoting variant:
+	/// [`ParThreshold::Derived`] (the default) runs a step in parallel when its serial time
+	/// pays for one section; [`ParThreshold::Fixed`] counts elements `rem*rem` of the trailing
+	/// block
+	pub par_threshold: ParThreshold,
 	#[doc(hidden)]
 	pub non_exhaustive: NonExhaustive,
 }
@@ -147,7 +151,8 @@ fn rank_1_update_and_argmax<T: ComplexField>(
 			N.end(),
 		),
 		#[cfg(feature = "rayon")]
-		Par::Rayon(nthreads) => {
+		_ => {
+		let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 			use rayon::prelude::*;
 			let nthreads = nthreads.get();
 			let n = *N;
@@ -160,7 +165,7 @@ fn rank_1_update_and_argmax<T: ComplexField>(
 			};
 			let mut r =
 				alloc::vec![(0usize, 0usize, zero::< T::Real > ()); nthreads];
-			spindle::for_each(
+			crate::utils::thread::for_each(par, 
 				nthreads,
 				r.par_iter_mut().enumerate(),
 				|(idx, out)| {
@@ -214,7 +219,8 @@ fn rank_2_update_and_argmax<'N, T: ComplexField>(
 			N.end(),
 		),
 		#[cfg(feature = "rayon")]
-		Par::Rayon(nthreads) => {
+		_ => {
+		let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 			use rayon::prelude::*;
 			let nthreads = nthreads.get();
 			let n = *N;
@@ -227,7 +233,7 @@ fn rank_2_update_and_argmax<'N, T: ComplexField>(
 			};
 			let mut r =
 				alloc::vec![(0usize, 0usize, zero::< T::Real > ()); nthreads];
-			spindle::for_each(
+			crate::utils::thread::for_each(par, 
 				nthreads,
 				r.par_iter_mut().enumerate(),
 				|(idx, out)| {
@@ -323,7 +329,14 @@ fn lblt_full_piv<T: ComplexField>(
 			i1 = max_i;
 		}
 		let rem = n - npiv;
-		if rem * rem < params.par_threshold {
+		// One section per step (the rank-1 or rank-2 update fused with the pivot search);
+		// the unit is an element of the trailing block.
+		if !params.par_threshold.region_pays::<T>(
+			par.shape(),
+			rem * rem,
+			rate::bunch_kaufman(),
+			1,
+		) {
 			par = Par::Seq;
 		}
 		if i0 != 0 {
@@ -345,10 +358,9 @@ fn lblt_full_piv<T: ComplexField>(
 			for i in 0..n {
 				A[(i, i)] = (A[(i, i)].real() - &diag * L[i].abs2()).to_cplx();
 			}
-			if n < params.par_threshold {}
 			if n != 0 {
 				(max_i, max_j, max_offdiag) =
-					rank_1_update_and_argmax(A.rb_mut(), L.rb(), diag, par);
+					rank_1_update_and_argmax(A.rb_mut(), L.rb(), diag, par.reborrow());
 			}
 		} else {
 			let a00 = A[(0, 0)].real();
@@ -376,7 +388,7 @@ fn lblt_full_piv<T: ComplexField>(
 					d00.copy(),
 					d11.copy(),
 					d10.copy(),
-					par,
+					par.reborrow(),
 				);
 			}
 			for j in 0..n {
@@ -497,7 +509,7 @@ fn lblt_blocked_step<T: ComplexField>(
 	pivots: &mut [usize],
 	rook: bool,
 	diagonal: bool,
-	par: Par,
+	mut par: Par,
 ) -> usize {
 	let mut A = A;
 	let mut A_left = A_left;
@@ -538,7 +550,7 @@ fn lblt_blocked_step<T: ComplexField>(
 			Al.rb(),
 			Ar.rb(),
 			i0,
-			par,
+			par.reborrow(),
 		);
 		if k + 1 == n || gamma_i == zero() {
 			nothing_to_do = true;
@@ -555,7 +567,7 @@ fn lblt_blocked_step<T: ComplexField>(
 						Al.rb(),
 						Ar.rb(),
 						i1,
-						par,
+						par.reborrow(),
 					);
 					if Ar[(i1, i1)].abs1() >= &alpha * &gamma_r {
 						npiv = 1;
@@ -580,7 +592,7 @@ fn lblt_blocked_step<T: ComplexField>(
 					Al.rb(),
 					Ar.rb(),
 					i1,
-					par,
+					par.reborrow(),
 				);
 				if Ar[(i0, i0)].real().abs()
 					>= (&alpha * &gamma_r) * (&gamma_r / &gamma_i)
@@ -705,7 +717,7 @@ fn lblt_blocked<T: ComplexField>(
 	block_size: usize,
 	rook: bool,
 	diagonal: bool,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let ref alpha = (one::<T::Real>() + from_f64::<T::Real>(17.0).sqrt())
@@ -729,7 +741,7 @@ fn lblt_blocked<T: ComplexField>(
 				&mut pivots[k..],
 				rook,
 				diagonal,
-				par,
+				par.reborrow(),
 			);
 			next = n;
 		} else {
@@ -742,7 +754,7 @@ fn lblt_blocked<T: ComplexField>(
 				&mut pivots[k..],
 				rook,
 				diagonal,
-				par,
+				par.reborrow(),
 			);
 			next = k + block_size;
 		}
@@ -763,9 +775,10 @@ fn lblt_blocked<T: ComplexField>(
 					}
 				},
 				#[cfg(feature = "rayon")]
-				Par::Rayon(nthreads) => {
+				_ => {
+				let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 					let nthreads = nthreads.get();
-					spindle::for_each(
+					crate::utils::thread::for_each(par.reborrow(), 
 						nthreads,
 						A_left.par_col_iter_mut(),
 						|mut col| {
@@ -907,7 +920,7 @@ impl<T: ComplexField> Auto<T> for LbltParams {
 		Self {
 			pivoting: PivotingStrategy::PartialDiag,
 			block_size: 64,
-			par_threshold: 128 * 128,
+			par_threshold: ParThreshold::Derived,
 			non_exhaustive: NonExhaustive(()),
 		}
 	}
@@ -1129,7 +1142,7 @@ pub fn rank1_update_fallback<'a, T: ComplexField>(
 /// decomposition
 pub fn cholesky_in_place_scratch<I: Index, T: ComplexField>(
 	dim: usize,
-	par: Par,
+	par: ParShape,
 	params: Spec<LbltParams, T>,
 ) -> StackReq {
 	let params = params.config;

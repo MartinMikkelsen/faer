@@ -4,7 +4,7 @@ use crate::perm::permute_rows;
 pub fn solve_in_place_scratch<I: Index, T: ComplexField>(
 	dim: usize,
 	rhs_ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	_ = par;
 	temp_mat_scratch::<T>(dim, rhs_ncols)
@@ -15,7 +15,7 @@ pub fn solve_in_place_with_conj<I: Index, T: ComplexField>(
 	perm: PermRef<'_, I>,
 	conj_lhs: Conj,
 	rhs: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let n = L.nrows();
@@ -29,7 +29,7 @@ pub fn solve_in_place_with_conj<I: Index, T: ComplexField>(
 		L,
 		conj_lhs,
 		tmp.rb_mut(),
-		par,
+		par.reborrow(),
 	);
 	linalg::triangular_solve::solve_upper_triangular_in_place_with_conj(
 		L.transpose(),
@@ -98,7 +98,7 @@ mod tests {
 				MemBuffer::new(
 					llt_pivoting::factor::cholesky_in_place_scratch::<usize, c64>(
 						n,
-						Par::Seq,
+						ParShape::Seq,
 						default(),
 					),
 				)
@@ -118,7 +118,7 @@ mod tests {
 					llt_pivoting::solve::solve_in_place_scratch::<usize, c64>(
 						n,
 						k,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);
@@ -135,7 +135,7 @@ mod tests {
 					llt_pivoting::solve::solve_in_place_scratch::<usize, c64>(
 						n,
 						k,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);

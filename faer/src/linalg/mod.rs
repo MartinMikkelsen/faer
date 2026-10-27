@@ -83,15 +83,18 @@ pub(crate) fn copy_across_layouts<T: ComplexField>(
 	{
 		use rayon::prelude::*;
 		let n_tasks = Ord::min(
-			crate::utils::thread::parallelism_degree(par),
+			crate::utils::thread::parallelism_degree(&par),
 			dst.ncols(),
 		)
 		.max(1);
 		if n_tasks > 1 {
-			dst.rb_mut()
-				.par_col_partition_mut(n_tasks)
-				.zip_eq(src.par_col_partition(n_tasks))
-				.for_each(|(mut d, s)| copy_across_layouts_block(d.rb_mut(), s));
+			crate::utils::thread::par_for_each(
+				par,
+				dst.rb_mut()
+					.par_col_partition_mut(n_tasks)
+					.zip_eq(src.par_col_partition(n_tasks)),
+				|(mut d, s)| copy_across_layouts_block(d.rb_mut(), s),
+			);
 			return;
 		}
 	}
@@ -511,11 +514,11 @@ mod tests {
 		use crate::linalg::lu::partial_pivoting::factor as plu;
 		use crate::linalg::qr::col_pivoting::factor as cpqr;
 
-		fn check_cpqr<T: Entry>(m: usize, n: usize, flipped: bool, par: Par) {
+		fn check_cpqr<T: Entry>(m: usize, n: usize, flipped: bool, mut par: Par) {
 			let size = Ord::min(m, n);
 			let bs = cpqr::recommended_block_size::<T>(m, n);
 			let scratch =
-				cpqr::qr_in_place_scratch::<usize, T>(m, n, bs, par, default());
+				cpqr::qr_in_place_scratch::<usize, T>(m, n, bs, par.shape(), default());
 			let (mut cm, mut rm) = fixture::<T>(m, n, flipped);
 			let mut h_cm = vec![T::zero(); bs * size];
 			let mut h_rm = vec![T::zero(); bs * size];
@@ -523,7 +526,7 @@ mod tests {
 			let mut p_rm = vec![0usize; n];
 			let mut pi_cm = vec![0usize; n];
 			let mut pi_rm = vec![0usize; n];
-			let run = |a: &mut [T],
+			let mut run = |a: &mut [T],
 			           h: &mut [T],
 			           p: &mut [usize],
 			           pi: &mut [usize],
@@ -547,7 +550,7 @@ mod tests {
 						),
 						p,
 						pi,
-						par,
+						par.reborrow(),
 						MemStack::new(&mut MemBuffer::new(scratch)),
 						default(),
 					)
@@ -573,14 +576,14 @@ mod tests {
 			);
 		}
 
-		fn check_plu<T: Entry>(m: usize, n: usize, flipped: bool, par: Par) {
-			let scratch = plu::lu_in_place_scratch::<usize, T>(m, n, par, default());
+		fn check_plu<T: Entry>(m: usize, n: usize, flipped: bool, mut par: Par) {
+			let scratch = plu::lu_in_place_scratch::<usize, T>(m, n, par.shape(), default());
 			let (mut cm, mut rm) = fixture::<T>(m, n, flipped);
 			let mut p_cm = vec![0usize; m];
 			let mut p_rm = vec![0usize; m];
 			let mut pi_cm = vec![0usize; m];
 			let mut pi_rm = vec![0usize; m];
-			let run = |a: &mut [T],
+			let mut run = |a: &mut [T],
 			           p: &mut [usize],
 			           pi: &mut [usize],
 			           (base, rs, cs): (usize, isize, isize)|
@@ -596,7 +599,7 @@ mod tests {
 						),
 						p,
 						pi,
-						par,
+						par.reborrow(),
 						MemStack::new(&mut MemBuffer::new(scratch)),
 						default(),
 					)
@@ -616,8 +619,8 @@ mod tests {
 			);
 		}
 
-		fn check_flu<T: Entry>(m: usize, n: usize, flipped: bool, par: Par) {
-			let scratch = flu::lu_in_place_scratch::<usize, T>(m, n, par, default());
+		fn check_flu<T: Entry>(m: usize, n: usize, flipped: bool, mut par: Par) {
+			let scratch = flu::lu_in_place_scratch::<usize, T>(m, n, par.shape(), default());
 			let (mut cm, mut rm) = fixture::<T>(m, n, flipped);
 			let mut p_cm = vec![0usize; m];
 			let mut p_rm = vec![0usize; m];
@@ -627,7 +630,7 @@ mod tests {
 			let mut c_rm = vec![0usize; n];
 			let mut ci_cm = vec![0usize; n];
 			let mut ci_rm = vec![0usize; n];
-			let run = |a: &mut [T],
+			let mut run = |a: &mut [T],
 			           p: &mut [usize],
 			           pi: &mut [usize],
 			           c: &mut [usize],
@@ -647,7 +650,7 @@ mod tests {
 						pi,
 						c,
 						ci,
-						par,
+						par.reborrow(),
 						MemStack::new(&mut MemBuffer::new(scratch)),
 						default(),
 					)
@@ -687,8 +690,8 @@ mod tests {
 			(300, 8),
 		] {
 			for flipped in [false, true] {
-				for par in [Par::Seq, Par::rayon(8)] {
-					check_cpqr::<f64>(m, n, flipped, par);
+				for mut par in [Par::Seq, Par::rayon(8)] {
+					check_cpqr::<f64>(m, n, flipped, par.reborrow());
 					check_cpqr::<crate::c64>(m, n, flipped, par);
 				}
 			}
@@ -703,10 +706,10 @@ mod tests {
 			(300, 17),
 		] {
 			for flipped in [false, true] {
-				for par in [Par::Seq, Par::rayon(8)] {
-					check_plu::<f64>(m, n, flipped, par);
-					check_plu::<crate::c64>(m, n, flipped, par);
-					check_flu::<f64>(m, n, flipped, par);
+				for mut par in [Par::Seq, Par::rayon(8)] {
+					check_plu::<f64>(m, n, flipped, par.reborrow());
+					check_plu::<crate::c64>(m, n, flipped, par.reborrow());
+					check_flu::<f64>(m, n, flipped, par.reborrow());
 					check_flu::<crate::c64>(m, n, flipped, par);
 				}
 			}

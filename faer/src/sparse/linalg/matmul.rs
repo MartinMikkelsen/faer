@@ -61,7 +61,7 @@ pub fn sparse_sparse_matmul_symbolic<I: Index>(
 /// multiplication into `dst`.
 pub fn sparse_sparse_matmul_numeric_scratch<I: Index, T: ComplexField>(
 	dst: SymbolicSparseColMatRef<'_, I>,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	temp_mat_scratch::<T>(dst.nrows(), par.degree())
 }
@@ -112,7 +112,15 @@ pub fn sparse_sparse_matmul_numeric<
 	unsafe impl<T> Sync for SyncWrapper<T> {}
 	unsafe impl<T> Send for SyncWrapper<T> {}
 	let c_values = SyncWrapper(&*UnsafeCell::from_mut(c_values));
-	let nthreads = par.degree();
+	// one section over the column ranges; the work is the symbolic flop count, which is already
+	// known. The workspace keeps one column per thread of `par` either way.
+	let parallel = crate::utils::cost::par_pays::<T>(
+		&par,
+		total_flop_count as usize,
+		crate::utils::cost::rate::sparse_matmul(),
+		1,
+	);
+	let nthreads = if parallel { par.degree() } else { 1 };
 	let job = &|tid: usize| {
 		assert!(tid < nthreads);
 		fn partition_fn(
@@ -167,11 +175,19 @@ pub fn sparse_sparse_matmul_numeric<
 			job(0);
 		},
 		#[cfg(feature = "rayon")]
-		Par::Rayon(nthreads) => {
+		_ if !parallel => {
+			job(0);
+		},
+		#[cfg(feature = "rayon")]
+		_ => {
+		let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 			use rayon::prelude::*;
-			(0..nthreads.get()).into_par_iter().for_each(|tid| {
-				job(tid);
-			});
+			crate::utils::thread::for_each(
+				par,
+				nthreads.get(),
+				(0..nthreads.get()).into_par_iter(),
+				|tid| job(tid),
+			);
 		},
 	}
 }
@@ -191,8 +207,9 @@ pub fn sparse_sparse_matmul<
 	lhs: SparseColMatRef<'_, I, LhsT>,
 	rhs: SparseColMatRef<'_, I, RhsT>,
 	alpha: T,
-	par: Par,
+	mut par: Par,
 ) -> Result<SparseColMat<I, T>, FaerError> {
+		let par_shape = par.shape();
 	assert!(lhs.ncols() == rhs.nrows());
 	let (symbolic, info) =
 		sparse_sparse_matmul_symbolic(lhs.symbolic(), rhs.symbolic())?;
@@ -208,9 +225,9 @@ pub fn sparse_sparse_matmul<
 		rhs,
 		alpha,
 		&info,
-		par,
+		par.reborrow(),
 		MemStack::new(&mut MemBuffer::try_new(
-			sparse_sparse_matmul_numeric_scratch::<I, T>(symbolic.rb(), par),
+			sparse_sparse_matmul_numeric_scratch::<I, T>(symbolic.rb(), par_shape),
 		)?),
 	);
 	Ok(SparseColMat::new(symbolic, val))

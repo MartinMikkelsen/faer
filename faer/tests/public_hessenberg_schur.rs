@@ -26,7 +26,7 @@ fn real<T: RealField>() {
 			let mut mem = MemBuffer::new(hessenberg_schur_scratch::<T>(
 				n,
 				true,
-				Par::Seq,
+				ParShape::Seq,
 				Default::default(),
 			));
 			hessenberg_schur_real(
@@ -87,7 +87,7 @@ fn complex<T: ComplexField>(make: fn(f64, f64) -> T) {
 			let mut mem = MemBuffer::new(hessenberg_schur_scratch::<T>(
 				n,
 				true,
-				Par::Seq,
+				ParShape::Seq,
 				Default::default(),
 			));
 			hessenberg_schur_cplx(
@@ -125,7 +125,7 @@ fn accumulator_empty_and_nonfinite() {
 	let mut mem = MemBuffer::new(hessenberg_schur_scratch::<f64>(
 		2,
 		true,
-		Par::Seq,
+		ParShape::Seq,
 		Default::default(),
 	));
 	hessenberg_schur_real(

@@ -1436,14 +1436,14 @@ fn single_shift_sweep<T: RealField>(
 /// hessenberg form.
 pub fn hessenberg_to_qz_scratch<T: RealField>(
 	n: usize,
-	par: Par,
+	par: ParShape,
 	params: GeneralizedSchurParams,
 ) -> StackReq {
 	hessenberg_to_qz_blocked_scratch::<T>(n, par, params)
 }
 fn hessenberg_to_qz_blocked_scratch<T: RealField>(
 	n: usize,
-	par: Par,
+	par: ParShape,
 	params: GeneralizedSchurParams,
 ) -> StackReq {
 	let nmin = Ord::max(15, params.blocking_threshold);
@@ -1479,7 +1479,7 @@ fn multishift_sweep_scratch<T: RealField>(n: usize, ns: usize) -> StackReq {
 fn aed_scratch<T: RealField>(
 	n: usize,
 	nw: usize,
-	par: Par,
+	par: ParShape,
 	params: GeneralizedSchurParams,
 ) -> StackReq {
 	StackReq::any_of(&[
@@ -1494,11 +1494,11 @@ fn aed_scratch<T: RealField>(
 				linalg::lu::full_pivoting::factor::lu_in_place_scratch::<
 					usize,
 					T,
-				>(8, 8, Par::Seq, Default::default()),
+				>(8, 8, ParShape::Seq, Default::default()),
 				linalg::lu::full_pivoting::solve::solve_in_place_scratch::<
 					usize,
 					T,
-				>(n, 1, Par::Seq),
+				>(n, 1, ParShape::Seq),
 			]),
 		]),
 		linalg::temp_mat_scratch::<T>(nw, n),
@@ -1582,7 +1582,7 @@ fn hessenberg_to_qz_blocked<T: RealField>(
 	mut alphai: ColMut<'_, T>,
 	mut beta: ColMut<'_, T>,
 	eigvals_only: bool,
-	par: Par,
+	mut par: Par,
 	params: GeneralizedSchurParams,
 	stack: &mut MemStack,
 ) {
@@ -1830,7 +1830,7 @@ fn hessenberg_to_qz_blocked<T: RealField>(
 				beta.rb_mut(),
 				QC.rb_mut(),
 				ZC.rb_mut(),
-				par,
+				par.reborrow(),
 				params,
 				stack,
 			);
@@ -1898,7 +1898,7 @@ fn hessenberg_to_qz_blocked<T: RealField>(
 			QC.rb_mut(),
 			ZC.rb_mut(),
 			eigvals_only,
-			par,
+			par.reborrow(),
 			stack,
 		);
 	}
@@ -2180,7 +2180,7 @@ fn aggressive_early_deflation<T: RealField>(
 	mut beta: ColMut<'_, T>,
 	mut QC: MatMut<'_, T>,
 	mut ZC: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	params: GeneralizedSchurParams,
 	stack: &mut MemStack,
 ) -> (usize, usize) {
@@ -2227,7 +2227,7 @@ fn aggressive_early_deflation<T: RealField>(
 		alphai.rb_mut(),
 		beta.rb_mut(),
 		false,
-		par,
+		par.reborrow(),
 		params,
 		stack,
 	);
@@ -2505,7 +2505,7 @@ fn aggressive_early_deflation<T: RealField>(
 				qc.rb().adjoint(),
 				M.rb(),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			M.copy_from(&work);
 		}
@@ -2515,7 +2515,7 @@ fn aggressive_early_deflation<T: RealField>(
 			unsafe { linalg::temp_mat_uninit::<T, _, _>(n, jw, stack) };
 		let mut work = work.as_mat_mut();
 		let mut M = Q.rb_mut().subcols_mut(kwtop, jw);
-		matmul(work.rb_mut(), Accum::Replace, M.rb(), qc.rb(), one(), par);
+		matmul(work.rb_mut(), Accum::Replace, M.rb(), qc.rb(), one(), par.reborrow());
 		M.copy_from(&work);
 	}
 	if &kwtop - &istartm > 0 {
@@ -2526,7 +2526,7 @@ fn aggressive_early_deflation<T: RealField>(
 		for M in [A.rb_mut(), B.rb_mut()] {
 			let M: MatMut<'_, T> = M;
 			let mut M = M.submatrix_mut(istartm, kwtop, &kwtop - &istartm, jw);
-			matmul(work.rb_mut(), Accum::Replace, M.rb(), zc.rb(), one(), par);
+			matmul(work.rb_mut(), Accum::Replace, M.rb(), zc.rb(), one(), par.reborrow());
 			M.copy_from(&work);
 		}
 	}
@@ -3051,7 +3051,7 @@ fn multishift_sweep<T: RealField>(
 	mut QC: MatMut<'_, T>,
 	mut ZC: MatMut<'_, T>,
 	eigvals_only: bool,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let zero = zero::<T>;
@@ -3173,7 +3173,7 @@ fn multishift_sweep<T: RealField>(
 					qc.rb().adjoint(),
 					M.rb(),
 					one(),
-					par,
+					par.reborrow(),
 				);
 				M.copy_from(&work);
 			}
@@ -3184,7 +3184,7 @@ fn multishift_sweep<T: RealField>(
 			unsafe { linalg::temp_mat_uninit::<T, _, _>(n, sheight, stack) };
 		let mut work = work.as_mat_mut();
 		let mut M = Q.rb_mut().get_mut(.., ilo..&ilo + &sheight);
-		matmul(work.rb_mut(), Accum::Replace, M.rb(), qc.rb(), one(), par);
+		matmul(work.rb_mut(), Accum::Replace, M.rb(), qc.rb(), one(), par.reborrow());
 		M.copy_from(&work);
 	}
 	let sheight = ilo.saturating_sub(istartm);
@@ -3196,7 +3196,7 @@ fn multishift_sweep<T: RealField>(
 		let mut work = work.as_mat_mut();
 		for M in [A.rb_mut(), B.rb_mut()] {
 			let mut M = M.submatrix_mut(istartm, ilo, sheight, swidth);
-			matmul(work.rb_mut(), Accum::Replace, M.rb(), zc.rb(), one(), par);
+			matmul(work.rb_mut(), Accum::Replace, M.rb(), zc.rb(), one(), par.reborrow());
 			M.copy_from(&work);
 		}
 	}
@@ -3205,7 +3205,7 @@ fn multishift_sweep<T: RealField>(
 			unsafe { linalg::temp_mat_uninit::<T, _, _>(n, swidth, stack) };
 		let mut work = work.as_mat_mut();
 		let mut M = Z.rb_mut().get_mut(.., ilo..&ilo + &swidth);
-		matmul(work.rb_mut(), Accum::Replace, M.rb(), zc.rb(), one(), par);
+		matmul(work.rb_mut(), Accum::Replace, M.rb(), zc.rb(), one(), par.reborrow());
 		M.copy_from(&work);
 	}
 	let mut k = ilo;
@@ -3254,7 +3254,7 @@ fn multishift_sweep<T: RealField>(
 					qc.rb().adjoint(),
 					M.rb(),
 					one(),
-					par,
+					par.reborrow(),
 				);
 				M.copy_from(&work);
 			}
@@ -3265,7 +3265,7 @@ fn multishift_sweep<T: RealField>(
 			};
 			let mut work = work.as_mat_mut();
 			let mut M = Q.rb_mut().get_mut(.., k + 1..k + 1 + sheight);
-			matmul(work.rb_mut(), Accum::Replace, M.rb(), qc.rb(), one(), par);
+			matmul(work.rb_mut(), Accum::Replace, M.rb(), qc.rb(), one(), par.reborrow());
 			M.copy_from(&work);
 		}
 		let sheight = (k + 1).saturating_sub(istartm);
@@ -3284,7 +3284,7 @@ fn multishift_sweep<T: RealField>(
 					M.rb(),
 					zc.rb(),
 					one(),
-					par,
+					par.reborrow(),
 				);
 				M.copy_from(&work);
 			}
@@ -3294,7 +3294,7 @@ fn multishift_sweep<T: RealField>(
 				unsafe { linalg::temp_mat_uninit::<T, _, _>(n, swidth, stack) };
 			let mut work = work.as_mat_mut();
 			let mut M = Z.rb_mut().get_mut(.., k..&k + &swidth);
-			matmul(work.rb_mut(), Accum::Replace, M.rb(), zc.rb(), one(), par);
+			matmul(work.rb_mut(), Accum::Replace, M.rb(), zc.rb(), one(), par.reborrow());
 			M.copy_from(&work);
 		}
 		k += np;
@@ -3339,7 +3339,7 @@ fn multishift_sweep<T: RealField>(
 				qc.rb().adjoint(),
 				M.rb(),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			M.copy_from(&work);
 		}
@@ -3349,7 +3349,7 @@ fn multishift_sweep<T: RealField>(
 			unsafe { linalg::temp_mat_uninit::<T, _, _>(n, sheight, stack) };
 		let mut work = work.as_mat_mut();
 		let mut M = Q.rb_mut().get_mut(.., &ihi - &ns + 1..ihi + 1);
-		matmul(work.rb_mut(), Accum::Replace, M.rb(), qc.rb(), one(), par);
+		matmul(work.rb_mut(), Accum::Replace, M.rb(), qc.rb(), one(), par.reborrow());
 		M.copy_from(&work);
 	}
 	let sheight = (ihi + 1).saturating_sub(&ns + &istartm);
@@ -3361,7 +3361,7 @@ fn multishift_sweep<T: RealField>(
 		let mut work = work.as_mat_mut();
 		for M in [A.rb_mut(), B.rb_mut()] {
 			let mut M = M.submatrix_mut(istartm, &ihi - &ns, sheight, swidth);
-			matmul(work.rb_mut(), Accum::Replace, M.rb(), zc.rb(), one(), par);
+			matmul(work.rb_mut(), Accum::Replace, M.rb(), zc.rb(), one(), par.reborrow());
 			M.copy_from(&work);
 		}
 	}
@@ -3737,7 +3737,7 @@ mod tests {
 					MemStack::new(&mut MemBuffer::new(
 						hessenberg_to_qz_scratch::<f64>(
 							n,
-							Par::Seq,
+							ParShape::Seq,
 							auto!(f64),
 						),
 					)),

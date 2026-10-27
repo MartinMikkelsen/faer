@@ -169,8 +169,8 @@ fn apply_U_from_the_right<T: ComplexField>(
 	let (mut T1, mut T2) = tmp.rb_mut().split_at_col_mut(n);
 	let (M1, M2) = M.rb().split_at_col(n);
 	utils::thread::join_raw(
-		|par| {
-			matmul(T1.rb_mut(), Accum::Replace, M1.rb(), U11, one(), par);
+		|mut par| {
+			matmul(T1.rb_mut(), Accum::Replace, M1.rb(), U11, one(), par.reborrow());
 			tr::matmul(
 				T1.rb_mut(),
 				tr::BlockStructure::Rectangular,
@@ -183,7 +183,7 @@ fn apply_U_from_the_right<T: ComplexField>(
 				par,
 			);
 		},
-		|par| {
+		|mut par| {
 			tr::matmul(
 				T2.rb_mut(),
 				tr::BlockStructure::Rectangular,
@@ -193,7 +193,7 @@ fn apply_U_from_the_right<T: ComplexField>(
 				U12,
 				tr::BlockStructure::TriangularLower,
 				one(),
-				par,
+				par.reborrow(),
 			);
 			matmul(T2.rb_mut(), Accum::Add, M2.rb(), U22, one(), par);
 		},
@@ -225,7 +225,7 @@ pub fn generalized_hessenberg<T: ComplexField>(
 	B: MatMut<'_, T>,
 	Q_inout: Option<MatMut<'_, T>>,
 	Z_inout: Option<MatMut<'_, T>>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 	params: GeneralizedHessenbergParams,
 ) {
@@ -410,7 +410,7 @@ pub fn generalized_hessenberg<T: ComplexField>(
 						work0.rb().get(.., ..len).adjoint(),
 						A.rb().get(jrow.., j + 1),
 						one(),
-						par,
+						par.reborrow(),
 					);
 					tr::matmul(
 						work2.rb_mut().get_mut(len..),
@@ -421,7 +421,7 @@ pub fn generalized_hessenberg<T: ComplexField>(
 						A.rb().get(jrow..jrow + nblst - len, j + 1),
 						tr::BlockStructure::Rectangular,
 						one(),
-						par,
+						par.reborrow(),
 					);
 					matmul(
 						work2.rb_mut().get_mut(len..),
@@ -429,7 +429,7 @@ pub fn generalized_hessenberg<T: ComplexField>(
 						work0.rb().get(nblst - len.., len..).adjoint(),
 						A.rb().get(jrow + nblst - len.., j + 1),
 						one(),
-						par,
+						par.reborrow(),
 					);
 					for i in jrow..jrow + nblst {
 						A[(i, j + 1)] = work2[i - jrow].copy();
@@ -456,7 +456,7 @@ pub fn generalized_hessenberg<T: ComplexField>(
 						U11.adjoint(),
 						A.rb().get(j0..j0 + nnb, j + 1),
 						one(),
-						par,
+						par.reborrow(),
 					);
 					tr::matmul(
 						work2.rb_mut().get_mut(..len),
@@ -467,7 +467,7 @@ pub fn generalized_hessenberg<T: ComplexField>(
 						A.rb().get(j0 + nnb..j0 + nnb + len, j + 1),
 						tr::BlockStructure::Rectangular,
 						one(),
-						par,
+						par.reborrow(),
 					);
 					tr::matmul(
 						work2.rb_mut().get_mut(len..),
@@ -478,7 +478,7 @@ pub fn generalized_hessenberg<T: ComplexField>(
 						A.rb().get(j0..j0 + nnb, j + 1),
 						tr::BlockStructure::Rectangular,
 						one(),
-						par,
+						par.reborrow(),
 					);
 					matmul(
 						work2.rb_mut().get_mut(len..),
@@ -486,7 +486,7 @@ pub fn generalized_hessenberg<T: ComplexField>(
 						U22.adjoint(),
 						A.rb().get(j0 + nnb..j0 + nnb + len, j + 1),
 						one(),
-						par,
+						par.reborrow(),
 					);
 					for i in j0..j0 + len + nnb {
 						A[(i, j + 1)] = work2[i - j0].copy();
@@ -508,7 +508,7 @@ pub fn generalized_hessenberg<T: ComplexField>(
 				work0.rb().adjoint(),
 				A.rb().get(j.., jcol + nnb..),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			A.rb_mut().get_mut(j.., jcol + nnb..).copy_from(&work2);
 		}
@@ -525,14 +525,14 @@ pub fn generalized_hessenberg<T: ComplexField>(
 			let (mut work2_top, mut work2_bot) =
 				work2.rb_mut().split_at_row_mut(nnb);
 			utils::thread::join_raw(
-				|par| {
+				|mut par| {
 					matmul(
 						work2_top.rb_mut(),
 						Accum::Replace,
 						U11.adjoint(),
 						A.rb().get(j0..j0 + nnb, jcol + nnb..),
 						one(),
-						par,
+						par.reborrow(),
 					);
 					tr::matmul(
 						work2_top.rb_mut(),
@@ -546,7 +546,7 @@ pub fn generalized_hessenberg<T: ComplexField>(
 						par,
 					);
 				},
-				|par| {
+				|mut par| {
 					tr::matmul(
 						work2_bot.rb_mut(),
 						tr::BlockStructure::Rectangular,
@@ -556,7 +556,7 @@ pub fn generalized_hessenberg<T: ComplexField>(
 						A.rb().get(j0..j0 + nnb, jcol + nnb..),
 						tr::BlockStructure::Rectangular,
 						one(),
-						par,
+						par.reborrow(),
 					);
 					matmul(
 						work2_bot.rb_mut(),
@@ -567,7 +567,7 @@ pub fn generalized_hessenberg<T: ComplexField>(
 						par,
 					);
 				},
-				par,
+				par.reborrow(),
 			);
 			A.rb_mut()
 				.get_mut(j0..j0 + 2 * nnb, jcol + nnb..)
@@ -595,7 +595,7 @@ pub fn generalized_hessenberg<T: ComplexField>(
 					Q.rb().get(topq.., j..),
 					work0.rb(),
 					one(),
-					par,
+					par.reborrow(),
 				);
 				Q.rb_mut().get_mut(topq.., j..).copy_from(&work2);
 			}
@@ -614,7 +614,7 @@ pub fn generalized_hessenberg<T: ComplexField>(
 				apply_U_from_the_right(
 					Q.rb_mut().get_mut(topq.., j0..j0 + 2 * nnb),
 					U,
-					par,
+					par.reborrow(),
 					stack,
 				);
 				idx += 1;
@@ -702,7 +702,7 @@ pub fn generalized_hessenberg<T: ComplexField>(
 						M.rb().get(..top, j..),
 						work0.rb(),
 						one(),
-						par,
+						par.reborrow(),
 					);
 					M.rb_mut().get_mut(..top, j..).copy_from(&work2);
 				}
@@ -719,7 +719,7 @@ pub fn generalized_hessenberg<T: ComplexField>(
 					apply_U_from_the_right(
 						M.rb_mut().get_mut(..top, j0..j0 + 2 * nnb),
 						U,
-						par,
+						par.reborrow(),
 						stack,
 					);
 					idx += 1;
@@ -747,7 +747,7 @@ pub fn generalized_hessenberg<T: ComplexField>(
 					Z.rb().get(topq.., j..),
 					work0.rb(),
 					one(),
-					par,
+					par.reborrow(),
 				);
 				Z.rb_mut().get_mut(topq.., j..).copy_from(&work2);
 			}
@@ -766,7 +766,7 @@ pub fn generalized_hessenberg<T: ComplexField>(
 				apply_U_from_the_right(
 					Z.rb_mut().get_mut(topq.., j0..j0 + 2 * nnb),
 					U,
-					par,
+					par.reborrow(),
 					stack,
 				);
 				idx += 1;

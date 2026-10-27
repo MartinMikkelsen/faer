@@ -7,7 +7,7 @@ fn foo_scratch(n: usize) -> StackReq {
 	let tmp = faer::linalg::temp_mat_scratch::<f64>(n, n);
 	let llt = faer::linalg::cholesky::llt::factor::cholesky_in_place_scratch::<
 		f64,
-	>(n, Par::Seq, default());
+	>(n, ParShape::Seq, default());
 	tmp.and(StackReq::any_of(&[tmp.and(llt), tmp]))
 }
 // A <- A * B

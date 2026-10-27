@@ -110,7 +110,7 @@ fn mat_x_lower_impl_unchecked<'M, 'N, T: ComplexField>(
 	alpha: &T,
 	conj_lhs: Conj,
 	conj_rhs: Conj,
-	par: Par,
+	mut par: Par,
 ) {
 	let N = rhs.nrows();
 	let M = lhs.nrows();
@@ -122,10 +122,17 @@ fn mat_x_lower_impl_unchecked<'M, 'N, T: ComplexField>(
 	debug_assert!(N == rhs.ncols());
 	debug_assert!(M == dst.nrows());
 	debug_assert!(N == dst.ncols());
-	let join_parallelism = if n * n * m < 128usize * 128usize * 64usize {
-		Par::Seq
+	// One section per level (the join of the two halves); the unit is a multiply-add of the
+	// triangular product, `m*n*n/2`, at the GEMM rate.
+	let join_parallelism = if crate::utils::cost::join_pays::<T>(
+		&par,
+		m.saturating_mul(n).saturating_mul(n) / 2,
+		crate::utils::cost::rate::gemm_mac(),
+		1,
+	) {
+		par.reborrow()
 	} else {
-		par
+		Par::Seq
 	};
 	if n <= 16 {
 		let op = {
@@ -216,7 +223,7 @@ fn lower_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 	alpha: &T,
 	conj_lhs: Conj,
 	conj_rhs: Conj,
-	par: Par,
+	mut par: Par,
 ) {
 	let N = dst.nrows();
 	let n = N.unbound();
@@ -291,7 +298,7 @@ fn lower_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 			alpha,
 			conj_lhs,
 			conj_rhs,
-			par,
+			par.reborrow(),
 		);
 		mat_x_lower_impl_unchecked(
 			dst_bot_left.rb_mut(),
@@ -302,7 +309,7 @@ fn lower_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 			alpha,
 			conj_lhs,
 			conj_rhs,
-			par,
+			par.reborrow(),
 		);
 		mat_x_lower_impl_unchecked(
 			dst_bot_left.reverse_rows_and_cols_mut().transpose_mut(),
@@ -313,7 +320,7 @@ fn lower_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 			alpha,
 			conj_rhs,
 			conj_lhs,
-			par,
+			par.reborrow(),
 		);
 		lower_x_lower_into_lower_impl_unchecked(
 			dst_bot_right,
@@ -396,7 +403,7 @@ fn upper_x_lower_impl_unchecked<'N, T: ComplexField>(
 		let (rhs_top_left, _, rhs_bot_left, rhs_bot_right) =
 			rhs.split_with(bs, bs);
 		join_raw(
-			|par| {
+			|mut par| {
 				super::matmul_with_conj(
 					dst_top_left.rb_mut(),
 					beta,
@@ -405,7 +412,7 @@ fn upper_x_lower_impl_unchecked<'N, T: ComplexField>(
 					rhs_bot_left,
 					conj_rhs,
 					alpha.clone(),
-					par,
+					par.reborrow(),
 				);
 				upper_x_lower_impl_unchecked(
 					dst_top_left,
@@ -420,7 +427,7 @@ fn upper_x_lower_impl_unchecked<'N, T: ComplexField>(
 					par,
 				)
 			},
-			|par| {
+			|mut par| {
 				join_raw(
 					|par| {
 						mat_x_lower_impl_unchecked(
@@ -448,7 +455,7 @@ fn upper_x_lower_impl_unchecked<'N, T: ComplexField>(
 							par,
 						)
 					},
-					par,
+					par.reborrow(),
 				);
 				upper_x_lower_impl_unchecked(
 					dst_bot_right,
@@ -543,7 +550,7 @@ fn upper_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 		let (rhs_top_left, _, rhs_bot_left, rhs_bot_right) =
 			rhs.split_with(bs, bs);
 		join_raw(
-			|par| {
+			|mut par| {
 				mat_x_mat_into_lower_impl_unchecked(
 					dst_top_left.rb_mut(),
 					beta,
@@ -553,7 +560,7 @@ fn upper_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 					alpha,
 					conj_lhs,
 					conj_rhs,
-					par,
+					par.reborrow(),
 				);
 				upper_x_lower_into_lower_impl_unchecked(
 					dst_top_left,
@@ -569,7 +576,7 @@ fn upper_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 					par,
 				)
 			},
-			|par| {
+			|mut par| {
 				mat_x_lower_impl_unchecked(
 					dst_bot_left.transpose_mut(),
 					beta,
@@ -579,7 +586,7 @@ fn upper_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 					alpha,
 					conj_rhs,
 					conj_lhs,
-					par,
+					par.reborrow(),
 				);
 				upper_x_lower_into_lower_impl_unchecked(
 					dst_bot_right,
@@ -610,6 +617,22 @@ fn mat_x_mat_into_lower_impl_unchecked<'N, 'K, T: ComplexField>(
 	conj_rhs: Conj,
 	par: Par,
 ) {
+	// Two sections per level (the outer join and the join nested in its second half); the
+	// unit is a multiply-add of the product into one triangle, `n*n*k/2`, at the GEMM rate.
+	let pays = crate::utils::cost::join_pays::<T>(
+		&par,
+		dst.nrows()
+			.unbound()
+			.saturating_mul(dst.nrows().unbound())
+			.saturating_mul(lhs.ncols().unbound())
+			/ 2,
+		crate::utils::cost::rate::gemm_mac(),
+		2,
+	);
+	// On x86_64 the `private_gemm_x86` kernel does the product into the triangle. A `Team` token
+	// runs it on its own members (`Fork` of the team), gated by the kernel's two sections at the
+	// width `width_for` chooses; Rayon and Seq hand it the degree. Without the kernel (other
+	// targets, other dtypes) a team that pays runs the recursion below on the team.
 	#[cfg(all(target_arch = "x86_64", feature = "std"))]
 	if const {
 		T::IS_NATIVE_F64
@@ -638,64 +661,88 @@ fn mat_x_mat_into_lower_impl_unchecked<'N, 'K, T: ComplexField>(
 					} else {
 						(dst.as_dyn_mut(), lhs.as_dyn())
 					};
-					private_gemm_x86::gemm(
-						const {
-							if T::IS_NATIVE_F64 {
-								DType::F64
-							} else if T::IS_NATIVE_F32 {
-								DType::F32
-							} else if T::IS_NATIVE_C64 {
-								DType::C64
-							} else {
-								DType::C32
-							}
-						},
-						const { IType::U32 },
-						feat,
-						dst.nrows(),
-						dst.ncols(),
-						lhs.ncols(),
-						dst.as_ptr_mut() as _,
-						dst.row_stride(),
-						dst.col_stride(),
-						core::ptr::null(),
-						core::ptr::null(),
-						DstKind::Lower,
-						match beta {
-							crate::Accum::Replace => Accum::Replace,
-							crate::Accum::Add => Accum::Add,
-						},
-						lhs.as_ptr() as _,
-						lhs.row_stride(),
-						lhs.col_stride(),
-						conj_lhs == Conj::Yes,
-						core::ptr::null(),
-						0,
-						rhs.as_ptr() as _,
-						rhs.row_stride(),
-						rhs.col_stride(),
-						conj_rhs == Conj::Yes,
-						alpha as *const T as *const (),
-						par.degree(),
-					);
+					macro_rules! go {
+						($call:path, $last:expr) => {
+							$call(
+								const {
+									if T::IS_NATIVE_F64 {
+										DType::F64
+									} else if T::IS_NATIVE_F32 {
+										DType::F32
+									} else if T::IS_NATIVE_C64 {
+										DType::C64
+									} else {
+										DType::C32
+									}
+								},
+								const { IType::U32 },
+								feat,
+								dst.nrows(),
+								dst.ncols(),
+								lhs.ncols(),
+								dst.as_ptr_mut() as _,
+								dst.row_stride(),
+								dst.col_stride(),
+								core::ptr::null(),
+								core::ptr::null(),
+								DstKind::Lower,
+								match beta {
+									crate::Accum::Replace => Accum::Replace,
+									crate::Accum::Add => Accum::Add,
+								},
+								lhs.as_ptr() as _,
+								lhs.row_stride(),
+								lhs.col_stride(),
+								conj_lhs == Conj::Yes,
+								core::ptr::null(),
+								0,
+								rhs.as_ptr() as _,
+								rhs.row_stride(),
+								rhs.col_stride(),
+								conj_rhs == Conj::Yes,
+								alpha as *const T as *const (),
+								$last,
+							)
+						};
+					}
+					#[cfg(feature = "threadteam")]
+					if let Par::Team(team) = par {
+						let estimate = crate::utils::cost::serial_time(
+							dst.nrows()
+								.saturating_mul(dst.ncols())
+								.saturating_mul(lhs.ncols())
+								/ 2,
+							crate::utils::cost::rate::gemm_mac().of::<T>(),
+						);
+						match crate::utils::team::kernel::kernel_width(
+							&team, estimate,
+						) {
+							Some(width) => {
+								crate::utils::team::kernel::with_fork(
+									team,
+									width,
+									|fork| {
+										go!(private_gemm_x86::gemm_with, fork)
+									},
+								)
+							},
+							None => go!(private_gemm_x86::gemm, 1),
+						}
+						return;
+					}
+					go!(private_gemm_x86::gemm, par.degree());
 					return;
 				}
 			}
 		}
 	}
 	let N = dst.nrows();
-	let K = lhs.ncols();
 	let n = N.unbound();
-	let k = K.unbound();
 	debug_assert!(dst.nrows() == dst.ncols());
 	debug_assert!(dst.nrows() == lhs.nrows());
 	debug_assert!(dst.ncols() == rhs.ncols());
 	debug_assert!(lhs.ncols() == rhs.nrows());
-	let par = if n * n * k < 128usize * 128usize * 128usize {
-		Par::Seq
-	} else {
-		par
-	};
+	let par = if pays { par } else { Par::Seq };
 	if n <= 16 {
 		let op = {
 			#[inline(never)]
@@ -788,7 +835,7 @@ fn mat_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 	alpha: &T,
 	conj_lhs: Conj,
 	conj_rhs: Conj,
-	par: Par,
+	mut par: Par,
 ) {
 	let N = dst.nrows();
 	let n = N.unbound();
@@ -851,7 +898,7 @@ fn mat_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 			rhs_bot_left,
 			conj_rhs,
 			alpha.clone(),
-			par,
+			par.reborrow(),
 		);
 		mat_x_lower_into_lower_impl_unchecked(
 			dst_bot_right,
@@ -863,7 +910,7 @@ fn mat_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 			alpha,
 			conj_lhs,
 			conj_rhs,
-			par,
+			par.reborrow(),
 		);
 		mat_x_lower_into_lower_impl_unchecked(
 			dst_top_left.rb_mut(),
@@ -875,7 +922,7 @@ fn mat_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 			alpha,
 			conj_lhs,
 			conj_rhs,
-			par,
+			par.reborrow(),
 		);
 		mat_x_mat_into_lower_impl_unchecked(
 			dst_top_left,
@@ -886,7 +933,7 @@ fn mat_x_lower_into_lower_impl_unchecked<'N, T: ComplexField>(
 			alpha,
 			conj_lhs,
 			conj_rhs,
-			par,
+			par.reborrow(),
 		);
 		mat_x_lower_impl_unchecked(
 			dst_bot_left,
