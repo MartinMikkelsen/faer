@@ -2554,7 +2554,7 @@ mod scale_and_empty_tests {
 				tridiagonal_self_adjoint_evd_scratch::<T>(
 					0,
 					ComputeEigenvectors::Yes,
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				),
 			);
