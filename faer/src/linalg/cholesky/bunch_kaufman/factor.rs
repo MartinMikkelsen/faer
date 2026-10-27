@@ -627,6 +627,7 @@ fn lblt_blocked_step<T: ComplexField>(
 				perm::swap_rows_idx(Wr.rb_mut(), 1, i1);
 			}
 			if nothing_to_do {
+				subdiag[0] = zero();
 				break 'next_iter;
 			}
 			if npiv == 1 {
@@ -875,6 +876,7 @@ fn lblt_unblocked<T: ComplexField>(
 				perm::swap_rows_idx(L_prev.rb_mut(), 1, i1);
 			}
 			if nothing_to_do {
+				subdiag[0] = zero();
 				break 'next_iter;
 			}
 			if npiv == 1 {
