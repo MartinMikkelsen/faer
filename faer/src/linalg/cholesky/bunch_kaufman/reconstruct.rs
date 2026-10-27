@@ -166,7 +166,7 @@ mod tests {
 				MemStack::new(&mut MemBuffer::new(
 					factor::cholesky_in_place_scratch::<usize, f64>(
 						n,
-						Par::Seq,
+						ParShape::Seq,
 						default(),
 					),
 				)),
@@ -184,7 +184,7 @@ mod tests {
 				perm,
 				Par::Seq,
 				MemStack::new(&mut MemBuffer::new(
-					reconstruct::reconstruct_scratch::<usize, f64>(n, Par::Seq),
+					reconstruct::reconstruct_scratch::<usize, f64>(n, ParShape::Seq),
 				)),
 			);
 			for j in 0..n {
