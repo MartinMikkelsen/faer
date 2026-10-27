@@ -5,7 +5,7 @@ pub fn solve_lstsq_in_place_scratch<T: ComplexField>(
 	qr_ncols: usize,
 	qr_block_size: usize,
 	rhs_ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	_ = qr_ncols;
 	_ = par;
@@ -15,7 +15,7 @@ pub fn solve_in_place_scratch<T: ComplexField>(
 	qr_dim: usize,
 	qr_block_size: usize,
 	rhs_ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	solve_lstsq_in_place_scratch::<T>(
 		qr_dim,
@@ -29,7 +29,7 @@ pub fn solve_transpose_in_place_scratch<T: ComplexField>(
 	qr_dim: usize,
 	qr_block_size: usize,
 	rhs_ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	_ = par;
 	linalg::householder::apply_block_householder_sequence_on_the_left_in_place_scratch::<T>(qr_dim, qr_block_size, rhs_ncols)
@@ -41,7 +41,7 @@ pub fn solve_lstsq_in_place_with_conj<T: ComplexField>(
 	R: MatRef<'_, T>,
 	conj_QR: Conj,
 	rhs: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let m = Q_basis.nrows();
@@ -63,7 +63,7 @@ pub fn solve_lstsq_in_place_with_conj<T: ComplexField>(
 		Q_coeff,
 		conj_QR.compose(Conj::Yes),
 		rhs.rb_mut(),
-		par,
+		par.reborrow(),
 		stack.rb_mut(),
 	);
 	linalg::triangular_solve::solve_upper_triangular_in_place_with_conj(
@@ -143,7 +143,7 @@ pub fn solve_transpose_in_place_with_conj<T: ComplexField>(
 	R: MatRef<'_, T>,
 	conj_QR: Conj,
 	rhs: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let n = Q_basis.nrows();
@@ -163,7 +163,7 @@ pub fn solve_transpose_in_place_with_conj<T: ComplexField>(
 		R.transpose(),
 		conj_QR,
 		rhs.rb_mut(),
-		par,
+		par.reborrow(),
 	);
 	linalg::householder::apply_block_householder_sequence_on_the_left_in_place_with_conj(
 		Q_basis,
@@ -231,7 +231,7 @@ mod tests {
 			MemStack::new(&mut MemBuffer::new(factor::qr_in_place_scratch::<
 				c64,
 			>(
-				m, n, 4, Par::Seq, default()
+				m, n, 4, ParShape::Seq, default()
 			))),
 			default(),
 		);
@@ -250,7 +250,7 @@ mod tests {
 						n,
 						4,
 						k,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);
@@ -271,7 +271,7 @@ mod tests {
 						n,
 						4,
 						k,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);
@@ -305,7 +305,7 @@ mod tests {
 			MemStack::new(&mut MemBuffer::new(factor::qr_in_place_scratch::<
 				c64,
 			>(
-				n, n, 4, Par::Seq, default()
+				n, n, 4, ParShape::Seq, default()
 			))),
 			default(),
 		);
@@ -319,7 +319,7 @@ mod tests {
 				X.as_mut(),
 				Par::Seq,
 				MemStack::new(&mut MemBuffer::new(
-					solve::solve_in_place_scratch::<c64>(n, 4, k, Par::Seq),
+					solve::solve_in_place_scratch::<c64>(n, 4, k, ParShape::Seq),
 				)),
 			);
 			assert!(& A * & X ~ B);
@@ -333,7 +333,7 @@ mod tests {
 				X.as_mut(),
 				Par::Seq,
 				MemStack::new(&mut MemBuffer::new(
-					solve::solve_in_place_scratch::<c64>(n, 4, k, Par::Seq),
+					solve::solve_in_place_scratch::<c64>(n, 4, k, ParShape::Seq),
 				)),
 			);
 			assert!(A.conjugate() * & X ~ B);
@@ -351,7 +351,7 @@ mod tests {
 						n,
 						4,
 						k,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);
@@ -370,7 +370,7 @@ mod tests {
 						n,
 						4,
 						k,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);

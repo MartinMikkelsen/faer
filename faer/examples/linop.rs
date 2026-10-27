@@ -8,7 +8,7 @@ use faer::{dyn_stack, reborrow};
 use faer::mat::{AsMatMut, MatMut, MatRef};
 use faer::matrix_free::{BiLinOp, LinOp};
 use faer::sparse::{SparseRowMatRef, linalg};
-use faer::{Accum, Conj, Par};
+use faer::{Accum, Conj, Par, ParShape};
 
 use faer::c64;
 
@@ -27,7 +27,7 @@ pub struct BinvAOperatorScratch<'a, I: Index> {
 }
 
 impl<I: Index, T: ComplexField> LinOp<T> for BinvAOperatorScratch<'_, I> {
-	fn apply_scratch(&self, rhs_ncols: usize, par: Par) -> StackReq {
+	fn apply_scratch(&self, rhs_ncols: usize, par: ParShape) -> StackReq {
 		self.Binv.solve_in_place_scratch::<T>(rhs_ncols, par)
 	}
 
@@ -63,7 +63,7 @@ impl<I: Index, T: ComplexField> LinOp<T> for BinvAOperatorScratch<'_, I> {
 }
 
 impl<I: Index, T: ComplexField> BiLinOp<T> for BinvAOperatorScratch<'_, I> {
-	fn transpose_apply_scratch(&self, rhs_ncols: usize, par: Par) -> StackReq {
+	fn transpose_apply_scratch(&self, rhs_ncols: usize, par: ParShape) -> StackReq {
 		faer::linalg::temp_mat_scratch::<T>(self.Binv.nrows(), rhs_ncols).and(
 			self.Binv
 				.solve_transpose_in_place_scratch::<T>(rhs_ncols, par),
@@ -94,7 +94,7 @@ impl<I: Index, T: ComplexField> BiLinOp<T> for BinvAOperatorScratch<'_, I> {
 }
 
 impl<I: Index, T: ComplexField> LinOp<T> for BinvAOperator<'_, I, T> {
-	fn apply_scratch(&self, rhs_ncols: usize, par: Par) -> StackReq {
+	fn apply_scratch(&self, rhs_ncols: usize, par: ParShape) -> StackReq {
 		LinOp::<T>::apply_scratch(
 			&BinvAOperatorScratch {
 				Binv: self.Binv.symbolic(),
@@ -116,7 +116,7 @@ impl<I: Index, T: ComplexField> LinOp<T> for BinvAOperator<'_, I, T> {
 		&self,
 		out: MatMut<'_, T>,
 		rhs: MatRef<'_, T>,
-		par: Par,
+		mut par: Par,
 		stack: &mut MemStack,
 	) {
 		let mut out = out;
@@ -127,7 +127,7 @@ impl<I: Index, T: ComplexField> LinOp<T> for BinvAOperator<'_, I, T> {
 			self.A,
 			rhs,
 			T::one(),
-			par,
+			par.reborrow(),
 		);
 		self.Binv
 			.solve_in_place_with_conj(Conj::No, out.rb_mut(), par, stack);
@@ -137,7 +137,7 @@ impl<I: Index, T: ComplexField> LinOp<T> for BinvAOperator<'_, I, T> {
 		&self,
 		out: MatMut<'_, T>,
 		rhs: MatRef<'_, T>,
-		par: Par,
+		mut par: Par,
 		stack: &mut MemStack,
 	) {
 		let mut out = out;
@@ -147,7 +147,7 @@ impl<I: Index, T: ComplexField> LinOp<T> for BinvAOperator<'_, I, T> {
 			self.A.conjugate(),
 			rhs,
 			T::one(),
-			par,
+			par.reborrow(),
 		);
 		self.Binv
 			.solve_in_place_with_conj(Conj::Yes, out.rb_mut(), par, stack);
@@ -156,7 +156,7 @@ impl<I: Index, T: ComplexField> LinOp<T> for BinvAOperator<'_, I, T> {
 
 // not needed for partial_eigen. left here as an example
 impl<I: Index, T: ComplexField> BiLinOp<T> for BinvAOperator<'_, I, T> {
-	fn transpose_apply_scratch(&self, rhs_ncols: usize, par: Par) -> StackReq {
+	fn transpose_apply_scratch(&self, rhs_ncols: usize, par: ParShape) -> StackReq {
 		BiLinOp::<T>::transpose_apply_scratch(
 			&BinvAOperatorScratch {
 				Binv: self.Binv.symbolic(),
@@ -170,7 +170,7 @@ impl<I: Index, T: ComplexField> BiLinOp<T> for BinvAOperator<'_, I, T> {
 		&self,
 		out: MatMut<'_, T>,
 		rhs: MatRef<'_, T>,
-		par: Par,
+		mut par: Par,
 		stack: &mut MemStack,
 	) {
 		let (m, n) = (rhs.nrows(), rhs.ncols());
@@ -183,7 +183,7 @@ impl<I: Index, T: ComplexField> BiLinOp<T> for BinvAOperator<'_, I, T> {
 		self.Binv.solve_transpose_in_place_with_conj(
 			Conj::No,
 			tmp.rb_mut(),
-			par,
+			par.reborrow(),
 			stack,
 		);
 		linalg::matmul::sparse_dense_matmul(
@@ -200,7 +200,7 @@ impl<I: Index, T: ComplexField> BiLinOp<T> for BinvAOperator<'_, I, T> {
 		&self,
 		out: MatMut<'_, T>,
 		rhs: MatRef<'_, T>,
-		par: Par,
+		mut par: Par,
 		stack: &mut MemStack,
 	) {
 		let (m, n) = (rhs.nrows(), rhs.ncols());
@@ -213,7 +213,7 @@ impl<I: Index, T: ComplexField> BiLinOp<T> for BinvAOperator<'_, I, T> {
 		self.Binv.solve_transpose_in_place_with_conj(
 			Conj::Yes,
 			tmp.rb_mut(),
-			par,
+			par.reborrow(),
 			stack,
 		);
 		linalg::matmul::sparse_dense_matmul(
@@ -273,7 +273,7 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
 	let B = B.to_col_major()?;
 
 	// this example uses a single thread
-	let par = Par::Seq;
+	let mut par = Par::Seq;
 
 	// symbolic factorization
 	let symbolic = linalg::lu::factorize_symbolic_lu(B.symbolic(), default())?;
@@ -281,11 +281,11 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
 
 	// computing allocation size
 	let factorize_scratch =
-		symbolic.factorize_numeric_lu_scratch::<c64>(par, default());
+		symbolic.factorize_numeric_lu_scratch::<c64>(par.shape(), default());
 	let eigen_scratch = faer::matrix_free::eigen::partial_eigen_scratch(
 		&BinvAOperatorScratch { Binv: &symbolic } as &dyn LinOp<c64>,
 		n_eig,
-		par,
+		par.shape(),
 		default(),
 	);
 
@@ -328,7 +328,7 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
 		symbolic.factorize_numeric_lu(
 			&mut numeric,
 			B.rb(),
-			par,
+			par.reborrow(),
 			stack,
 			default(),
 		)?
@@ -386,8 +386,8 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
 		use faer::prelude::*;
 
 		println!("sanity check:");
-		let Binv_A = B.sp_lu()?.solve(A.to_dense());
-		let eig = Binv_A.eigen().unwrap();
+		let Binv_A = B.sp_lu(Par::Seq)?.solve(A.to_dense(), Par::Seq);
+		let eig = Binv_A.eigen(Par::Seq).unwrap();
 		let mut sort = Vec::from_iter(0..n);
 		sort.sort_unstable_by(|&i, &j| {
 			let i = eig.S()[i].norm();

@@ -113,8 +113,6 @@ pub fn recommended_block_size<T: ComplexField>(
 pub struct QrParams {
 	/// threshold at which blocking algorithms should be disabled
 	pub blocking_threshold: usize,
-	/// threshold at which the parallelism should be disabled
-	pub par_threshold: usize,
 	#[doc(hidden)]
 	pub non_exhaustive: NonExhaustive,
 }
@@ -123,7 +121,6 @@ impl<T: ComplexField> Auto<T> for QrParams {
 	fn auto() -> Self {
 		Self {
 			blocking_threshold: 48 * 48,
-			par_threshold: 192 * 256,
 			non_exhaustive: NonExhaustive(()),
 		}
 	}
@@ -133,7 +130,7 @@ fn qr_in_place_blocked<T: ComplexField>(
 	H: MatMut<'_, T>,
 	row_start: usize,
 	col_start: usize,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 	params: Spec<QrParams, T>,
 ) -> usize {
@@ -169,7 +166,7 @@ fn qr_in_place_blocked<T: ComplexField>(
 				H.rb_mut().subrows_mut(offset, sub_block_size),
 				row,
 				col,
-				par,
+				par.reborrow(),
 				stack,
 				params.into(),
 			);
@@ -196,7 +193,7 @@ fn qr_in_place_blocked<T: ComplexField>(
 					A.rb().get(row.., row..row + local),
 					local,
 					sub_block_size,
-					par,
+					par.reborrow(),
 				);
 				if offset > 0 {
 					use crate::linalg::matmul::triangular::{
@@ -217,7 +214,7 @@ fn qr_in_place_blocked<T: ComplexField>(
 						A0,
 						BlockStructure::UnitTriangularLower,
 						one(),
-						par,
+						par.reborrow(),
 					);
 					triangular::matmul(
 						H.rb_mut(),
@@ -228,7 +225,7 @@ fn qr_in_place_blocked<T: ComplexField>(
 						A1,
 						BlockStructure::Rectangular,
 						one(),
-						par,
+						par.reborrow(),
 					);
 				}
 			}
@@ -239,7 +236,7 @@ fn qr_in_place_blocked<T: ComplexField>(
 			let Q0 = Q0.rb().get(.., row..row + local);
 			let H = H.rb().get(offset..offset + local, row..row + local);
 			if A1.ncols() > 0 {
-				householder::apply_block_householder_transpose_on_the_left_in_place_with_conj(Q0.rb(), H.rb(), Conj::Yes, A1, par, stack);
+				householder::apply_block_householder_transpose_on_the_left_in_place_with_conj(Q0.rb(), H.rb(), Conj::Yes, A1, par.reborrow(), stack);
 			}
 			offset += local;
 			row += local;
@@ -267,15 +264,15 @@ fn qr_in_place_blocked<T: ComplexField>(
 fn qr_in_place_adapted<T: ComplexField>(
 	A: MatMut<'_, T>,
 	Q_coeff: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 	params: Spec<QrParams, T>,
 ) -> QrInfo {
 	let (m, n) = A.shape();
 	let mut work = alloc::vec![zero::<T>(); m * n];
 	let mut work = MatMut::from_column_major_slice_mut(&mut work, m, n);
-	linalg::copy_across_layouts(work.rb_mut(), A.rb(), par);
-	let info = qr_in_place(work.rb_mut(), Q_coeff, par, stack, params);
+	linalg::copy_across_layouts(work.rb_mut(), A.rb(), par.reborrow());
+	let info = qr_in_place(work.rb_mut(), Q_coeff, par.reborrow(), stack, params);
 	linalg::copy_across_layouts(A, work.rb(), par);
 	info
 }
@@ -333,7 +330,7 @@ pub fn qr_in_place_scratch<T: ComplexField>(
 	nrows: usize,
 	ncols: usize,
 	block_size: usize,
-	par: Par,
+	par: ParShape,
 	params: Spec<QrParams, T>,
 ) -> StackReq {
 	let _ = par;
@@ -354,7 +351,8 @@ mod tests {
 	fn test_qr() {
 		let rng = &mut StdRng::seed_from_u64(0);
 		for rank in [1, 2, 3, 4, 5, 100, usize::MAX] {
-			for par in [Par::Seq, Par::rayon(8)] {
+			for mut par in [Par::Seq, Par::rayon(8)] {
+			let par_shape = par.shape();
 				for n in [2, 4, 8, 16, 24, 32, 127, 128, 257] {
 					let rank = Ord::min(n, rank);
 					let approx_eq = CwiseMat(ApproxEq {
@@ -395,7 +393,7 @@ mod tests {
 								n,
 								n,
 								1,
-								Par::Seq,
+								ParShape::Seq,
 								params,
 							),
 						)),
@@ -456,13 +454,13 @@ mod tests {
 					let computed_rank = qr_in_place(
 						QR.as_mut(),
 						H.as_mut(),
-						par,
+						par.reborrow(),
 						MemStack::new(&mut MemBuffer::new(
 							qr_in_place_scratch::<c64>(
 								n,
 								n,
 								bs,
-								par,
+								par_shape,
 								default(),
 							),
 						)),
@@ -525,13 +523,13 @@ mod tests {
 					let computed_rank = qr_in_place(
 						QR.as_mut(),
 						H.as_mut(),
-						par,
+						par.reborrow(),
 						MemStack::new(&mut MemBuffer::new(
 							qr_in_place_scratch::<c64>(
 								m,
 								n,
 								bs,
-								par,
+								par_shape,
 								default(),
 							),
 						)),
@@ -629,14 +627,14 @@ mod tests {
 			// must agree bit for bit; where it does not, they are two different
 			// kernels over the same values and only the rounding may differ.
 			exact: bool,
-			par: Par,
+			mut par: Par,
 		) {
 			// An empty matrix has no row to start a backwards view from.
 			let flipped = flipped && m > 0 && n > 0;
 			let size = Ord::min(m, n);
 			let block_size = recommended_block_size::<T>(m, n);
 			let qr_scratch =
-				qr_in_place_scratch::<T>(m, n, block_size, par, default());
+				qr_in_place_scratch::<T>(m, n, block_size, par.shape(), default());
 			// The same matrix, flat in each order. The row-major side is read
 			// back through the same view, so it is compared at the storage row
 			// the view puts there.
@@ -655,7 +653,7 @@ mod tests {
 			}
 			let mut h_cm = vec![T::zero(); block_size * size];
 			let mut h_rm = vec![T::zero(); block_size * size];
-			let run = |a: &mut [T],
+			let mut run = |a: &mut [T],
 			           h: &mut [T],
 			           base: usize,
 			           (rs, cs): (isize, isize)|
@@ -676,7 +674,7 @@ mod tests {
 							1,
 							block_size as isize,
 						),
-						par,
+						par.reborrow(),
 						MemStack::new(&mut MemBuffer::new(qr_scratch)),
 						default(),
 					)
@@ -727,8 +725,8 @@ mod tests {
 		// than one column, and at least `64 * 64` elements so the copy floor
 		// lets it through. These must match the column-major factor exactly.
 		for (m, n) in [(64, 64), (128, 128), (256, 64), (300, 64), (512, 64)] {
-			for par in [Par::Seq, Par::rayon(8)] {
-				check::<f64>(m, n, false, false, true, par);
+			for mut par in [Par::Seq, Par::rayon(8)] {
+				check::<f64>(m, n, false, false, true, par.reborrow());
 				check::<c64>(m, n, false, false, true, par);
 			}
 			check::<f64>(m, n, false, true, true, Par::Seq);
@@ -785,7 +783,7 @@ mod tests {
 				m,
 				n,
 				block_size,
-				Par::Seq,
+				ParShape::Seq,
 				default(),
 			))),
 			default(),
@@ -5077,7 +5075,7 @@ mod tests {
 				A.nrows(),
 				A.ncols(),
 				20,
-				Par::Seq,
+				ParShape::Seq,
 				default(),
 			))),
 			default(),
@@ -5107,7 +5105,7 @@ mod tests {
 			}
 		}
 		assert!(Q * R ~ A);
-		let QR = A.qr().reconstruct();
+		let QR = A.qr(Par::Seq).reconstruct(Par::Seq);
 		assert!(QR ~ A);
 	}
 
@@ -5134,15 +5132,16 @@ mod tests {
 				(s >> 11) as f64 / (1u64 << 53) as f64 - 0.5
 			}
 		});
-		let factor = |par: Par| {
+		let factor = |mut par: Par| {
 			let mut qr = a.cloned();
 			let mut h = Mat::<f64>::zeros(block_size, n);
+			let par_shape = par.shape();
 			let info = qr_in_place(
 				qr.as_mut(),
 				h.as_mut(),
-				par,
+				par.reborrow(),
 				MemStack::new(&mut MemBuffer::new(
-					qr_in_place_scratch::<f64>(m, n, block_size, par, default()),
+					qr_in_place_scratch::<f64>(m, n, block_size, par_shape, default()),
 				)),
 				default(),
 			);

@@ -69,9 +69,20 @@ pub fn spicy_matmul<I: Index, T: ComplexField>(
 	if nrows == 0 || ncols == 0 {
 		return;
 	}
-	let par = if (nrows * ncols).saturating_mul(depth)
-		> 32usize * 32usize * 32usize
-	{
+	// One section; the unit is a multiply-add at the GEMM rate of the dtype. A team token
+	// that can run the x86 kernel decides below, with the kernel's own two sections and the
+	// width `width_for` chooses; the one-section gate at the full degree is applied to it only
+	// where there is no kernel (`team_gate_pending`).
+	let units = (nrows * ncols).saturating_mul(depth);
+	let team_gate_pending =
+		crate::utils::thread::is_team(&par) && par.degree() >= 2;
+	let mut par = if team_gate_pending
+		|| crate::utils::cost::par_pays::<T>(
+			&par,
+			units,
+			crate::utils::cost::rate::gemm_mac(),
+			1,
+		) {
 		par
 	} else {
 		Par::Seq
@@ -164,69 +175,122 @@ pub fn spicy_matmul<I: Index, T: ComplexField>(
 			if nrows == 0 || ncols == 0 {
 				return;
 			}
-			unsafe {
-				private_gemm_x86::gemm(
-					const {
-						if T::IS_NATIVE_F64 {
-							DType::F64
-						} else if T::IS_NATIVE_F32 {
-							DType::F32
-						} else if T::IS_NATIVE_C64 {
-							DType::C64
-						} else {
-							DType::C32
-						}
-					},
-					const {
-						if size_of::<I>() == 4 {
-							IType::U32
-						} else if size_of::<I>() == 8 {
-							IType::U64
-						} else {
-							unreachable!()
-						}
-					},
-					feat,
-					nrows,
-					ncols,
-					depth,
-					C.as_ptr_mut() as _,
-					C.row_stride(),
-					C.col_stride(),
-					row_idx.map(|idx| idx.as_ptr()).unwrap_or(core::ptr::null())
-						as _,
-					col_idx.map(|idx| idx.as_ptr()).unwrap_or(core::ptr::null())
-						as _,
-					match C_block {
-						BlockStructure::Rectangular => DstKind::Full,
-						BlockStructure::TriangularLower => DstKind::Lower,
-						BlockStructure::StrictTriangularLower => DstKind::Lower,
-						BlockStructure::UnitTriangularLower => DstKind::Lower,
-						BlockStructure::TriangularUpper => DstKind::Upper,
-						BlockStructure::StrictTriangularUpper => DstKind::Upper,
-						BlockStructure::UnitTriangularUpper => DstKind::Upper,
-					},
-					match beta {
-						crate::Accum::Replace => Accum::Replace,
-						crate::Accum::Add => Accum::Add,
-					},
-					A.as_ptr() as _,
-					A.row_stride(),
-					A.col_stride(),
-					conj_A == Conj::Yes,
-					D.map(|D| D.column_vector().as_ptr() as _)
-						.unwrap_or(core::ptr::null()),
-					D.map(|D| D.column_vector().row_stride()).unwrap_or(0),
-					B.as_ptr() as _,
-					B.row_stride(),
-					B.col_stride(),
-					conj_B == Conj::Yes,
-					&raw const alpha as _,
-					par.degree(),
+			macro_rules! go {
+				($call:path, $last:expr) => {
+					$call(
+						const {
+							if T::IS_NATIVE_F64 {
+								DType::F64
+							} else if T::IS_NATIVE_F32 {
+								DType::F32
+							} else if T::IS_NATIVE_C64 {
+								DType::C64
+							} else {
+								DType::C32
+							}
+						},
+						const {
+							if size_of::<I>() == 4 {
+								IType::U32
+							} else if size_of::<I>() == 8 {
+								IType::U64
+							} else {
+								unreachable!()
+							}
+						},
+						feat,
+						nrows,
+						ncols,
+						depth,
+						C.as_ptr_mut() as _,
+						C.row_stride(),
+						C.col_stride(),
+						row_idx
+							.map(|idx| idx.as_ptr())
+							.unwrap_or(core::ptr::null()) as _,
+						col_idx
+							.map(|idx| idx.as_ptr())
+							.unwrap_or(core::ptr::null()) as _,
+						match C_block {
+							BlockStructure::Rectangular => DstKind::Full,
+							BlockStructure::TriangularLower => DstKind::Lower,
+							BlockStructure::StrictTriangularLower => {
+								DstKind::Lower
+							},
+							BlockStructure::UnitTriangularLower => {
+								DstKind::Lower
+							},
+							BlockStructure::TriangularUpper => DstKind::Upper,
+							BlockStructure::StrictTriangularUpper => {
+								DstKind::Upper
+							},
+							BlockStructure::UnitTriangularUpper => {
+								DstKind::Upper
+							},
+						},
+						match beta {
+							crate::Accum::Replace => Accum::Replace,
+							crate::Accum::Add => Accum::Add,
+						},
+						A.as_ptr() as _,
+						A.row_stride(),
+						A.col_stride(),
+						conj_A == Conj::Yes,
+						D.map(|D| D.column_vector().as_ptr() as _)
+							.unwrap_or(core::ptr::null()),
+						D.map(|D| D.column_vector().row_stride()).unwrap_or(0),
+						B.as_ptr() as _,
+						B.row_stride(),
+						B.col_stride(),
+						conj_B == Conj::Yes,
+						&raw const alpha as _,
+						$last,
+					)
+				};
+			}
+			// a `Team` token runs the kernel on its own members (`Fork` of the team), gated by the
+			// kernel's two sections at the width `width_for` chooses; below the gate the kernel
+			// runs on the calling thread. It never hands its size to spindle.
+			#[cfg(feature = "threadteam")]
+			if let Par::Team(team) = par {
+				let macs = nrows.saturating_mul(ncols).saturating_mul(depth);
+				let macs = if matches!(C_block, BlockStructure::Rectangular) {
+					macs
+				} else {
+					macs / 2
+				};
+				let estimate = crate::utils::cost::serial_time(
+					macs,
+					crate::utils::cost::rate::gemm_mac().of::<T>(),
 				);
+				match crate::utils::team::kernel::kernel_width(&team, estimate)
+				{
+					Some(width) => crate::utils::team::kernel::with_fork(
+						team,
+						width,
+						|fork| unsafe {
+							go!(private_gemm_x86::gemm_with, fork)
+						},
+					),
+					None => unsafe { go!(private_gemm_x86::gemm, 1) },
+				}
 				return;
 			}
+			unsafe {
+				go!(private_gemm_x86::gemm, par.degree());
+			}
+			return;
 		}
+	}
+	// no kernel for a team here: the one-section gate of the generic path
+	if team_gate_pending
+		&& !crate::utils::cost::par_pays::<T>(
+			&par,
+			units,
+			crate::utils::cost::rate::gemm_mac(),
+			1,
+		) {
+		par = Par::Seq;
 	}
 	let (mut out, stack) = unsafe {
 		temp_mat_uninit::<T, _, _>(
@@ -300,7 +364,7 @@ pub fn spicy_matmul<I: Index, T: ComplexField>(
 				BlockStructure::Rectangular,
 				conj_B,
 				alpha.copy(),
-				par,
+				par.reborrow(),
 			);
 			if C_block.is_lower() && nrows > ncols {
 				linalg::matmul::matmul_with_conj(

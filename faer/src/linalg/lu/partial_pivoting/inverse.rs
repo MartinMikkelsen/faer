@@ -3,7 +3,7 @@ use crate::internal_prelude::*;
 use linalg::matmul::triangular::BlockStructure;
 pub fn inverse_scratch<I: Index, T: ComplexField>(
 	dim: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	_ = par;
 	temp_mat_scratch::<T>(dim, dim)
@@ -14,7 +14,7 @@ pub fn inverse<I: Index, T: ComplexField>(
 	L: MatRef<'_, T>,
 	U: MatRef<'_, T>,
 	row_perm: PermRef<'_, I>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let n = L.ncols();
@@ -33,9 +33,9 @@ pub fn inverse<I: Index, T: ComplexField>(
 	linalg::triangular_inverse::invert_unit_lower_triangular(
 		out.rb_mut(),
 		L,
-		par,
+		par.reborrow(),
 	);
-	linalg::triangular_inverse::invert_upper_triangular(out.rb_mut(), U, par);
+	linalg::triangular_inverse::invert_upper_triangular(out.rb_mut(), U, par.reborrow());
 	linalg::matmul::triangular::matmul(
 		tmp.rb_mut(),
 		BlockStructure::Rectangular,
@@ -79,7 +79,7 @@ mod tests {
 				MemBuffer::new(factor::lu_in_place_scratch::<usize, c64>(
 					n,
 					n,
-					Par::Seq,
+					ParShape::Seq,
 					default(),
 				))
 			}),
@@ -96,7 +96,7 @@ mod tests {
 			MemStack::new(&mut MemBuffer::new(inverse::inverse_scratch::<
 				usize,
 				c64,
-			>(n, Par::Seq))),
+			>(n, ParShape::Seq))),
 		);
 		assert!(& A_inv * & A ~ Mat::identity(n, n));
 	}

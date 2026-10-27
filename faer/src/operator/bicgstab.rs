@@ -7,14 +7,14 @@ pub fn bicgstab_scratch<T: ComplexField>(
 	right_precond: impl Precond<T>,
 	mat: impl LinOp<T>,
 	rhs_ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	fn implementation<T: ComplexField>(
 		K1: &dyn Precond<T>,
 		K2: &dyn Precond<T>,
 		A: &dyn LinOp<T>,
 		rhs_ncols: usize,
-		par: Par,
+		par: ParShape,
 	) -> StackReq {
 		let n = A.nrows();
 		let k = rhs_ncols;
@@ -128,7 +128,7 @@ pub fn bicgstab<T: ComplexField>(
 		rhs: MatRef<'_, T>,
 		params: BicgParams<T::Real>,
 		callback: &mut dyn FnMut(MatRef<'_, T>),
-		par: Par,
+		mut par: Par,
 		stack: &mut MemStack,
 	) -> Result<BicgInfo<T::Real>, BicgError<T::Real>> {
 		let mut x = out;
@@ -172,7 +172,7 @@ pub fn bicgstab<T: ComplexField>(
 		let mut r_tilde = r_tilde.as_mat_mut();
 		let abs_residual =
 			if params.initial_guess == InitialGuessStatus::MaybeNonZero {
-				A.apply(r.rb_mut(), x.rb(), par, stack);
+				A.apply(r.rb_mut(), x.rb(), par.reborrow(), stack);
 				z!(&mut r, &b).for_each(|uz!(r, b)| *r = b - &*r);
 				r.norm_l2()
 			} else {
@@ -200,17 +200,17 @@ pub fn bicgstab<T: ComplexField>(
 				let (mut y0, stack) =
 					unsafe { temp_mat_uninit::<T, _, _>(n, k, stack) };
 				let mut y0 = y0.as_mat_mut();
-				K1.apply(y0.rb_mut(), p.rb(), par, stack);
-				K2.apply(y.rb_mut(), y0.rb(), par, stack);
+				K1.apply(y0.rb_mut(), p.rb(), par.reborrow(), stack);
+				K2.apply(y.rb_mut(), y0.rb(), par.reborrow(), stack);
 			}
-			A.apply(v.rb_mut(), y.rb(), par, stack);
+			A.apply(v.rb_mut(), y.rb(), par.reborrow(), stack);
 			crate::linalg::matmul::matmul(
 				rtv.rb_mut(),
 				Accum::Replace,
 				r_tilde.rb().transpose(),
 				v.rb(),
 				one::<T>(),
-				par,
+				par.reborrow(),
 			);
 			let (_, row_perm, col_perm) =
 				crate::linalg::lu::full_pivoting::factor::lu_in_place(
@@ -219,7 +219,7 @@ pub fn bicgstab<T: ComplexField>(
 					row_perm_inv,
 					col_perm,
 					col_perm_inv,
-					par,
+					par.reborrow(),
 					stack,
 					Default::default(),
 				);
@@ -246,7 +246,7 @@ pub fn bicgstab<T: ComplexField>(
 					r_tilde.rb().transpose(),
 					r.rb(),
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				let (mut temp, _) =
 					unsafe { temp_mat_uninit::<T, _, _>(k, k, stack) };
@@ -255,12 +255,12 @@ pub fn bicgstab<T: ComplexField>(
 				crate::linalg::triangular_solve::solve_unit_lower_triangular_in_place(
 					rtv.rb().get(..rank, ..rank),
 					temp.rb_mut().get_mut(..rank, ..),
-					par,
+					par.reborrow(),
 				);
 				crate::linalg::triangular_solve::solve_upper_triangular_in_place(
 					rtv.rb().get(..rank, ..rank),
 					temp.rb_mut().get_mut(..rank, ..),
-					par,
+					par.reborrow(),
 				);
 				temp.rb_mut().get_mut(rank.., ..).fill(zero());
 				crate::perm::permute_rows(
@@ -276,7 +276,7 @@ pub fn bicgstab<T: ComplexField>(
 					v.rb(),
 					alpha.rb(),
 					-one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				crate::linalg::matmul::matmul(
 					x.rb_mut(),
@@ -290,7 +290,7 @@ pub fn bicgstab<T: ComplexField>(
 					y.rb(),
 					alpha.rb(),
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 			}
 			let norm = s.norm_l2();
@@ -312,10 +312,10 @@ pub fn bicgstab<T: ComplexField>(
 				let (mut z0, stack) =
 					unsafe { temp_mat_uninit::<T, _, _>(n, k, stack) };
 				let mut z0 = z0.as_mat_mut();
-				K1.apply(z0.rb_mut(), s.rb(), par, stack);
-				K2.apply(z.rb_mut(), z0.rb(), par, stack);
+				K1.apply(z0.rb_mut(), s.rb(), par.reborrow(), stack);
+				K2.apply(z.rb_mut(), z0.rb(), par.reborrow(), stack);
 			}
-			A.apply(t.rb_mut(), z.rb(), par, stack);
+			A.apply(t.rb_mut(), z.rb(), par.reborrow(), stack);
 			let compute_w = |kt: MatRef<'_, T>, ks: MatRef<'_, T>| {
 				let mut wt = zero::<T>();
 				let mut ws = zero::<T>();
@@ -332,8 +332,8 @@ pub fn bicgstab<T: ComplexField>(
 				let (mut ks, stack) =
 					unsafe { temp_mat_uninit::<T, _, _>(n, k, stack) };
 				let mut ks = ks.as_mat_mut();
-				K1.apply(kt.rb_mut(), t.rb(), par, stack);
-				K1.apply(ks.rb_mut(), s.rb(), par, stack);
+				K1.apply(kt.rb_mut(), t.rb(), par.reborrow(), stack);
+				K1.apply(ks.rb_mut(), s.rb(), par.reborrow(), stack);
 				compute_w(kt.rb(), ks.rb())
 			};
 			z!(&mut r, &s, &t).for_each(|uz!(r, s, t)| *r = s - w * t);
@@ -359,7 +359,7 @@ pub fn bicgstab<T: ComplexField>(
 					r_tilde.rb().transpose(),
 					t.rb(),
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				let (mut temp, _) =
 					unsafe { temp_mat_uninit::<T, _, _>(k, k, stack) };
@@ -368,12 +368,12 @@ pub fn bicgstab<T: ComplexField>(
 				crate::linalg::triangular_solve::solve_unit_lower_triangular_in_place(
 					rtv.rb().get(..rank, ..rank),
 					temp.rb_mut().get_mut(..rank, ..),
-					par,
+					par.reborrow(),
 				);
 				crate::linalg::triangular_solve::solve_upper_triangular_in_place(
 					rtv.rb().get(..rank, ..rank),
 					temp.rb_mut().get_mut(..rank, ..),
-					par,
+					par.reborrow(),
 				);
 				temp.rb_mut().get_mut(rank.., ..).fill(zero());
 				crate::perm::permute_rows(
@@ -390,7 +390,7 @@ pub fn bicgstab<T: ComplexField>(
 				p.rb(),
 				beta.rb(),
 				one::<T>(),
-				par,
+				par.reborrow(),
 			);
 			z!(&mut p, &r, &tmp).for_each(|uz!(p, r, tmp)| *p = r - tmp);
 		}
@@ -445,7 +445,7 @@ mod tests {
 				diag.as_ref(),
 				A.as_ref(),
 				sol.ncols(),
-				Par::Seq,
+				ParShape::Seq,
 			))),
 		);
 		let ref out = *out;
@@ -464,7 +464,7 @@ mod tests {
 			max_iters: 10, // unfixed code looped infinitely
 			..BicgParams::default()
 		};
-		let req = bicgstab_scratch(precond, precond, A.as_ref(), 1, Par::Seq);
+		let req = bicgstab_scratch(precond, precond, A.as_ref(), 1, ParShape::Seq);
 		for fill in [0x00u8, 0x3F, 0xFF] {
 			// the workspace is uninitialized memory: any byte pattern must work
 			let mut buffer = alloc::vec![

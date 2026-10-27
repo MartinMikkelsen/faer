@@ -43,7 +43,7 @@ fn invert_unit_lower_triangular_impl_small<'N, T: ComplexField>(
 fn invert_lower_triangular_impl<'N, T: ComplexField>(
 	dst: MatMut<'_, T, Dim<'N>, Dim<'N>>,
 	src: MatRef<'_, T, Dim<'N>, Dim<'N>>,
-	par: Par,
+	mut par: Par,
 ) {
 	let N = dst.ncols();
 	if *N <= 2 {
@@ -56,10 +56,21 @@ fn invert_lower_triangular_impl<'N, T: ComplexField>(
 	let (mut dst_tl, _, mut dst_bl, mut dst_br) =
 		{ dst.split_with_mut(mid, mid) };
 	let (src_tl, _, src_bl, src_br) = { src.split_with(mid, mid) };
+	// one section for the join of the two inverses, each a whole inverse of size `n / 2`
+	let join_par = if crate::utils::cost::halves_pays::<T>(
+		&par,
+		*N,
+		crate::utils::cost::rate::triangular_inverse(),
+		3,
+	) {
+		par.reborrow()
+	} else {
+		Par::Seq
+	};
 	join_raw(
 		|par| invert_lower_triangular_impl(dst_tl.rb_mut(), src_tl, par),
 		|par| invert_lower_triangular_impl(dst_br.rb_mut(), src_br, par),
-		par,
+		join_par,
 	);
 	linalg::matmul::triangular::matmul(
 		dst_bl.rb_mut(),
@@ -70,7 +81,7 @@ fn invert_lower_triangular_impl<'N, T: ComplexField>(
 		dst_tl.rb(),
 		BlockStructure::TriangularLower,
 		-one::<T>(),
-		par,
+		par.reborrow(),
 	);
 	linalg::triangular_solve::solve_lower_triangular_in_place(
 		src_br, dst_bl, par,
@@ -79,7 +90,7 @@ fn invert_lower_triangular_impl<'N, T: ComplexField>(
 fn invert_unit_lower_triangular_impl<'N, T: ComplexField>(
 	dst: MatMut<'_, T, Dim<'N>, Dim<'N>>,
 	src: MatRef<'_, T, Dim<'N>, Dim<'N>>,
-	par: Par,
+	mut par: Par,
 ) {
 	let N = dst.ncols();
 	if *N <= 2 {
@@ -92,10 +103,21 @@ fn invert_unit_lower_triangular_impl<'N, T: ComplexField>(
 	let (mut dst_tl, _, mut dst_bl, mut dst_br) =
 		{ dst.split_with_mut(mid, mid) };
 	let (src_tl, _, src_bl, src_br) = { src.split_with(mid, mid) };
+	// one section for the join of the two inverses, each a whole inverse of size `n / 2`
+	let join_par = if crate::utils::cost::halves_pays::<T>(
+		&par,
+		*N,
+		crate::utils::cost::rate::triangular_inverse(),
+		3,
+	) {
+		par.reborrow()
+	} else {
+		Par::Seq
+	};
 	join_raw(
 		|par| invert_unit_lower_triangular_impl(dst_tl.rb_mut(), src_tl, par),
 		|par| invert_unit_lower_triangular_impl(dst_br.rb_mut(), src_br, par),
-		par,
+		join_par,
 	);
 	linalg::matmul::triangular::matmul(
 		dst_bl.rb_mut(),
@@ -106,7 +128,7 @@ fn invert_unit_lower_triangular_impl<'N, T: ComplexField>(
 		dst_tl.rb(),
 		BlockStructure::UnitTriangularLower,
 		-one::<T>(),
-		par,
+		par.reborrow(),
 	);
 	linalg::triangular_solve::solve_unit_lower_triangular_in_place(
 		src_br, dst_bl, par,

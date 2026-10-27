@@ -4,7 +4,7 @@ pub fn reconstruct_scratch<I: Index, T: ComplexField>(
 	nrows: usize,
 	ncols: usize,
 	block_size: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	_ = par;
 	StackReq::or(
@@ -77,7 +77,7 @@ mod tests {
 						m,
 						n,
 						4,
-						Par::Seq,
+						ParShape::Seq,
 						default(),
 					))
 				}),
@@ -97,7 +97,7 @@ mod tests {
 						m,
 						n,
 						4,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);

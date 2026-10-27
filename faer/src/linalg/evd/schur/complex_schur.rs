@@ -230,7 +230,7 @@ fn aggressive_early_deflation<T: ComplexField>(
 	ilo: usize,
 	ihi: usize,
 	nw: usize,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 	params: SchurParams,
 ) -> (usize, usize) {
@@ -297,7 +297,7 @@ fn aggressive_early_deflation<T: ComplexField>(
 			s_window.rb_mut(),
 			0,
 			jw,
-			par,
+			par.reborrow(),
 			stack,
 			params,
 		)
@@ -392,7 +392,7 @@ fn aggressive_early_deflation<T: ComplexField>(
 					vv.rb().adjoint().as_mat(),
 					tw_slice.rb(),
 					one(),
-					par,
+					par.reborrow(),
 				);
 				matmul(
 					tw_slice.rb_mut(),
@@ -400,7 +400,7 @@ fn aggressive_early_deflation<T: ComplexField>(
 					vv.rb().as_mat(),
 					tmp.as_ref(),
 					-tau,
-					par,
+					par.reborrow(),
 				);
 			}
 			{
@@ -413,7 +413,7 @@ fn aggressive_early_deflation<T: ComplexField>(
 					tw_slice2.rb(),
 					vv.rb().as_mat(),
 					one(),
-					par,
+					par.reborrow(),
 				);
 				matmul(
 					tw_slice2.rb_mut(),
@@ -421,7 +421,7 @@ fn aggressive_early_deflation<T: ComplexField>(
 					tmp.as_ref(),
 					vv.rb().adjoint().as_mat(),
 					-tau,
-					par,
+					par.reborrow(),
 				);
 			}
 			{
@@ -434,7 +434,7 @@ fn aggressive_early_deflation<T: ComplexField>(
 					v_slice.rb(),
 					vv.rb().as_mat(),
 					one(),
-					par,
+					par.reborrow(),
 				);
 				matmul(
 					v_slice.rb_mut(),
@@ -442,7 +442,7 @@ fn aggressive_early_deflation<T: ComplexField>(
 					tmp.as_ref(),
 					vv.rb().adjoint().as_mat(),
 					-tau,
-					par,
+					par.reborrow(),
 				);
 			}
 			vv[0] = head;
@@ -452,7 +452,7 @@ fn aggressive_early_deflation<T: ComplexField>(
 			hessenberg::hessenberg_in_place(
 				tw.rb_mut().submatrix_mut(0, 0, ns, ns),
 				householder.rb_mut().as_mat_mut().transpose_mut(),
-				par,
+				par.reborrow(),
 				stack,
 				Default::default(),
 			);
@@ -461,7 +461,7 @@ fn aggressive_early_deflation<T: ComplexField>(
 				householder.rb().transpose().as_mat(),
 				Conj::Yes,
 				unsafe { tw.rb().submatrix(1, ns, ns - 1, jw - ns).const_cast() },
-				par,
+				par.reborrow(),
 				stack,
 			);
 			apply_block_householder_sequence_on_the_right_in_place_with_conj(
@@ -469,7 +469,7 @@ fn aggressive_early_deflation<T: ComplexField>(
 				householder.rb().transpose().as_mat(),
 				Conj::No,
 				v.rb_mut().submatrix_mut(0, 1, jw, ns - 1),
-				par,
+				par.reborrow(),
 				stack,
 			);
 		}
@@ -510,7 +510,7 @@ fn aggressive_early_deflation<T: ComplexField>(
 				v.rb().adjoint(),
 				a_slice.rb(),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			a_slice.copy_from(wh_slice.rb());
 			i += iblock;
@@ -534,7 +534,7 @@ fn aggressive_early_deflation<T: ComplexField>(
 				a_slice.rb(),
 				v.rb(),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			a_slice.copy_from(wv_slice.rb());
 			i += iblock;
@@ -558,7 +558,7 @@ fn aggressive_early_deflation<T: ComplexField>(
 				z_slice.rb(),
 				v.rb(),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			z_slice.copy_from(wv_slice.rb());
 			i += iblock;
@@ -647,7 +647,7 @@ pub fn multishift_qr<T: ComplexField>(
 	w: ColMut<'_, T>,
 	ilo: usize,
 	ihi: usize,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 	params: SchurParams,
 ) -> (isize, usize, usize) {
@@ -740,7 +740,7 @@ pub fn multishift_qr<T: ComplexField>(
 			istart,
 			istop,
 			nw,
-			par,
+			par.reborrow(),
 			stack.rb_mut(),
 			params,
 		);
@@ -832,7 +832,7 @@ pub fn multishift_qr<T: ComplexField>(
 			shifts.rb_mut(),
 			istart,
 			istop,
-			par,
+			par.reborrow(),
 			stack,
 		);
 		count_sweep += 1;
@@ -902,7 +902,7 @@ fn multishift_qr_sweep<T: ComplexField>(
 	s: ColMut<'_, T>,
 	ilo: usize,
 	ihi: usize,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let n = a.nrows();
@@ -960,7 +960,7 @@ fn multishift_qr_sweep<T: ComplexField>(
 		wv.rb_mut(),
 		s.rb(),
 		&mut i_pos_block,
-		par,
+		par.reborrow(),
 	);
 	move_bulges_down(
 		ilo,
@@ -977,7 +977,7 @@ fn multishift_qr_sweep<T: ComplexField>(
 		wv.rb_mut(),
 		s.rb(),
 		&mut i_pos_block,
-		par,
+		par.reborrow(),
 	);
 	remove_bulges(
 		ilo,
@@ -1012,7 +1012,7 @@ fn introduce_bulges<T: ComplexField>(
 	mut wv: MatMut<'_, T>,
 	s: ColRef<'_, T>,
 	i_pos_block: &mut usize,
-	par: Par,
+	mut par: Par,
 ) {
 	let n = a.nrows();
 	let ref eps = eps::<T::Real>();
@@ -1169,7 +1169,7 @@ fn introduce_bulges<T: ComplexField>(
 				u2.rb().adjoint(),
 				a_slice.rb(),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			a_slice.copy_from(wh_slice.rb());
 			i += iblock;
@@ -1192,7 +1192,7 @@ fn introduce_bulges<T: ComplexField>(
 				a_slice.rb(),
 				u2.rb(),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			a_slice.copy_from(wv_slice.rb());
 			i += iblock;
@@ -1215,7 +1215,7 @@ fn introduce_bulges<T: ComplexField>(
 				z_slice.rb(),
 				u2.rb(),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			z_slice.copy_from(wv_slice.rb());
 			i += iblock;
@@ -1239,7 +1239,7 @@ fn move_bulges_down<T: ComplexField>(
 	mut wv: MatMut<'_, T>,
 	s: ColRef<'_, T>,
 	i_pos_block: &mut usize,
-	par: Par,
+	mut par: Par,
 ) {
 	let n = a.nrows();
 	let ref eps = eps::<T::Real>();
@@ -1398,7 +1398,7 @@ fn move_bulges_down<T: ComplexField>(
 					u2.rb().adjoint(),
 					a_slice.rb(),
 					one(),
-					par,
+					par.reborrow(),
 				);
 				a_slice.copy_from(wh_slice.rb());
 				i += iblock;
@@ -1422,7 +1422,7 @@ fn move_bulges_down<T: ComplexField>(
 					a_slice.rb(),
 					u2.rb(),
 					one(),
-					par,
+					par.reborrow(),
 				);
 				a_slice.copy_from(wv_slice.rb());
 				i += iblock;
@@ -1446,7 +1446,7 @@ fn move_bulges_down<T: ComplexField>(
 					z_slice.rb(),
 					u2.rb(),
 					one(),
-					par,
+					par.reborrow(),
 				);
 				z_slice.copy_from(wv_slice.rb());
 				i += iblock;
@@ -1470,7 +1470,7 @@ fn remove_bulges<T: ComplexField>(
 	mut wv: MatMut<'_, T>,
 	s: ColRef<'_, T>,
 	i_pos_block: &mut usize,
-	par: Par,
+	mut par: Par,
 ) {
 	let n = a.nrows();
 	let ref eps = eps::<T::Real>();
@@ -1673,7 +1673,7 @@ fn remove_bulges<T: ComplexField>(
 				u2.rb().adjoint(),
 				a_slice.rb(),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			a_slice.copy_from(wh_slice.rb());
 			i += iblock;
@@ -1697,7 +1697,7 @@ fn remove_bulges<T: ComplexField>(
 				a_slice.rb(),
 				u2.rb(),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			a_slice.copy_from(wv_slice.rb());
 			i += iblock;
@@ -1721,7 +1721,7 @@ fn remove_bulges<T: ComplexField>(
 				z_slice.rb(),
 				u2.rb(),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			z_slice.copy_from(wv_slice.rb());
 			i += iblock;
@@ -1828,7 +1828,7 @@ mod tests {
 								n,
 								true,
 								true,
-								Par::Seq,
+								ParShape::Seq,
 								auto!(c64),
 							),
 						)),

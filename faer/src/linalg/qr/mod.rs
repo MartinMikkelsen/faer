@@ -65,7 +65,7 @@
 //! 			a.nrows(),
 //! 			a.ncols(),
 //! 			block_size,
-//! 			Par::Seq,
+//! 			faer::ParShape::Seq,
 //! 			Default::default(),
 //! 		),
 //! 		householder::apply_block_householder_sequence_transpose_on_the_left_in_place_scratch::<
@@ -152,7 +152,7 @@ mod tests {
 		let block_size =
 			factor::recommended_block_size::<f64>(a.nrows(), a.ncols());
 		let mut mem = MemBuffer::new(StackReq::any_of(&[
-			factor::qr_in_place_scratch::<f64>(a.nrows(), a.ncols(), block_size, Par::Seq, Default::default()),
+			factor::qr_in_place_scratch::<f64>(a.nrows(), a.ncols(), block_size, crate::ParShape::Seq, Default::default()),
 			householder::apply_block_householder_sequence_transpose_on_the_left_in_place_scratch::<f64>(a.nrows(), block_size, b.ncols()),
 		]));
 		let mut stack = MemStack::new(&mut mem);

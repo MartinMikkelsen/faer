@@ -211,7 +211,7 @@ mod matmul_vertical {
 		rhs: MatRef<'_, T, Dim<'K>, Dim<'N>>,
 		conj_rhs: Conj,
 		alpha: &T,
-		par: Par,
+		mut par: Par,
 	) {
 		let dst = dst.as_dyn_mut();
 		let lhs = lhs.as_dyn();
@@ -294,11 +294,12 @@ mod matmul_vertical {
 						}
 					},
 					#[cfg(feature = "rayon")]
-					Par::Rayon(nthreads) => {
+					_ => {
+					let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 						let nthreads = nthreads.get();
 						use rayon::prelude::*;
 						let job_idx = core::sync::atomic::AtomicUsize::new(0);
-						spindle::for_each(
+						crate::utils::thread::for_each(par.reborrow(), 
 							nthreads,
 							(0..nthreads).into_par_iter(),
 							|_| {
@@ -483,7 +484,7 @@ mod matmul_horizontal {
 		rhs: MatRef<'_, T, Dim<'K>, Dim<'N>, ContiguousFwd, isize>,
 		conj_rhs: Conj,
 		alpha: &T,
-		par: Par,
+		mut par: Par,
 	) {
 		let dst = dst.as_dyn_mut();
 		let lhs = lhs.as_dyn();
@@ -566,11 +567,12 @@ mod matmul_horizontal {
 						}
 					},
 					#[cfg(feature = "rayon")]
-					Par::Rayon(nthreads) => {
+					_ => {
+					let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 						let nthreads = nthreads.get();
 						use rayon::prelude::*;
 						let job_idx = core::sync::atomic::AtomicUsize::new(0);
-						spindle::for_each(
+						crate::utils::thread::for_each(par.reborrow(), 
 							nthreads,
 							(0..nthreads).into_par_iter(),
 							|_| {
@@ -768,8 +770,19 @@ mod matvec_rowmajor {
 		par: Par,
 	) {
 		core::assert!(const { T::SIMD_CAPABILITIES.is_simd() });
+		// One section (a split of the rows or columns); the unit is a matrix element. The
+		// product reads each element once, so the rate is the streaming one.
 		let size = *lhs.nrows() * *lhs.ncols();
-		let par = if size < 256 * 256usize { Par::Seq } else { par };
+		let par = if crate::utils::cost::par_pays::<T>(
+			&par,
+			size,
+			crate::utils::cost::rate::matvec(),
+			1,
+		) {
+			par
+		} else {
+			Par::Seq
+		};
 		match par {
 			Par::Seq => {
 				pub struct Impl<'a, 'M, 'K, T: ComplexField> {
@@ -842,10 +855,11 @@ mod matvec_rowmajor {
 				);
 			},
 			#[cfg(feature = "rayon")]
-			Par::Rayon(nthreads) => {
+			_ => {
+			let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 				let nthreads = nthreads.get();
 				use rayon::prelude::*;
-				spindle::for_each(
+				crate::utils::thread::for_each(par, 
 					nthreads,
 					dst.par_partition_mut(nthreads)
 						.zip_eq(lhs.par_row_partition(nthreads)),
@@ -887,8 +901,19 @@ mod matvec_colmajor {
 		par: Par,
 	) {
 		core::assert!(const { T::SIMD_CAPABILITIES.is_simd() });
+		// One section (a split of the rows or columns); the unit is a matrix element. The
+		// product reads each element once, so the rate is the streaming one.
 		let size = *lhs.nrows() * *lhs.ncols();
-		let par = if size < 256 * 256usize { Par::Seq } else { par };
+		let par = if crate::utils::cost::par_pays::<T>(
+			&par,
+			size,
+			crate::utils::cost::rate::matvec(),
+			1,
+		) {
+			par
+		} else {
+			Par::Seq
+		};
 		match par {
 			Par::Seq => {
 				pub struct Impl<'a, 'M, 'K, T: ComplexField> {
@@ -973,7 +998,8 @@ mod matvec_colmajor {
 				)
 			},
 			#[cfg(feature = "rayon")]
-			Par::Rayon(nthreads) => {
+			_ => {
+			let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 				use rayon::prelude::*;
 				let nthreads = nthreads.get();
 				let mut mem = MemBuffer::new(temp_mat_scratch::<T>(
@@ -990,7 +1016,7 @@ mod matvec_colmajor {
 				make_guard!(Z);
 				let Z = 0usize.bind(Z);
 				let z = IdxInc::new_checked(0, lhs.ncols());
-				spindle::for_each(
+				crate::utils::thread::for_each(par, 
 					nthreads,
 					tmp.rb_mut()
 						.par_col_iter_mut()
@@ -1148,10 +1174,11 @@ mod rank_update {
 				rank_update_imp(dst, beta, lhs, conj_lhs, rhs, conj_rhs, alpha);
 			},
 			#[cfg(feature = "rayon")]
-			Par::Rayon(nthreads) => {
+			_ => {
+			let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 				let nthreads = nthreads.get();
 				use rayon::prelude::*;
-				spindle::for_each(
+				crate::utils::thread::for_each(par, 
 					nthreads,
 					dst.par_col_partition_mut(nthreads)
 						.zip(rhs.par_partition(nthreads)),
@@ -1352,6 +1379,43 @@ fn matmul_imp<'M, 'N, 'K, T: ComplexField>(
 						);
 						return;
 					} else {
+						#[cfg(feature = "threadteam")]
+						let par = match par {
+							Par::Team(team) => {
+							// the team path replaces the Rayon calls of both kernels below. On
+							// x86_64 the `private_gemm_x86` kernel runs on the team's own members
+							// (its packing and job queue, gated by `pays(.., 2 sections)`); elsewhere
+							// one sequential gemm per member on its own tile of the output
+							crate::utils::team::gemm_team::<$ty>(
+								team,
+								M.unbound(),
+								N.unbound(),
+								K.unbound(),
+								$crate::utils::cost::gemm_ns_per_mac::<T>(),
+								dst.as_ptr_mut(),
+								dst.col_stride(),
+								dst.row_stride(),
+								beta != Accum::Replace,
+								lhs.as_ptr(),
+								lhs.col_stride(),
+								lhs.row_stride(),
+								rhs.as_ptr(),
+								rhs.col_stride(),
+								rhs.row_stride(),
+								match beta {
+									Accum::Replace => core::mem::zeroed(),
+									Accum::Add => {
+										<$ty as ComplexFieldExt>::from_f64(1.0)
+									},
+								},
+								alpha,
+								conj_lhs == Conj::Yes,
+								conj_rhs == Conj::Yes,
+							);
+							return;
+							},
+							other => other,
+						};
 						#[cfg(all(target_arch = "x86_64", feature = "std"))]
 						{
 							use private_gemm_x86::*;
@@ -1401,25 +1465,18 @@ fn matmul_imp<'M, 'N, 'K, T: ComplexField>(
 									&raw const alpha as *const (),
 									// The kernel below (`private_gemm_x86`) threads whenever it is
 									// handed more than one thread and has no work floor of its own,
-									// so the decision is faer's. It is made in *flops*, not in the
-									// dtype's byte width: a complex MAC is four real MACs, and the
-									// work a region has to buy is the same either way. The floor
-									// is the one the `gemm` crate applies to its own kernels
-									// (`48 * 48 * 256` MACs, f64) expressed in flops, so a shape
-									// the generic kernel would run sequentially is not handed a
-									// budget here either. Below it a region costs more than the
-									// multiplication: f64 `32^3` (65 ki flops) is 2.3 us serial
-									// and 12.0 us at eight threads, `64^3` (524 ki flops) keeps
-									// its best time but pays 1.2-1.4x in the median; `96^3`
-									// (1.8 Mflops) is 2x faster at eight threads, and c64 `64^3`
-									// (2.1 Mflops) 2x, which is why the floor cannot be a MAC
-									// count alone.
-									if (*M)
-										.saturating_mul(*N)
-										.saturating_mul(*K)
-										.saturating_mul(if T::IS_REAL { 2 } else { 8 })
-										>= 2 * gemm::get_threading_threshold()
-									{
+									// so the decision is faer's: the serial time of the product
+									// (its MACs at the dtype's rate, `utils::cost::ns_per_mac`)
+									// against `PAYS` times the cost of one section of this shape
+									// (`ParShape::dispatch_cost`). One section: the kernel cuts
+									// the product into one grid of tiles.
+									if par.shape().pays_full(
+										$crate::utils::cost::serial_time(
+											(*M).saturating_mul(*N).saturating_mul(*K),
+											$crate::utils::cost::gemm_ns_per_mac::<T>(),
+										),
+										1,
+									) {
 										par.degree()
 									} else {
 										1
@@ -1455,10 +1512,27 @@ fn matmul_imp<'M, 'N, 'K, T: ComplexField>(
 								conj_rhs == Conj::Yes,
 								match par {
 									Par::Seq => gemm::Parallelism::None,
+									// the `gemm` crate keeps its own, lower, floor under this
+									// one: the decision is the serial time against the cost
+									// of a section of this shape
 									#[cfg(feature = "rayon")]
 									Par::Rayon(nthreads) => {
-										gemm::Parallelism::Rayon(nthreads.get())
+										if par.shape().pays_full(
+											$crate::utils::cost::serial_time(
+												M.unbound()
+													.saturating_mul(N.unbound())
+													.saturating_mul(K.unbound()),
+												$crate::utils::cost::gemm_ns_per_mac::<T>(),
+											),
+											1,
+										) {
+											gemm::Parallelism::Rayon(nthreads.get())
+										} else {
+											gemm::Parallelism::None
+										}
 									},
+									#[cfg(feature = "threadteam")]
+									Par::Team(_) => gemm::Parallelism::None,
 								},
 							);
 							return;
@@ -1538,7 +1612,8 @@ fn matmul_imp<'M, 'N, 'K, T: ComplexField>(
 			}
 		},
 		#[cfg(feature = "rayon")]
-		Par::Rayon(nthreads) => {
+		_ => {
+		let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 			use rayon::prelude::*;
 			let nthreads = nthreads.get();
 			let m = *dst.nrows();
@@ -1546,7 +1621,7 @@ fn matmul_imp<'M, 'N, 'K, T: ComplexField>(
 			let task_count = m * n;
 			let task_per_thread = task_count.msrv_div_ceil(nthreads);
 			let dst = dst.rb();
-			spindle::for_each(nthreads, (0..nthreads).into_par_iter(), |tid| {
+			crate::utils::thread::for_each(par, nthreads, (0..nthreads).into_par_iter(), |tid| {
 				let task_idx = tid * task_per_thread;
 				if task_idx >= task_count {
 					return;
@@ -1829,7 +1904,7 @@ mod tests {
 		#[cfg(not(miri))]
 		let alphas = [c32::ONE, c32::ZERO, c32::new(21.04, -12.13)];
 		#[cfg(not(miri))]
-		let par = [Par::Seq, Par::Rayon(NonZeroUsize::new(4).unwrap())];
+		let par = || [Par::Seq, Par::Rayon(NonZeroUsize::new(4).unwrap())];
 		#[cfg(not(miri))]
 		let conjs = [Conj::Yes, Conj::No];
 		#[cfg(miri)]
@@ -1931,7 +2006,7 @@ mod tests {
 												}
 												for conj_a in conjs {
 													for conj_b in conjs {
-														for par in par {
+														for mut par in par() {
 															for beta in betas {
 																for alpha in
 																	alphas
@@ -1944,7 +2019,7 @@ mod tests {
 																		n,
 																		conj_a,
 																		conj_b,
-																		par,
+																		par.reborrow(),
 																		beta,
 																		alpha,
 																		acc_init.as_mut(),
@@ -2014,7 +2089,7 @@ mod tests {
 		n: usize,
 		conj_a: Conj,
 		conj_b: Conj,
-		par: Par,
+		mut par: Par,
 		beta: Accum,
 		alpha: c32,
 		acc_init: MatMut<c32>,
@@ -2066,7 +2141,7 @@ mod tests {
 					b,
 					conj_b,
 					&alpha,
-					par,
+					par.reborrow(),
 				);
 			}
 			for j in 0..n {
@@ -2098,7 +2173,7 @@ mod tests {
 					b.try_as_col_major().unwrap(),
 					conj_b,
 					&alpha,
-					par,
+					par.reborrow(),
 				);
 			}
 			for j in 0..n {
@@ -2177,7 +2252,7 @@ mod tests {
 		let dst_orig = dst.as_ref().to_owned();
 		let lhs = generate_structured_matrix(false, m, k, lhs_structure);
 		let rhs = generate_structured_matrix(false, k, n, rhs_structure);
-		for par in [Par::Seq, Par::rayon(8)] {
+		for mut par in [Par::Seq, Par::rayon(8)] {
 			triangular::matmul_with_conj(
 				dst.as_mut(),
 				dst_structure,
@@ -2189,7 +2264,7 @@ mod tests {
 				rhs_structure,
 				Conj::No,
 				2.5,
-				par,
+				par.reborrow(),
 			);
 			matmul_with_conj(
 				dst_target.as_mut(),

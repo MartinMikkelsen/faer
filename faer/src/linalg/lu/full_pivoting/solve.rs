@@ -4,7 +4,7 @@ use crate::perm::{permute_rows_in_place, permute_rows_in_place_scratch};
 pub fn solve_in_place_scratch<I: Index, T: ComplexField>(
 	LU_dim: usize,
 	rhs_ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	_ = par;
 	permute_rows_in_place_scratch::<I, T>(LU_dim, rhs_ncols)
@@ -12,7 +12,7 @@ pub fn solve_in_place_scratch<I: Index, T: ComplexField>(
 pub fn solve_transpose_in_place_scratch<I: Index, T: ComplexField>(
 	LU_dim: usize,
 	rhs_ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	_ = par;
 	permute_rows_in_place_scratch::<I, T>(LU_dim, rhs_ncols)
@@ -25,7 +25,7 @@ pub fn solve_in_place_with_conj<I: Index, T: ComplexField>(
 	col_perm: PermRef<'_, I>,
 	conj_LU: Conj,
 	rhs: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let n = L.nrows();
@@ -44,7 +44,7 @@ pub fn solve_in_place_with_conj<I: Index, T: ComplexField>(
 		L,
 		conj_LU,
 		rhs.rb_mut(),
-		par,
+		par.reborrow(),
 	);
 	linalg::triangular_solve::solve_upper_triangular_in_place_with_conj(
 		U,
@@ -62,7 +62,7 @@ pub fn solve_transpose_in_place_with_conj<I: Index, T: ComplexField>(
 	col_perm: PermRef<'_, I>,
 	conj_LU: Conj,
 	rhs: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let n = L.nrows();
@@ -81,7 +81,7 @@ pub fn solve_transpose_in_place_with_conj<I: Index, T: ComplexField>(
 		U.transpose(),
 		conj_LU,
 		rhs.rb_mut(),
-		par,
+		par.reborrow(),
 	);
 	linalg::triangular_solve::solve_unit_upper_triangular_in_place_with_conj(
 		L.transpose(),
@@ -182,7 +182,7 @@ mod tests {
 				MemBuffer::new(factor::lu_in_place_scratch::<usize, c64>(
 					n,
 					n,
-					Par::Seq,
+					ParShape::Seq,
 					default(),
 				))
 			}),
@@ -199,7 +199,7 @@ mod tests {
 				X.as_mut(),
 				Par::Seq,
 				MemStack::new(&mut MemBuffer::new(
-					solve::solve_in_place_scratch::<usize, c64>(n, k, Par::Seq),
+					solve::solve_in_place_scratch::<usize, c64>(n, k, ParShape::Seq),
 				)),
 			);
 			assert!(& A * & X ~ B);
@@ -214,7 +214,7 @@ mod tests {
 				X.as_mut(),
 				Par::Seq,
 				MemStack::new(&mut MemBuffer::new(
-					solve::solve_in_place_scratch::<usize, c64>(n, k, Par::Seq),
+					solve::solve_in_place_scratch::<usize, c64>(n, k, ParShape::Seq),
 				)),
 			);
 			assert!(A.transpose() * & X ~ B);
@@ -229,7 +229,7 @@ mod tests {
 				X.as_mut(),
 				Par::Seq,
 				MemStack::new(&mut MemBuffer::new(
-					solve::solve_in_place_scratch::<usize, c64>(n, k, Par::Seq),
+					solve::solve_in_place_scratch::<usize, c64>(n, k, ParShape::Seq),
 				)),
 			);
 			assert!(A.conjugate() * & X ~ B);
@@ -244,7 +244,7 @@ mod tests {
 				X.as_mut(),
 				Par::Seq,
 				MemStack::new(&mut MemBuffer::new(
-					solve::solve_in_place_scratch::<usize, c64>(n, k, Par::Seq),
+					solve::solve_in_place_scratch::<usize, c64>(n, k, ParShape::Seq),
 				)),
 			);
 			assert!(A.adjoint() * & X ~ B);

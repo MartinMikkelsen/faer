@@ -3,7 +3,7 @@ use crate::internal_prelude::*;
 pub fn solve_in_place_scratch<T: ComplexField>(
 	dim: usize,
 	rhs_ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	_ = (dim, rhs_ncols, par);
 	StackReq::EMPTY
@@ -13,7 +13,7 @@ pub fn solve_in_place_with_conj<T: ComplexField>(
 	L: MatRef<'_, T>,
 	conj_lhs: Conj,
 	rhs: MatMut<'_, T>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let n = L.nrows();
@@ -24,7 +24,7 @@ pub fn solve_in_place_with_conj<T: ComplexField>(
 		L,
 		conj_lhs,
 		rhs.rb_mut(),
-		par,
+		par.reborrow(),
 	);
 	linalg::triangular_solve::solve_upper_triangular_in_place_with_conj(
 		L.transpose(),
@@ -78,7 +78,7 @@ mod tests {
 					MemBuffer::new(
 						llt::factor::cholesky_in_place_scratch::<c64>(
 							n,
-							Par::Seq,
+							ParShape::Seq,
 							LltParams {
 								recursion_threshold: 32,
 								block_size: 128,
@@ -107,7 +107,7 @@ mod tests {
 						llt::solve::solve_in_place_scratch::<c64>(
 							n,
 							k,
-							Par::Seq,
+							ParShape::Seq,
 						),
 					)),
 				);
@@ -123,7 +123,7 @@ mod tests {
 						llt::solve::solve_in_place_scratch::<c64>(
 							n,
 							k,
-							Par::Seq,
+							ParShape::Seq,
 						),
 					)),
 				);

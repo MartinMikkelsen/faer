@@ -295,7 +295,7 @@ fn divide_and_conquer_recurse<T: RealField>(
 	mut diag: ColMut<'_, T, usize, ContiguousFwd>,
 	mut offdiag: ColMut<'_, T, usize, ContiguousFwd>,
 	mut u: MatMut<'_, T, usize, usize>,
-	par: Par,
+	mut par: Par,
 	pl_before: &mut [usize],
 	pl_after: &mut [usize],
 	pr: &mut [usize],
@@ -342,6 +342,17 @@ fn divide_and_conquer_recurse<T: RealField>(
 		let (tmp0, _, _, tmp1) = tmp.rb_mut().split_at_mut(n1, n1);
 		let mut r0 = Ok(());
 		let mut r1 = Ok(());
+		// one section for the join of the two halves, each a whole solve of size `n / 2`
+		let join_par = if crate::utils::cost::halves_pays::<T>(
+			&par,
+			n,
+			crate::utils::cost::rate::tridiag_evd_dc(),
+			2,
+		) {
+			par.reborrow()
+		} else {
+			Par::Seq
+		};
 		join_raw(
 			|par| {
 				r0 = divide_and_conquer_recurse(
@@ -385,7 +396,7 @@ fn divide_and_conquer_recurse<T: RealField>(
 					qr_fallback_threshold,
 				);
 			},
-			par,
+			join_par,
 		);
 		r0?;
 		r1?;
@@ -614,6 +625,17 @@ fn divide_and_conquer_recurse<T: RealField>(
 	}
 	let (repaired_u_top, repaired_u_bot) = repaired_u.rb().split_at_row(n1);
 	let (tmp_top, tmp_bot) = tmp.rb_mut().split_at_row_mut(n1);
+	// one section; the two products `n1 x n1` and `(n - n1) x (n - n1)` against `n` columns
+	let join_par = if crate::utils::cost::join_pays::<T>(
+		&par,
+		(n1 * n1 + (n - n1) * (n - n1)).saturating_mul(n),
+		crate::utils::cost::rate::gemm_mac(),
+		1,
+	) {
+		par
+	} else {
+		Par::Seq
+	};
 	crate::utils::thread::join_raw(
 		|par| {
 			matmul(tmp_top, Accum::Replace, u0.rb(), repaired_u_top, one(), par)
@@ -621,7 +643,7 @@ fn divide_and_conquer_recurse<T: RealField>(
 		|par| {
 			matmul(tmp_bot, Accum::Replace, u1.rb(), repaired_u_bot, one(), par)
 		},
-		par,
+		join_par,
 	);
 	u.copy_from(tmp.rb());
 	for i in 0..n {
@@ -693,7 +715,7 @@ pub(crate) fn divide_and_conquer<T: RealField>(
 }
 pub(crate) fn divide_and_conquer_scratch<T: ComplexField>(
 	n: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	let _ = par;
 	StackReq::all_of(&[
@@ -761,7 +783,7 @@ mod evd_qr_tests {
 				u.as_mut(),
 				Par::Seq,
 				MemStack::new(&mut MemBuffer::new(
-					divide_and_conquer_scratch::<f64>(n, Par::Seq),
+					divide_and_conquer_scratch::<f64>(n, ParShape::Seq),
 				)),
 				4,
 			)

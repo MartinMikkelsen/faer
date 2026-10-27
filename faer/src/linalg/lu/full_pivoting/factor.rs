@@ -1,4 +1,5 @@
 use crate::internal_prelude::*;
+use crate::utils::cost::{ParThreshold, rate};
 use crate::perm::{swap_cols_idx, swap_rows_idx};
 use crate::utils::thread::par_split_indices;
 use faer_traits::{Real, RealReg};
@@ -369,7 +370,14 @@ fn lu_in_place_unblocked<T: ComplexField>(
 		if k + 1 == Ord::min(m, n) {
 			break;
 		}
-		if (m - k - 1) * (n - k - 1) < params.par_threshold {
+		// One section per step (the fused rank-one update and pivot search over column
+		// blocks); the unit is an element of the trailing block.
+		if !params.par_threshold.region_pays::<T>(
+			par.shape(),
+			(m - k - 1) * (n - k - 1),
+			rate::lu_full_pivot(),
+			1,
+		) {
 			par = Par::Seq;
 		}
 		let (_, A01, A10, mut A11) = A.rb_mut().split_at_mut(k + 1, k + 1);
@@ -386,14 +394,15 @@ fn lu_in_place_unblocked<T: ComplexField>(
 					);
 			},
 			#[cfg(feature = "rayon")]
-			Par::Rayon(nthreads) => {
+			_ => {
+			let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 				use rayon::prelude::*;
 				let nthreads = nthreads.get();
 				let mut best = core::iter::repeat_with(|| (0, 0, zero()))
 					.take(nthreads)
 					.collect::<alloc::vec::Vec<_>>();
 				let full_cols = A11.ncols();
-				spindle::for_each(
+				crate::utils::thread::for_each(par.reborrow(), 
 					nthreads,
 					best.par_iter_mut()
 						.zip_eq(A11.rb_mut().par_col_partition_mut(nthreads))
@@ -433,8 +442,10 @@ fn lu_in_place_unblocked<T: ComplexField>(
 /// $LU$ factorization tuning parameters
 #[derive(Copy, Clone, Debug)]
 pub struct FullPivLuParams {
-	/// threshold at which size parallelism should be disabled
-	pub par_threshold: usize,
+	/// floor of the parallel regions: [`ParThreshold::Derived`] (the default) runs a step in
+	/// parallel when its serial time pays for one section; [`ParThreshold::Fixed`] counts
+	/// elements of the trailing block `(m-k-1)*(n-k-1)`
+	pub par_threshold: ParThreshold,
 	#[doc(hidden)]
 	pub non_exhaustive: NonExhaustive,
 }
@@ -442,7 +453,7 @@ impl<T: ComplexField> Auto<T> for FullPivLuParams {
 	#[inline]
 	fn auto() -> Self {
 		Self {
-			par_threshold: 256 * 512,
+			par_threshold: ParThreshold::Derived,
 			non_exhaustive: NonExhaustive(()),
 		}
 	}
@@ -451,7 +462,7 @@ impl<T: ComplexField> Auto<T> for FullPivLuParams {
 pub fn lu_in_place_scratch<I: Index, T: ComplexField>(
 	nrows: usize,
 	ncols: usize,
-	par: Par,
+	par: ParShape,
 	params: Spec<FullPivLuParams, T>,
 ) -> StackReq {
 	_ = par;
@@ -469,7 +480,7 @@ pub fn lu_in_place<'out, I: Index, T: ComplexField>(
 	row_perm_inv: &'out mut [I],
 	col_perm: &'out mut [I],
 	col_perm_inv: &'out mut [I],
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 	params: Spec<FullPivLuParams, T>,
 ) -> (FullPivLuInfo, PermRef<'out, I>, PermRef<'out, I>) {
@@ -492,14 +503,14 @@ pub fn lu_in_place<'out, I: Index, T: ComplexField>(
 	{
 		let mut work = alloc::vec![zero::<T>(); M * N];
 		let mut work = MatMut::from_column_major_slice_mut(&mut work, M, N);
-		linalg::copy_across_layouts(work.rb_mut(), mat.rb(), par);
+		linalg::copy_across_layouts(work.rb_mut(), mat.rb(), par.reborrow());
 		let ret = lu_in_place(
 			work.rb_mut(),
 			row_perm,
 			row_perm_inv,
 			col_perm,
 			col_perm_inv,
-			par,
+			par.reborrow(),
 			stack,
 			params,
 		);
@@ -568,7 +579,8 @@ mod tests {
 	#[test]
 	fn test_flu() {
 		let rng = &mut StdRng::seed_from_u64(0);
-		for par in [Par::Seq, Par::rayon(8)] {
+		for mut par in [Par::Seq, Par::rayon(8)] {
+			let par_shape = par.shape();
 			for m in [8, 16, 24, 32, 128, 255, 256, 257] {
 				let n = 8;
 				let approx_eq = CwiseMat(ApproxEq {
@@ -596,12 +608,12 @@ mod tests {
 					row_perm_inv,
 					col_perm,
 					col_perm_inv,
-					par,
+					par.reborrow(),
 					MemStack::new(&mut MemBuffer::new(lu_in_place_scratch::<
 						usize,
 						c64,
 					>(
-						n, n, par, default()
+						n, n, par_shape, default()
 					))),
 					default(),
 				);
@@ -646,12 +658,12 @@ mod tests {
 					row_perm_inv,
 					col_perm,
 					col_perm_inv,
-					par,
+					par.reborrow(),
 					MemStack::new(&mut MemBuffer::new(lu_in_place_scratch::<
 						usize,
 						f64,
 					>(
-						n, n, par, default()
+						n, n, par_shape, default()
 					))),
 					default(),
 				);
@@ -1526,7 +1538,7 @@ mod tests {
 			0.0, 0.0, 0.0, 0.0,
 		];
 		let b = ColRef::from_slice(&b);
-		let lu = A.full_piv_lu();
-		assert!(lu.solve(b).is_all_finite());
+		let lu = A.full_piv_lu(Par::Seq);
+		assert!(lu.solve(b, Par::Seq).is_all_finite());
 	}
 }

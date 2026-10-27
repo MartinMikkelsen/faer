@@ -2,7 +2,7 @@ use crate::assert;
 use crate::internal_prelude::*;
 pub fn inverse_scratch<I: Index, T: ComplexField>(
 	dim: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	_ = par;
 	super::solve::solve_in_place_scratch::<I, T>(dim, dim, par)
