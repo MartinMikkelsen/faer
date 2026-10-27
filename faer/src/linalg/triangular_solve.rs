@@ -751,3 +751,7 @@ mod tests {
 		check(c32::new(0.0, f32::MIN_POSITIVE / 2.0));
 	}
 }
+
+#[cfg(test)]
+#[path = "tests/lapack_triangular.rs"]
+mod lapack;

@@ -190,3 +190,7 @@ mod tests {
 		}
 	}
 }
+
+#[cfg(test)]
+#[path = "tests/mod.rs"]
+mod lapack;

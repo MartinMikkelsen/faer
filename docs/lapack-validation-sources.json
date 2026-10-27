@@ -1,0 +1,573 @@
+{
+  "project": "LAPACK",
+  "version": "3.12.0",
+  "distribution": "OpenMathLib/OpenBLAS",
+  "revision": "791b02a1a00c996b66a894f6df93421c53b62d80",
+  "sources": [
+    {
+      "path": "EIG/dchkhs.f",
+      "sha": "a79302c1c912b924d5b46281230094c873c8376e",
+      "lines": 1269
+    },
+    {
+      "path": "EIG/dhst01.f",
+      "sha": "79925881b047cc712bf07b0d78b278c88ed5926d",
+      "lines": 217
+    },
+    {
+      "path": "EIG/dort01.f",
+      "sha": "eb1d7a7ec2cc57450b4a69b084b4f0be5e6024cb",
+      "lines": 226
+    },
+    {
+      "path": "EIG/zunt01.f",
+      "sha": "040c88f4498417bd1fe8f401ed2849d596a5dc23",
+      "lines": 245
+    },
+    {
+      "path": "EIG/dget22.f",
+      "sha": "e19552ff7854f34156a80fc78e544c94af90c54e",
+      "lines": 382
+    },
+    {
+      "path": "EIG/zget22.f",
+      "sha": "73ed0ac344dba66fe38c5bc0555ac74db5310669",
+      "lines": 315
+    },
+    {
+      "path": "EIG/dget34.f",
+      "sha": "67f0df99fdeb20908c7b05107e02740f6ad0354f",
+      "lines": 399
+    },
+    {
+      "path": "EIG/dget36.f",
+      "sha": "8725ae2e40d5117d14129c870069eb8136f44ed8",
+      "lines": 246
+    },
+    {
+      "path": "EIG/zget36.f",
+      "sha": "c7a79b99f7489a2a9a830c8f4512d5eb002a6b3b",
+      "lines": 219
+    },
+    {
+      "path": "EIG/dchkbl.f",
+      "sha": "56f22b2fc9baafe53c664fb21c76e90edd781a88",
+      "lines": 177
+    },
+    {
+      "path": "EIG/dchkbk.f",
+      "sha": "364b8f6b1f6070bf5dd779acf6ba3dfc251c52b8",
+      "lines": 160
+    },
+    {
+      "path": "EIG/dchkst.f",
+      "sha": "6e02c84fbba37c133f4c2935a490bb362f324a7c",
+      "lines": 1975
+    },
+    {
+      "path": "EIG/zchkst.f",
+      "sha": "b77d9443882f6be19bfa634c92670bda127eebcb",
+      "lines": 1998
+    },
+    {
+      "path": "EIG/dsyt21.f",
+      "sha": "86c506902d7ec798cf1a9e0d71d8a830121a2a9f",
+      "lines": 415
+    },
+    {
+      "path": "EIG/zhet21.f",
+      "sha": "b927a502fa14f3df85c805bca79f8443edf6e979",
+      "lines": 427
+    },
+    {
+      "path": "LIN/dchkge.f",
+      "sha": "467667a42b0ef6cd3b9df6dd08a0d201371e543e",
+      "lines": 598
+    },
+    {
+      "path": "LIN/dget01.f",
+      "sha": "fad1c2211c975433ac9379002961ebde91fced9c",
+      "lines": 212
+    },
+    {
+      "path": "LIN/dget02.f",
+      "sha": "560cc50f7c11ee36711df8a86ed29ba5226c3b38",
+      "lines": 224
+    },
+    {
+      "path": "LIN/dget03.f",
+      "sha": "6486ff5d5a85efcc343c2018f421f9606f8a52e0",
+      "lines": 183
+    },
+    {
+      "path": "LIN/dchkpo.f",
+      "sha": "e9d5af1863210bbaab5fb35358a43f4251b28728",
+      "lines": 529
+    },
+    {
+      "path": "LIN/dpot01.f",
+      "sha": "71e50f892a3893db1087ed8c830d864b86998b68",
+      "lines": 220
+    },
+    {
+      "path": "LIN/dpot02.f",
+      "sha": "6d87b89f555eed07ca2561ccc6c2be1495181917",
+      "lines": 203
+    },
+    {
+      "path": "LIN/dpot03.f",
+      "sha": "2e506b623b3036f18921705897fa1e50b19a19bc",
+      "lines": 218
+    },
+    {
+      "path": "LIN/dchkps.f",
+      "sha": "1e4a9e58de39c35877e2e76a0952f718503ca332",
+      "lines": 360
+    },
+    {
+      "path": "LIN/dchksy.f",
+      "sha": "8d127cd3b61f2e454a812bbe317c20b426a5654a",
+      "lines": 672
+    },
+    {
+      "path": "LIN/zchkhe.f",
+      "sha": "e443eab04f7f6a52984fc1f40fa18931cc55caeb",
+      "lines": 667
+    },
+    {
+      "path": "LIN/dsyt01.f",
+      "sha": "cb918de00e1333340f45ed2a1d78b524108a7629",
+      "lines": 220
+    },
+    {
+      "path": "LIN/zhet01.f",
+      "sha": "b532964693d435c98b38de3bf341a232cfb7d0b0",
+      "lines": 237
+    },
+    {
+      "path": "LIN/dchkqr.f",
+      "sha": "8188d7a0091a453f7b15cfba6dd18ee5673ab38e",
+      "lines": 462
+    },
+    {
+      "path": "LIN/dchkq3.f",
+      "sha": "494008fa85ea9d77fae5644cb9d1291e0bcfb4c4",
+      "lines": 365
+    },
+    {
+      "path": "LIN/dqrt01.f",
+      "sha": "2ddd551cefd85d2d0d42c08f5aa8286258ec770f",
+      "lines": 228
+    },
+    {
+      "path": "LIN/dqrt02.f",
+      "sha": "d41c7b324104d2574cf3bc005022742f7594cd9d",
+      "lines": 227
+    },
+    {
+      "path": "LIN/dqrt03.f",
+      "sha": "d156faca03bece00eb63214ceb29fa3f998197aa",
+      "lines": 260
+    },
+    {
+      "path": "LIN/dchktr.f",
+      "sha": "57e87326b0ccd0e2d6b9411e5133178b17b55b82",
+      "lines": 617
+    },
+    {
+      "path": "LIN/dtrt01.f",
+      "sha": "e5827fe78758a9e685133afa2cc6276f0f6a57e3",
+      "lines": 219
+    },
+    {
+      "path": "LIN/dtrt02.f",
+      "sha": "6d22f688ba72b645f61aaffde0437cf521724ec6",
+      "lines": 232
+    },
+    {
+      "path": "LIN/ddrvls.f",
+      "sha": "b3d07d67f212043bef71ecfb68173d190122061e",
+      "lines": 1020
+    },
+    {
+      "path": "LIN/dqrt12.f",
+      "sha": "b8a124c591f511419192d7122ae203cb459d8f9d",
+      "lines": 219
+    },
+    {
+      "path": "LIN/dqrt14.f",
+      "sha": "fdfc96b98deacefeebdd90ccd12498d6af70ce12",
+      "lines": 256
+    },
+    {
+      "path": "LIN/dqrt16.f",
+      "sha": "cb4ba183a6aa8964e623c8905153195e2855857d",
+      "lines": 216
+    },
+    {
+      "path": "LIN/dqrt17.f",
+      "sha": "ccbb3cff42623e29f1e854d4ba65ad4526e77b7c",
+      "lines": 259
+    },
+    {
+      "path": "EIG/schkhs.f",
+      "sha": "ad9b649b30a034a0ad67d78a34a46e8c1f2bca76",
+      "lines": 1268
+    },
+    {
+      "path": "EIG/cchkhs.f",
+      "sha": "a9224f2f2d9c0361eb144e60bcbb86a0ac17905f",
+      "lines": 1216
+    },
+    {
+      "path": "EIG/zchkhs.f",
+      "sha": "e93ee29c1fa28ecdd9e546367bdc05de2dbd0843",
+      "lines": 1216
+    },
+    {
+      "path": "EIG/sget36.f",
+      "sha": "47eae95e41afa85e1d1c52fdaa4e90a6d5d2432d",
+      "lines": 246
+    },
+    {
+      "path": "EIG/cget36.f",
+      "sha": "7f943f2564fcf9db5700e6461f5bbbf202c068ea",
+      "lines": 219
+    },
+    {
+      "path": "EIG/schkbl.f",
+      "sha": "491080d9e0919fdacfb8fd88e3a7d28c628575cf",
+      "lines": 177
+    },
+    {
+      "path": "EIG/cchkbl.f",
+      "sha": "894abd49062d3e343176fa248197cced1eb05c47",
+      "lines": 182
+    },
+    {
+      "path": "EIG/zchkbl.f",
+      "sha": "f623bc311e254e6321d1c544fa439e43b4aca0d3",
+      "lines": 182
+    },
+    {
+      "path": "EIG/schkbk.f",
+      "sha": "18240175724093f7caec212487ef01bae639c8db",
+      "lines": 160
+    },
+    {
+      "path": "EIG/cchkbk.f",
+      "sha": "6b9b0e24c2f4273480cbe10539d6cce0bc048d80",
+      "lines": 168
+    },
+    {
+      "path": "EIG/zchkbk.f",
+      "sha": "206e9c2b969cf1649b01ad278e55a3d675476c6b",
+      "lines": 168
+    },
+    {
+      "path": "EIG/schkst.f",
+      "sha": "aecbdfe932f6b6dbfb86260181bdc66f3f73609f",
+      "lines": 1975
+    },
+    {
+      "path": "EIG/cchkst.f",
+      "sha": "ed535e91f336fd7c454a444a2c3d6f5a92125fa4",
+      "lines": 1998
+    },
+    {
+      "path": "LIN/schkge.f",
+      "sha": "0921f7925732a60d8cac426e6f7181f074582c8a",
+      "lines": 598
+    },
+    {
+      "path": "LIN/cchkge.f",
+      "sha": "0ee1c85c5792e99ef088272763b804425d81b05f",
+      "lines": 601
+    },
+    {
+      "path": "LIN/zchkge.f",
+      "sha": "d87759df5c50afe47a45eb6756324d8f64385442",
+      "lines": 601
+    },
+    {
+      "path": "LIN/schkpo.f",
+      "sha": "ccfb9b7b274793ac37e3e22487f02feee87274b2",
+      "lines": 529
+    },
+    {
+      "path": "LIN/cchkpo.f",
+      "sha": "8cf85bf6e4f35d4c63b6f80ef07d71bccc1ec854",
+      "lines": 529
+    },
+    {
+      "path": "LIN/zchkpo.f",
+      "sha": "93ea7216339c9e50f35b1761498147782a81397d",
+      "lines": 529
+    },
+    {
+      "path": "LIN/schkps.f",
+      "sha": "7bd70c45255d6e95d89e16eca6252fac11bd050a",
+      "lines": 360
+    },
+    {
+      "path": "LIN/cchkps.f",
+      "sha": "d77ffc026227c978bf8bfb3832723b8e0ca01b42",
+      "lines": 359
+    },
+    {
+      "path": "LIN/zchkps.f",
+      "sha": "79fc951e2257207d076df372a484bfc992e10aac",
+      "lines": 359
+    },
+    {
+      "path": "LIN/schkqr.f",
+      "sha": "f72c8f1ebadcfc7c98b682e2ac4b304356a1769d",
+      "lines": 461
+    },
+    {
+      "path": "LIN/cchkqr.f",
+      "sha": "4fa7413f985754504359089722c08e8ba5c5c3dd",
+      "lines": 461
+    },
+    {
+      "path": "LIN/zchkqr.f",
+      "sha": "c088bacc9e0497d763f7bec0ee794ca9946995b6",
+      "lines": 461
+    },
+    {
+      "path": "LIN/schkq3.f",
+      "sha": "209683f48ef755908da56cb93aa356dd986ffd57",
+      "lines": 365
+    },
+    {
+      "path": "LIN/cchkq3.f",
+      "sha": "e065655393c905206728a3ba09afc7722eab9a20",
+      "lines": 369
+    },
+    {
+      "path": "LIN/zchkq3.f",
+      "sha": "33cd0fe15f36ca09c8693bb89008c6cf2458be86",
+      "lines": 369
+    },
+    {
+      "path": "LIN/schktr.f",
+      "sha": "92d87610877d4e2fb9e506bf7e84a89c73ca8642",
+      "lines": 618
+    },
+    {
+      "path": "LIN/cchktr.f",
+      "sha": "2953a2bd53bf644945fc98f462c7b104042cafd7",
+      "lines": 614
+    },
+    {
+      "path": "LIN/zchktr.f",
+      "sha": "4af5381243e7438308ef392b243539438d4d7098",
+      "lines": 614
+    },
+    {
+      "path": "LIN/sdrvls.f",
+      "sha": "2baf9a3fb1afd9c46b3c3f2ffec59cffdbdb4589",
+      "lines": 1014
+    },
+    {
+      "path": "LIN/cdrvls.f",
+      "sha": "ecba705d5f35e5e06e94d8fa16344906abf45b4e",
+      "lines": 1030
+    },
+    {
+      "path": "LIN/zdrvls.f",
+      "sha": "b21345d3026c62533c35156e80f5327701b82eff",
+      "lines": 1029
+    },
+    {
+      "path": "EIG/sget34.f",
+      "sha": "27f705ca3ce690e9758c510b275d50288a7c9f96",
+      "lines": 399
+    },
+    {
+      "path": "LIN/schksy.f",
+      "sha": "dc94b3492462eba75885a52d731681d703bb722a",
+      "lines": 671
+    },
+    {
+      "path": "LIN/cchkhe.f",
+      "sha": "1ff0257579f748d47d4fbc4df9527568f5918c27",
+      "lines": 679
+    },
+    {
+      "path": "sbal.in",
+      "sha": "fac6f8eaebef993c57c23eb00010c44786a96fd3",
+      "lines": 213
+    },
+    {
+      "path": "sbak.in",
+      "sha": "0ec11c17c8b1669bacb82ea6c988423912245946",
+      "lines": 130
+    },
+    {
+      "path": "sec.in",
+      "sha": "0b2f4e68c71cdca78a2e2e381c3db73a4e197f67",
+      "lines": 1114
+    },
+    {
+      "path": "dbal.in",
+      "sha": "828629b1501e5276743e129afd252d8b89fcca3a",
+      "lines": 214
+    },
+    {
+      "path": "dbak.in",
+      "sha": "fc93a32db75032a823fbd1cd64ebff24ee7c14b5",
+      "lines": 130
+    },
+    {
+      "path": "dec.in",
+      "sha": "4a2aa52a134b46beba345826aa461fbf0cf7e98f",
+      "lines": 1105
+    },
+    {
+      "path": "cbal.in",
+      "sha": "909531c33244ab12ce7b7d368bc17b67b2b2b6aa",
+      "lines": 350
+    },
+    {
+      "path": "cbak.in",
+      "sha": "ef364dc8a14ab131e24706509ea456949bd69372",
+      "lines": 208
+    },
+    {
+      "path": "cec.in",
+      "sha": "622f05f1f1eba4ca4d2ba352143a336238a18e14",
+      "lines": 517
+    },
+    {
+      "path": "zbal.in",
+      "sha": "1efb5f2fc76e69a917b336cd2f8f02d8f1bdfcf4",
+      "lines": 355
+    },
+    {
+      "path": "zbak.in",
+      "sha": "6a98a8989037adb33de347f445e8a50c2e4dbc78",
+      "lines": 208
+    },
+    {
+      "path": "zec.in",
+      "sha": "32a1b890c9ddc7114b4219a655b52589bcdb1b73",
+      "lines": 517
+    },
+    {
+      "path": "LIN/sdrvpo.f",
+      "sha": "5ac638b0b6da253d39570a29a1ba3c079dfc3021",
+      "lines": 617
+    },
+    {
+      "path": "LIN/ddrvpo.f",
+      "sha": "c5c8076e0acacc5cab141149d8abc256aaead482",
+      "lines": 617
+    },
+    {
+      "path": "LIN/cdrvpo.f",
+      "sha": "88cca10dfdc22dbf777b6b2527030f91d204ce41",
+      "lines": 618
+    },
+    {
+      "path": "LIN/zdrvpo.f",
+      "sha": "3cc691c5b4e635fed4cd5f29e2ac732a1a2cb61f",
+      "lines": 618
+    },
+    {
+      "path": "LIN/zget01.f",
+      "sha": "e462298681b14d64cdc9c43940365bba11c2cc52",
+      "lines": 217
+    },
+    {
+      "path": "LIN/zget02.f",
+      "sha": "6ad1392c62970798ed22948b55942caaf7341adf",
+      "lines": 225
+    },
+    {
+      "path": "LIN/zget03.f",
+      "sha": "74121aabc3ec40ff22e9bedccc97fb0d92af1255",
+      "lines": 188
+    },
+    {
+      "path": "LIN/zpot01.f",
+      "sha": "de83414c63281a7411c84aec3d62eb2af04d2a9e",
+      "lines": 237
+    },
+    {
+      "path": "LIN/zpot02.f",
+      "sha": "17b690400163089a0f13af83715f11b5f84eeb5a",
+      "lines": 205
+    },
+    {
+      "path": "LIN/zpot03.f",
+      "sha": "f3cbd1141069d67c60fbef3a8d5b506d5aa19e8b",
+      "lines": 223
+    },
+    {
+      "path": "LIN/zqrt01.f",
+      "sha": "4aa0aa59fd614436a4e86d5869d99607f75d9827",
+      "lines": 230
+    },
+    {
+      "path": "LIN/zqrt03.f",
+      "sha": "56b2e3b5058c385249c4dd3abbebe67ca06bae83",
+      "lines": 262
+    },
+    {
+      "path": "LIN/ztrt02.f",
+      "sha": "69f04c9dbc8915b7db89b4894e1048016cd8a689",
+      "lines": 238
+    },
+    {
+      "path": "LIN/zqrt14.f",
+      "sha": "80c8ac56f1b1492a1234b0a920decaf6b826970d",
+      "lines": 256
+    },
+    {
+      "path": "LIN/zqrt16.f",
+      "sha": "9becd6d3b0ac8a1dc9eaff7fee81730553641c9c",
+      "lines": 218
+    },
+    {
+      "path": "LIN/zqrt17.f",
+      "sha": "9a0770c6263ff65ed3b8021bbfa2add6188a32c2",
+      "lines": 260
+    },
+    {
+      "path": "nep.in",
+      "sha": "c4a414910b079f1fefd3445121daa12f47233ed0",
+      "lines": 16
+    },
+    {
+      "path": "sep.in",
+      "sha": "99b47c0aa16627720077163b8d6858f8b81f333c",
+      "lines": 15
+    },
+    {
+      "path": "stest.in",
+      "sha": "abfd639fdaec0d3d86d6c9f5493204682c5b5213",
+      "lines": 49
+    },
+    {
+      "path": "dtest.in",
+      "sha": "cde62db50d4c3710e9144c94ec4914bee8d62127",
+      "lines": 49
+    },
+    {
+      "path": "ctest.in",
+      "sha": "4e30224d73fb884d217c19a5604ae557a158b126",
+      "lines": 55
+    },
+    {
+      "path": "ztest.in",
+      "sha": "bf4c9d100b57373a15fb47da4344e514102ac24e",
+      "lines": 55
+    },
+    {
+      "path": "svd.in",
+      "sha": "bc0ae2d2ece694536bdb01ebb49d59b4774049ac",
+      "lines": 15
+    }
+  ]
+}

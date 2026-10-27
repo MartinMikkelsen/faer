@@ -1,0 +1,1368 @@
+{
+  "production_revision": "816105230da9bd753a2375400ea11b4785e96b91",
+  "results": [
+    {
+      "family": "svd_bidiagonal_family",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 120,
+      "attempted": 120,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_dchkbd_15_to_19",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 396,
+      "attempted": 396,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_diagonal_families",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 700,
+      "attempted": 700,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_prefilled_outputs",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 15,
+      "attempted": 15,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_rank_one_at_recursion_splits",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 60,
+      "attempted": 60,
+      "call_failures": 1,
+      "diagnostics": 1,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_rotated_families",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 300,
+      "attempted": 300,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_layouts_and_reused_buffers",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 2880,
+      "attempted": 2880,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_parallel_paths",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 72,
+      "attempted": 72,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_bidiagonal_family",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 120,
+      "attempted": 120,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_dchkbd_15_to_19",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 396,
+      "attempted": 396,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_diagonal_families",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 700,
+      "attempted": 700,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_prefilled_outputs",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 15,
+      "attempted": 15,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_rank_one_at_recursion_splits",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 60,
+      "attempted": 60,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_rotated_families",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 300,
+      "attempted": 300,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_layouts_and_reused_buffers",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 2880,
+      "attempted": 2880,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_parallel_paths",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 72,
+      "attempted": 72,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_bidiagonal_family",
+      "dtype": "f32",
+      "planned": 120,
+      "attempted": 120,
+      "call_failures": 0,
+      "diagnostics": 3,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_dchkbd_15_to_19",
+      "dtype": "f32",
+      "planned": 396,
+      "attempted": 396,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_diagonal_families",
+      "dtype": "f32",
+      "planned": 700,
+      "attempted": 700,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_prefilled_outputs",
+      "dtype": "f32",
+      "planned": 15,
+      "attempted": 15,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_rank_one_at_recursion_splits",
+      "dtype": "f32",
+      "planned": 60,
+      "attempted": 60,
+      "call_failures": 1,
+      "diagnostics": 1,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_rotated_families",
+      "dtype": "f32",
+      "planned": 300,
+      "attempted": 300,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_layouts_and_reused_buffers",
+      "dtype": "f32",
+      "planned": 2880,
+      "attempted": 2880,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_parallel_paths",
+      "dtype": "f32",
+      "planned": 72,
+      "attempted": 72,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_bidiagonal_family",
+      "dtype": "f64",
+      "planned": 120,
+      "attempted": 120,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_dchkbd_15_to_19",
+      "dtype": "f64",
+      "planned": 396,
+      "attempted": 396,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_diagonal_families",
+      "dtype": "f64",
+      "planned": 700,
+      "attempted": 700,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_prefilled_outputs",
+      "dtype": "f64",
+      "planned": 15,
+      "attempted": 15,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_rank_one_at_recursion_splits",
+      "dtype": "f64",
+      "planned": 60,
+      "attempted": 60,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_rotated_families",
+      "dtype": "f64",
+      "planned": 300,
+      "attempted": 300,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_layouts_and_reused_buffers",
+      "dtype": "f64",
+      "planned": 2880,
+      "attempted": 2880,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "svd_parallel_paths",
+      "dtype": "f64",
+      "planned": 72,
+      "attempted": 72,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "hessenberg",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 720,
+      "attempted": 720,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 720
+    },
+    {
+      "family": "hessenberg_parallel",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 6,
+      "attempted": 6,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 6
+    },
+    {
+      "family": "hessenberg",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 720,
+      "attempted": 720,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 720
+    },
+    {
+      "family": "hessenberg_parallel",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 6,
+      "attempted": 6,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 6
+    },
+    {
+      "family": "hessenberg",
+      "dtype": "f32",
+      "planned": 720,
+      "attempted": 720,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 720
+    },
+    {
+      "family": "hessenberg_parallel",
+      "dtype": "f32",
+      "planned": 6,
+      "attempted": 6,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 6
+    },
+    {
+      "family": "hessenberg",
+      "dtype": "f64",
+      "planned": 720,
+      "attempted": 720,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 720
+    },
+    {
+      "family": "hessenberg_parallel",
+      "dtype": "f64",
+      "planned": 6,
+      "attempted": 6,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 6
+    },
+    {
+      "family": "schur",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 1440,
+      "attempted": 1440,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "schur_parallel",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "schur",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 1440,
+      "attempted": 1440,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "schur_parallel",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "schur",
+      "dtype": "f32",
+      "planned": 1440,
+      "attempted": 1440,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "schur_parallel",
+      "dtype": "f32",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "schur",
+      "dtype": "f64",
+      "planned": 1440,
+      "attempted": 1440,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "schur_parallel",
+      "dtype": "f64",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "nonsymmetric_evd",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 1776,
+      "attempted": 1776,
+      "call_failures": 0,
+      "diagnostics": 208,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "nonsymmetric_evd_parallel",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 24,
+      "attempted": 24,
+      "call_failures": 0,
+      "diagnostics": 30,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "nonsymmetric_evd",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 1776,
+      "attempted": 1776,
+      "call_failures": 0,
+      "diagnostics": 216,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "nonsymmetric_evd_parallel",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 24,
+      "attempted": 24,
+      "call_failures": 0,
+      "diagnostics": 24,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "nonsymmetric_evd",
+      "dtype": "f32",
+      "planned": 1776,
+      "attempted": 1776,
+      "call_failures": 0,
+      "diagnostics": 298,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "nonsymmetric_evd_parallel",
+      "dtype": "f32",
+      "planned": 24,
+      "attempted": 24,
+      "call_failures": 0,
+      "diagnostics": 24,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "nonsymmetric_evd",
+      "dtype": "f64",
+      "planned": 1776,
+      "attempted": 1776,
+      "call_failures": 0,
+      "diagnostics": 290,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "nonsymmetric_evd_parallel",
+      "dtype": "f64",
+      "planned": 24,
+      "attempted": 24,
+      "call_failures": 0,
+      "diagnostics": 24,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "schur_reorder",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 342,
+      "attempted": 342,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "schur_reorder",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 342,
+      "attempted": 342,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "schur_reorder",
+      "dtype": "f32",
+      "planned": 1224,
+      "attempted": 1224,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "schur_reorder",
+      "dtype": "f64",
+      "planned": 1224,
+      "attempted": 1224,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "balance",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 406,
+      "attempted": 406,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 404
+    },
+    {
+      "family": "balance",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 406,
+      "attempted": 406,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 404
+    },
+    {
+      "family": "balance",
+      "dtype": "f32",
+      "planned": 406,
+      "attempted": 406,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 404
+    },
+    {
+      "family": "balance",
+      "dtype": "f64",
+      "planned": 406,
+      "attempted": 406,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 404
+    },
+    {
+      "family": "tridiagonal_evd",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 864,
+      "attempted": 864,
+      "call_failures": 36,
+      "diagnostics": 36,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "tridiagonal_evd_parallel",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "tridiagonal_evd",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 864,
+      "attempted": 864,
+      "call_failures": 36,
+      "diagnostics": 36,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "tridiagonal_evd_parallel",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "tridiagonal_evd",
+      "dtype": "f32",
+      "planned": 864,
+      "attempted": 864,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "tridiagonal_evd_parallel",
+      "dtype": "f32",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "tridiagonal_evd",
+      "dtype": "f64",
+      "planned": 864,
+      "attempted": 864,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "tridiagonal_evd_parallel",
+      "dtype": "f64",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "self_adjoint_evd",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 1248,
+      "attempted": 1248,
+      "call_failures": 0,
+      "diagnostics": 72,
+      "auxiliary_attempted": 416
+    },
+    {
+      "family": "self_adjoint_evd_parallel",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 18,
+      "attempted": 18,
+      "call_failures": 0,
+      "diagnostics": 12,
+      "auxiliary_attempted": 6
+    },
+    {
+      "family": "self_adjoint_evd_range",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 48,
+      "attempted": 48,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 16
+    },
+    {
+      "family": "self_adjoint_evd",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 1248,
+      "attempted": 1248,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 416
+    },
+    {
+      "family": "self_adjoint_evd_parallel",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 18,
+      "attempted": 18,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 6
+    },
+    {
+      "family": "self_adjoint_evd_range",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 48,
+      "attempted": 48,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 16
+    },
+    {
+      "family": "self_adjoint_evd",
+      "dtype": "f32",
+      "planned": 1248,
+      "attempted": 1248,
+      "call_failures": 0,
+      "diagnostics": 72,
+      "auxiliary_attempted": 416
+    },
+    {
+      "family": "self_adjoint_evd_parallel",
+      "dtype": "f32",
+      "planned": 18,
+      "attempted": 18,
+      "call_failures": 0,
+      "diagnostics": 12,
+      "auxiliary_attempted": 6
+    },
+    {
+      "family": "self_adjoint_evd_range",
+      "dtype": "f32",
+      "planned": 48,
+      "attempted": 48,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 16
+    },
+    {
+      "family": "self_adjoint_evd",
+      "dtype": "f64",
+      "planned": 1248,
+      "attempted": 1248,
+      "call_failures": 0,
+      "diagnostics": 40,
+      "auxiliary_attempted": 416
+    },
+    {
+      "family": "self_adjoint_evd_parallel",
+      "dtype": "f64",
+      "planned": 18,
+      "attempted": 18,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 6
+    },
+    {
+      "family": "self_adjoint_evd_range",
+      "dtype": "f64",
+      "planned": 48,
+      "attempted": 48,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 16
+    },
+    {
+      "family": "lu",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 544,
+      "attempted": 544,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 1376
+    },
+    {
+      "family": "lu_parallel",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 60
+    },
+    {
+      "family": "lu_subnormal",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 8,
+      "attempted": 8,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 8
+    },
+    {
+      "family": "lu",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 544,
+      "attempted": 544,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 1376
+    },
+    {
+      "family": "lu_parallel",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 60
+    },
+    {
+      "family": "lu_subnormal",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 8,
+      "attempted": 8,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 8
+    },
+    {
+      "family": "lu",
+      "dtype": "f32",
+      "planned": 544,
+      "attempted": 544,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 1376
+    },
+    {
+      "family": "lu_parallel",
+      "dtype": "f32",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 60
+    },
+    {
+      "family": "lu_subnormal",
+      "dtype": "f32",
+      "planned": 8,
+      "attempted": 8,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 8
+    },
+    {
+      "family": "lu",
+      "dtype": "f64",
+      "planned": 544,
+      "attempted": 544,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 1376
+    },
+    {
+      "family": "lu_parallel",
+      "dtype": "f64",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 60
+    },
+    {
+      "family": "lu_subnormal",
+      "dtype": "f64",
+      "planned": 8,
+      "attempted": 8,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 8
+    },
+    {
+      "family": "cholesky",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 416,
+      "attempted": 416,
+      "call_failures": 0,
+      "diagnostics": 26,
+      "auxiliary_attempted": 1114
+    },
+    {
+      "family": "cholesky_parallel",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 48
+    },
+    {
+      "family": "cholesky",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 416,
+      "attempted": 416,
+      "call_failures": 0,
+      "diagnostics": 26,
+      "auxiliary_attempted": 1114
+    },
+    {
+      "family": "cholesky_parallel",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 48
+    },
+    {
+      "family": "cholesky",
+      "dtype": "f32",
+      "planned": 416,
+      "attempted": 416,
+      "call_failures": 0,
+      "diagnostics": 26,
+      "auxiliary_attempted": 1114
+    },
+    {
+      "family": "cholesky_parallel",
+      "dtype": "f32",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 48
+    },
+    {
+      "family": "cholesky",
+      "dtype": "f64",
+      "planned": 416,
+      "attempted": 416,
+      "call_failures": 0,
+      "diagnostics": 26,
+      "auxiliary_attempted": 1114
+    },
+    {
+      "family": "cholesky_parallel",
+      "dtype": "f64",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 48
+    },
+    {
+      "family": "indefinite",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 832,
+      "attempted": 832,
+      "call_failures": 0,
+      "diagnostics": 178,
+      "auxiliary_attempted": 1912
+    },
+    {
+      "family": "indefinite_parallel",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 48
+    },
+    {
+      "family": "indefinite",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 832,
+      "attempted": 832,
+      "call_failures": 0,
+      "diagnostics": 178,
+      "auxiliary_attempted": 1912
+    },
+    {
+      "family": "indefinite_parallel",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 48
+    },
+    {
+      "family": "indefinite",
+      "dtype": "f32",
+      "planned": 832,
+      "attempted": 832,
+      "call_failures": 0,
+      "diagnostics": 178,
+      "auxiliary_attempted": 1912
+    },
+    {
+      "family": "indefinite_parallel",
+      "dtype": "f32",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 48
+    },
+    {
+      "family": "indefinite",
+      "dtype": "f64",
+      "planned": 832,
+      "attempted": 832,
+      "call_failures": 0,
+      "diagnostics": 178,
+      "auxiliary_attempted": 1912
+    },
+    {
+      "family": "indefinite_parallel",
+      "dtype": "f64",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 48
+    },
+    {
+      "family": "qr",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 1152,
+      "attempted": 1152,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 5760
+    },
+    {
+      "family": "qr_parallel",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 60
+    },
+    {
+      "family": "qr",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 1152,
+      "attempted": 1152,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 5760
+    },
+    {
+      "family": "qr_parallel",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 60
+    },
+    {
+      "family": "qr",
+      "dtype": "f32",
+      "planned": 1152,
+      "attempted": 1152,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 5760
+    },
+    {
+      "family": "qr_parallel",
+      "dtype": "f32",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 60
+    },
+    {
+      "family": "qr",
+      "dtype": "f64",
+      "planned": 1152,
+      "attempted": 1152,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 5760
+    },
+    {
+      "family": "qr_parallel",
+      "dtype": "f64",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 60
+    },
+    {
+      "family": "triangular",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 2832,
+      "attempted": 2832,
+      "call_failures": 0,
+      "diagnostics": 48,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "triangular_parallel",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 36,
+      "attempted": 36,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "triangular",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 2832,
+      "attempted": 2832,
+      "call_failures": 0,
+      "diagnostics": 48,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "triangular_parallel",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 36,
+      "attempted": 36,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "triangular",
+      "dtype": "f32",
+      "planned": 2832,
+      "attempted": 2832,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "triangular_parallel",
+      "dtype": "f32",
+      "planned": 36,
+      "attempted": 36,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "triangular",
+      "dtype": "f64",
+      "planned": 2832,
+      "attempted": 2832,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "triangular_parallel",
+      "dtype": "f64",
+      "planned": 36,
+      "attempted": 36,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 0
+    },
+    {
+      "family": "lstsq",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 184,
+      "attempted": 184,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 736
+    },
+    {
+      "family": "lstsq_parallel",
+      "dtype": "num_complex::Complex<f32>",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 48
+    },
+    {
+      "family": "lstsq",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 184,
+      "attempted": 184,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 736
+    },
+    {
+      "family": "lstsq_parallel",
+      "dtype": "num_complex::Complex<f64>",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 48
+    },
+    {
+      "family": "lstsq",
+      "dtype": "f32",
+      "planned": 184,
+      "attempted": 184,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 736
+    },
+    {
+      "family": "lstsq_parallel",
+      "dtype": "f32",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 48
+    },
+    {
+      "family": "lstsq",
+      "dtype": "f64",
+      "planned": 184,
+      "attempted": 184,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 736
+    },
+    {
+      "family": "lstsq_parallel",
+      "dtype": "f64",
+      "planned": 12,
+      "attempted": 12,
+      "call_failures": 0,
+      "diagnostics": 0,
+      "auxiliary_attempted": 48
+    }
+  ],
+  "build_seconds": 58.848,
+  "execution_seconds": 207.128,
+  "families": [
+    {
+      "family": "common",
+      "selected": 92,
+      "executed": 92,
+      "exit_code": 0,
+      "seconds": 0.024,
+      "complete": true,
+      "log": "common.log"
+    },
+    {
+      "family": "svd",
+      "selected": 77,
+      "executed": 77,
+      "exit_code": 101,
+      "seconds": 22.938,
+      "complete": true,
+      "log": "svd.log"
+    },
+    {
+      "family": "hessenberg",
+      "selected": 8,
+      "executed": 8,
+      "exit_code": 0,
+      "seconds": 8.024,
+      "complete": true,
+      "log": "hessenberg.log"
+    },
+    {
+      "family": "schur",
+      "selected": 12,
+      "executed": 12,
+      "exit_code": 0,
+      "seconds": 17.685,
+      "complete": true,
+      "log": "schur.log"
+    },
+    {
+      "family": "nonsymmetric_evd",
+      "selected": 16,
+      "executed": 16,
+      "exit_code": 101,
+      "seconds": 5.921,
+      "complete": true,
+      "log": "nonsymmetric_evd.log"
+    },
+    {
+      "family": "schur_reorder",
+      "selected": 8,
+      "executed": 8,
+      "exit_code": 0,
+      "seconds": 0.039,
+      "complete": true,
+      "log": "schur_reorder.log"
+    },
+    {
+      "family": "balance",
+      "selected": 8,
+      "executed": 8,
+      "exit_code": 0,
+      "seconds": 0.02,
+      "complete": true,
+      "log": "balance.log"
+    },
+    {
+      "family": "tridiagonal_evd",
+      "selected": 12,
+      "executed": 12,
+      "exit_code": 101,
+      "seconds": 15.56,
+      "complete": true,
+      "log": "tridiagonal_evd.log"
+    },
+    {
+      "family": "self_adjoint_evd",
+      "selected": 16,
+      "executed": 16,
+      "exit_code": 101,
+      "seconds": 30.484,
+      "complete": true,
+      "log": "self_adjoint_evd.log"
+    },
+    {
+      "family": "lu",
+      "selected": 16,
+      "executed": 16,
+      "exit_code": 0,
+      "seconds": 44.305,
+      "complete": true,
+      "log": "lu.log"
+    },
+    {
+      "family": "cholesky",
+      "selected": 12,
+      "executed": 12,
+      "exit_code": 101,
+      "seconds": 14.351,
+      "complete": true,
+      "log": "cholesky.log"
+    },
+    {
+      "family": "indefinite",
+      "selected": 12,
+      "executed": 12,
+      "exit_code": 101,
+      "seconds": 24.475,
+      "complete": true,
+      "log": "indefinite.log"
+    },
+    {
+      "family": "qr",
+      "selected": 12,
+      "executed": 12,
+      "exit_code": 0,
+      "seconds": 16.239,
+      "complete": true,
+      "log": "qr.log"
+    },
+    {
+      "family": "triangular",
+      "selected": 12,
+      "executed": 12,
+      "exit_code": 101,
+      "seconds": 6.169,
+      "complete": true,
+      "log": "triangular.log"
+    },
+    {
+      "family": "lstsq",
+      "selected": 12,
+      "executed": 12,
+      "exit_code": 0,
+      "seconds": 0.894,
+      "complete": true,
+      "log": "lstsq.log"
+    }
+  ]
+}

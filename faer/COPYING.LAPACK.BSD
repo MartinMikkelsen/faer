@@ -7,6 +7,13 @@ ported algorithms:
 - generalized schur decomposition (real + complex)
 - schur reordering, 1x2 / 2x1 block swaps (dlaexc, dlasy2, order-3 dlarfx, dlapy2,
   dlanv2-style norm fallback)
+- selected SVD validation families and checks (src/linalg/svd/tests/{lapack,svd_views}.rs;
+  original 1992-2023 / 2000-2023 / 2006-2023 notices retained in those files)
+- selected EIG/LIN numerical validation families (src/linalg/{evd,lu,cholesky,qr}/tests/
+  and src/linalg/tests/lapack_*.rs), from LAPACK 3.12.0 distributed in OpenBLAS
+  791b02a1a00c996b66a894f6df93421c53b62d80; source identities, selected checks,
+  fixture provenance and omissions: docs/lapack-validation.md and docs/lapack-validation-sources.json
+  Original 1992-2023 / 2000-2023 / 2006-2023 notices retained in adapted files.
 -------------------------------------------------------------------------------
 
 Copyright (c) 1992-2025 The University of Tennessee and The University
