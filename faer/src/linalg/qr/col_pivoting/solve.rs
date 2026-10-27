@@ -5,7 +5,7 @@ pub fn solve_lstsq_in_place_scratch<I: Index, T: ComplexField>(
 	qr_ncols: usize,
 	qr_block_size: usize,
 	rhs_ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	StackReq::and(
 		linalg::qr::no_pivoting::solve::solve_lstsq_in_place_scratch::<T>(
@@ -22,7 +22,7 @@ pub fn solve_in_place_scratch<I: Index, T: ComplexField>(
 	qr_dim: usize,
 	qr_block_size: usize,
 	rhs_ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	solve_lstsq_in_place_scratch::<I, T>(
 		qr_dim,
@@ -36,7 +36,7 @@ pub fn solve_transpose_in_place_scratch<I: Index, T: ComplexField>(
 	qr_dim: usize,
 	qr_block_size: usize,
 	rhs_ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	StackReq::and(
 		linalg::qr::no_pivoting::solve::solve_transpose_in_place_scratch::<T>(
@@ -247,7 +247,7 @@ mod tests {
 				usize,
 				c64,
 			>(
-				m, n, 4, Par::Seq, default()
+				m, n, 4, ParShape::Seq, default()
 			))),
 			default(),
 		);
@@ -267,7 +267,7 @@ mod tests {
 						n,
 						4,
 						k,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);
@@ -289,7 +289,7 @@ mod tests {
 						n,
 						4,
 						k,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);
@@ -328,7 +328,7 @@ mod tests {
 				usize,
 				c64,
 			>(
-				n, n, 4, Par::Seq, default()
+				n, n, 4, ParShape::Seq, default()
 			))),
 			default(),
 		);
@@ -347,7 +347,7 @@ mod tests {
 						n,
 						4,
 						k,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);
@@ -367,7 +367,7 @@ mod tests {
 						n,
 						4,
 						k,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);
@@ -387,7 +387,7 @@ mod tests {
 						n,
 						4,
 						k,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);
@@ -407,7 +407,7 @@ mod tests {
 						n,
 						4,
 						k,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 			);

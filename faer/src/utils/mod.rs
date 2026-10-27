@@ -1,6 +1,11 @@
 #![allow(missing_docs)]
 /// compile-time bound-checked indexing types
 pub mod bound;
+/// the parallel rule: dispatch cost of a shape against the serial time of a region
+pub mod cost;
+/// experimental route of the parallel regions onto a threadteam team
+#[cfg(feature = "threadteam")]
+pub mod team;
 #[doc(hidden)]
 pub mod thread {
 	use crate::*;
@@ -15,11 +20,11 @@ pub mod thread {
 		fn implementation<'a>(
 			op_a: &'a mut (dyn Send + FnMut(Par)),
 			op_b: &'a mut (dyn Send + FnMut(Par)),
-			parallelism: Par,
+			mut parallelism: Par,
 		) {
 			match parallelism {
 				Par::Seq => {
-					(op_a(parallelism), op_b(parallelism));
+					(op_a(parallelism.reborrow()), op_b(parallelism));
 				},
 				#[cfg(feature = "rayon")]
 				Par::Rayon(n_threads) => {
@@ -38,6 +43,25 @@ pub mod thread {
 							[(op_a, par(n_threads - half)), (op_b, par(half))],
 							|(op, parallelism)| op(parallelism),
 						);
+					}
+				},
+				#[cfg(feature = "threadteam")]
+				Par::Team(team) => {
+					let n_threads = team.size().get();
+					if n_threads == 1 {
+						(op_a(Par::Team(team)), op_b(Par::Seq));
+					} else {
+						// same split as the Rayon route; each half runs on the leader of
+						// a sub-team of its width and owns that sub-team
+						let half = n_threads / 2;
+						let ops = [
+							std::sync::Mutex::new(op_a),
+							std::sync::Mutex::new(op_b),
+						];
+						super::team::note_split(2);
+						let _ = team.split(&[n_threads - half, half], |c, child| {
+							(ops[c].lock().unwrap())(Par::Team(child))
+						});
 					}
 				},
 			};
@@ -64,13 +88,181 @@ pub mod thread {
 	/// the amount of threads that should ideally execute an operation with the
 	/// given parallelism
 	#[inline]
-	pub fn parallelism_degree(parallelism: Par) -> usize {
+	pub fn parallelism_degree(parallelism: &Par) -> usize {
 		match parallelism {
 			Par::Seq => 1,
 			#[cfg(feature = "rayon")]
 			Par::Rayon(n_threads) => n_threads.get(),
+			#[cfg(feature = "threadteam")]
+			Par::Team(team) => team.size().get(),
+			#[cfg(not(feature = "threadteam"))]
+			Par::__Lifetime(never, _) => match *never {},
 		}
 	}
+
+	/// whether `par` is a `Team` token
+	#[inline]
+	pub fn is_team(parallelism: &Par) -> bool {
+		match parallelism {
+			#[cfg(feature = "threadteam")]
+			Par::Team(_) => true,
+			_ => false,
+		}
+	}
+
+	/// the raw Rayon `iter.for_each(f)` of the regions that never used spindle, with `Team`
+	/// consuming the team of a `Team` (items dealt in static blocks, one part per member)
+	#[cfg(feature = "rayon")]
+	pub fn par_for_each<
+		T: Send,
+		I: rayon::iter::IntoParallelIterator<Item = T>,
+	>(
+		par: Par,
+		iter: I,
+		f: impl Send + Sync + Fn(T),
+	) where
+		I::Iter: rayon::iter::IndexedParallelIterator,
+	{
+		match par {
+			#[cfg(feature = "threadteam")]
+			Par::Team(team) => {
+				let width = team.size().get();
+				super::team::for_each(team, width, iter, f)
+			},
+			_ => {
+				use rayon::iter::ParallelIterator;
+				iter.into_par_iter().for_each(f)
+			},
+		}
+	}
+
+	/// `spindle::for_each` on the backend of `par`: the spindle group for `Rayon`, the team
+	/// itself for `Team`, the caller for `Seq`
+	#[cfg(feature = "rayon")]
+	pub fn for_each<
+		T: Send,
+		I: rayon::iter::IntoParallelIterator<Item = T>,
+	>(
+		par: Par,
+		n_jobs: usize,
+		iter: I,
+		f: impl Sync + Fn(T),
+	) where
+		I::Iter: rayon::iter::IndexedParallelIterator,
+	{
+		match par {
+			Par::Seq => {
+				use rayon::iter::plumbing::{Producer, ProducerCallback};
+				struct Each<F>(F);
+				impl<T, F: Fn(T)> ProducerCallback<T> for Each<F> {
+					type Output = ();
+					fn callback<P: Producer<Item = T>>(self, p: P) {
+						p.into_iter().for_each(self.0);
+					}
+				}
+				rayon::iter::IndexedParallelIterator::with_producer(
+					iter.into_par_iter(),
+					Each(f),
+				);
+			},
+			Par::Rayon(_) => spindle::for_each(n_jobs, iter, f),
+			#[cfg(feature = "threadteam")]
+			Par::Team(team) => super::team::for_each(team, n_jobs, iter, f),
+		}
+	}
+	/// `for_each` whose closure also receives the parallelism of its job: the share of `par`
+	/// that one of `n_jobs` concurrent jobs may use (sequential below two threads)
+	#[cfg(feature = "rayon")]
+	pub fn for_each_with_par<
+		T: Send,
+		I: rayon::iter::IntoParallelIterator<Item = T>,
+	>(
+		par: Par,
+		n_jobs: usize,
+		iter: I,
+		f: impl Sync + Fn(T, Par),
+	) where
+		I::Iter: rayon::iter::IndexedParallelIterator,
+	{
+		match par {
+			Par::Seq => for_each(Par::Seq, n_jobs, iter, |item| f(item, Par::Seq)),
+			Par::Rayon(n) => {
+				let width = n.get() / n_jobs.max(1);
+				spindle::for_each(n_jobs, iter, |item| {
+					f(item, if width >= 2 { Par::rayon(width) } else { Par::Seq })
+				})
+			},
+			#[cfg(feature = "threadteam")]
+			Par::Team(team) => {
+				// the item runs on the leader of its own sub-team and receives it
+				super::team::for_each_child(team, n_jobs, iter, |item, child| {
+					f(item, Par::Team(child))
+				})
+			},
+		}
+	}
+
+	/// runs the two operations concurrently on a split of `par` in which the first receives
+	/// `size_a` threads (clamped so that both get at least one) and the second the rest
+	#[cfg(feature = "rayon")]
+	pub fn join_sized(
+		par: Par,
+		size_a: usize,
+		op_a: impl Send + FnOnce(Par),
+		op_b: impl Send + FnOnce(Par),
+	) {
+		let degree = par.degree();
+		if degree < 2 {
+			op_a(Par::Seq);
+			op_b(Par::Seq);
+			return;
+		}
+		let size_a = size_a.clamp(1, degree - 1);
+		let op_a = std::sync::Mutex::new(Some(op_a));
+		let op_b = std::sync::Mutex::new(Some(op_b));
+		split(par, &[size_a, degree - size_a], &|c, child| {
+			if c == 0 {
+				(op_a.lock().unwrap().take().unwrap())(child)
+			} else {
+				(op_b.lock().unwrap().take().unwrap())(child)
+			}
+		});
+	}
+
+	/// runs `f(c, child)` for every `c < sizes.len()` concurrently, where `child` is the part of
+	/// `par` of width `sizes[c]` (sequential for a width of one). The widths must be non-zero and
+	/// add up to at most the degree of `par`; the children never use more than they are handed.
+	#[cfg(feature = "rayon")]
+	pub fn split(par: Par, sizes: &[usize], f: &(dyn Sync + Fn(usize, Par))) {
+		core::assert!(sizes.iter().all(|&s| s > 0));
+		match par {
+			Par::Seq => {
+				for c in 0..sizes.len() {
+					f(c, Par::Seq);
+				}
+			},
+			Par::Rayon(n) => {
+				core::assert!(sizes.iter().sum::<usize>() <= n.get());
+				use rayon::iter::IntoParallelIterator;
+				spindle::for_each(sizes.len(), (0..sizes.len()).into_par_iter(), |c| {
+					f(c, if sizes[c] >= 2 { Par::rayon(sizes[c]) } else { Par::Seq })
+				})
+			},
+			#[cfg(feature = "threadteam")]
+			Par::Team(team) => {
+				if sizes.iter().sum::<usize>() <= team.size().get() {
+					super::team::note_split(sizes.len());
+					let _ = team.split(sizes, |c, child| f(c, Par::Team(child)));
+				} else {
+					// the team is too small for the requested widths: run the parts in turn
+					for c in 0..sizes.len() {
+						f(c, Par::Seq);
+					}
+				}
+			},
+		}
+	}
+
 	/// returns the start and length of a subsegment of `0..n`, split between
 	/// `chunk_count` consumers, for the consumer at index `idx`
 	///
@@ -98,7 +290,7 @@ pub mod thread {
 
 	#[cfg(all(test, feature = "rayon"))]
 	mod tests {
-		use super::{join_raw, parallelism_degree};
+		use super::{for_each_with_par, join_raw, join_sized, parallelism_degree};
 		use crate::Par;
 		use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -111,7 +303,7 @@ pub mod thread {
 		// splits until each branch has a single thread, then holds the
 		// leaf long enough for the leaves to overlap
 		fn split(parallelism: Par, leaves: &Leaves) {
-			if parallelism_degree(parallelism) > 1 {
+			if parallelism_degree(&parallelism) > 1 {
 				join_raw(
 					|par| split(par, leaves),
 					|par| split(par, leaves),
@@ -151,6 +343,49 @@ pub mod thread {
 					leaves.peak.into_inner() <= n,
 					"concurrent leaves exceed n = {n}"
 				);
+			}
+		}
+
+		// the two halves of a sized join run on the widths they are handed: their children
+		// never overlap beyond the budget, and each half sees the width it asked for
+		#[test]
+		fn join_sized_children_stay_within_their_share() {
+			use rayon::prelude::*;
+			let pool = rayon::ThreadPoolBuilder::new()
+				.num_threads(16)
+				.build()
+				.unwrap();
+			for n in [2usize, 3, 5, 8] {
+				for left in 0..=n + 1 {
+					let active = AtomicUsize::new(0);
+					let peak = AtomicUsize::new(0);
+					let widths = [AtomicUsize::new(0), AtomicUsize::new(0)];
+					let side = |which: usize, par: Par| {
+						widths[which].store(parallelism_degree(&par), Ordering::Relaxed);
+						let jobs = parallelism_degree(&par);
+						for_each_with_par(par, jobs, (0..jobs).into_par_iter(), |_, _| {
+							let now = active.fetch_add(1, Ordering::AcqRel) + 1;
+							peak.fetch_max(now, Ordering::AcqRel);
+							std::thread::sleep(std::time::Duration::from_millis(3));
+							active.fetch_sub(1, Ordering::AcqRel);
+						});
+					};
+					pool.install(|| {
+						join_sized(
+							Par::Rayon(core::num::NonZeroUsize::new(n).unwrap()),
+							left,
+							|par| side(0, par),
+							|par| side(1, par),
+						)
+					});
+					let total = widths[0].load(Ordering::Relaxed)
+						+ widths[1].load(Ordering::Relaxed);
+					assert_eq!(total, n, "n = {n}, left = {left}");
+					assert!(
+						peak.load(Ordering::Relaxed) <= n,
+						"concurrent jobs exceed n = {n} with left = {left}"
+					);
+				}
 			}
 		}
 	}

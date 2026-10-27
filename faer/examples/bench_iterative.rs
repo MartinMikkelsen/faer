@@ -25,7 +25,7 @@ fn eigen(bencher: Bencher, PlotArg(n): PlotArg) {
 		MemBuffer::new(faer::matrix_free::eigen::partial_eigen_scratch(
 			&A,
 			n_eigval,
-			Par::Seq,
+			ParShape::Seq,
 			default(),
 		));
 	bencher.bench(|| {

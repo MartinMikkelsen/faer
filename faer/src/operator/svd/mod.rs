@@ -11,7 +11,7 @@ fn iterate_lanczos<T: ComplexField>(
 	P: MatMut<'_, T>,
 	start: usize,
 	end: usize,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let mut P = P;
@@ -30,7 +30,7 @@ fn iterate_lanczos<T: ComplexField>(
 			A.apply(
 				Pnext.rb_mut().as_mat_mut(),
 				Q.col(j - 1).as_mat(),
-				par,
+				par.reborrow(),
 				stack,
 			);
 			for i in 0..j - 1 {
@@ -73,7 +73,7 @@ fn iterate_lanczos<T: ComplexField>(
 			A.adjoint_apply(
 				Qnext.rb_mut().as_mat_mut(),
 				Pnext.as_mat(),
-				par,
+				par.reborrow(),
 				stack,
 			);
 			for i in 0..j {
@@ -125,7 +125,7 @@ pub fn partial_svd_imp<T: ComplexField>(
 	n_eigval: usize,
 	tol: T::Real,
 	restarts: usize,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) -> usize {
 	let m = A.nrows();
@@ -168,7 +168,7 @@ pub fn partial_svd_imp<T: ComplexField>(
 		P.as_mut(),
 		1,
 		min_dim,
-		par,
+		par.reborrow(),
 		stack,
 	);
 	let mut k = min_dim;
@@ -180,7 +180,7 @@ pub fn partial_svd_imp<T: ComplexField>(
 			P.as_mut(),
 			k + 1,
 			max_dim,
-			par,
+			par.reborrow(),
 			stack,
 		);
 		let ref Hmm = H[(max_dim - 1, max_dim)].copy();
@@ -200,7 +200,7 @@ pub fn partial_svd_imp<T: ComplexField>(
 				s.rb_mut(),
 				Some(X_slice.rb_mut()),
 				Some(Y_slice.rb_mut()),
-				par,
+				par.reborrow(),
 				stack,
 				default(),
 			)
@@ -298,7 +298,7 @@ pub fn partial_svd_imp<T: ComplexField>(
 				P.rb().get(.., purge..max_dim),
 				X.rb().get(purge..max_dim, purge..k),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			P.rb_mut().get_mut(.., purge..k).copy_from(&P_tmp);
 		}
@@ -310,7 +310,7 @@ pub fn partial_svd_imp<T: ComplexField>(
 				Q.rb().get(.., purge..max_dim),
 				Y.rb().get(purge..max_dim, purge..k),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			Q.rb_mut().get_mut(.., purge..k).copy_from(&Q_tmp);
 		}

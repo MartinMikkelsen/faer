@@ -1715,12 +1715,13 @@ impl<
 
 	/// returns the determinant of `self`
 	#[inline]
-	pub fn determinant(&self) -> T::Canonical
+	pub fn determinant(&self, par: Par<'_>) -> T::Canonical
 	where
 		T: Conjugate,
 	{
 		let det = linalg::reductions::determinant::determinant(
 			self.rb().canonical().as_dyn_stride().as_dyn(),
+			par,
 		);
 		if const { T::IS_CANONICAL } {
 			det

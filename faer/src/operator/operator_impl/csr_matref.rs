@@ -13,7 +13,7 @@ impl<T: ComplexField, I: Index, ViewT: Conjugate<Canonical = T>> LinOp<T>
 	}
 
 	#[inline]
-	fn apply_scratch(&self, rhs_ncols: usize, par: Par) -> StackReq {
+	fn apply_scratch(&self, rhs_ncols: usize, par: ParShape) -> StackReq {
 		_ = (rhs_ncols, par);
 		StackReq::EMPTY
 	}
@@ -46,7 +46,7 @@ impl<T: ComplexField, I: Index, ViewT: Conjugate<Canonical = T>> BiLinOp<T>
 	for SparseRowMatRef<'_, I, ViewT>
 {
 	#[inline]
-	fn transpose_apply_scratch(&self, rhs_ncols: usize, par: Par) -> StackReq {
+	fn transpose_apply_scratch(&self, rhs_ncols: usize, par: ParShape) -> StackReq {
 		_ = (rhs_ncols, par);
 		StackReq::EMPTY
 	}

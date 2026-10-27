@@ -359,17 +359,17 @@
 //! 			supernodal::factorize_supernodal_numeric_llt_scratch::<
 //! 				usize,
 //! 				f64,
-//! 			>(&symbolic, faer::Par::Seq, Default::default()),
+//! 			>(&symbolic, faer::ParShape::Seq, Default::default()),
 //! 			supernodal::factorize_supernodal_numeric_ldlt_scratch::<
 //! 				usize,
 //! 				f64,
-//! 			>(&symbolic, faer::Par::Seq, Default::default()),
+//! 			>(&symbolic, faer::ParShape::Seq, Default::default()),
 //! 			supernodal::factorize_supernodal_numeric_intranode_lblt_scratch::<
 //! 				usize,
 //! 				f64,
-//! 			>(&symbolic, faer::Par::Seq, Default::default()),
+//! 			>(&symbolic, faer::ParShape::Seq, Default::default()),
 //! 			faer::perm::permute_rows_in_place_scratch::<usize, f64>(dim, 1),
-//! 			symbolic.solve_in_place_scratch::<f64>(dim, Par::Seq),
+//! 			symbolic.solve_in_place_scratch::<f64>(dim, faer::ParShape::Seq),
 //! 		]))?;
 //! 	let stack = MemStack::new(&mut mem);
 //! 	// llt skipped since a is not positive-definite
@@ -1203,7 +1203,7 @@ pub mod simplicial {
 			&self,
 			conj: Conj,
 			rhs: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) where
 			T: ComplexField,
@@ -1221,7 +1221,7 @@ pub mod simplicial {
 				l,
 				conj,
 				rhs.rb_mut(),
-				par,
+				par.reborrow(),
 			);
 			triangular_solve::solve_lower_triangular_transpose_in_place(
 				l,
@@ -1267,7 +1267,7 @@ pub mod simplicial {
 			&self,
 			conj: Conj,
 			rhs: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) where
 			T: ComplexField,
@@ -1285,7 +1285,7 @@ pub mod simplicial {
 				ld,
 				conj,
 				x.rb_mut(),
-				par,
+				par.reborrow(),
 			);
 			triangular_solve::ldlt_scale_solve_unit_lower_triangular_transpose_in_place_impl(ld, conj.compose(Conj::Yes), x.rb_mut(), par);
 		}
@@ -1648,7 +1648,7 @@ pub mod supernodal {
 		pub fn solve_in_place_scratch<T: ComplexField>(
 			&self,
 			rhs_ncols: usize,
-			par: Par,
+			par: ParShape,
 		) -> StackReq {
 			_ = par;
 			let mut req = StackReq::EMPTY;
@@ -1857,7 +1857,7 @@ pub mod supernodal {
 			&self,
 			conj: Conj,
 			rhs: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) where
 			T: ComplexField,
@@ -1873,7 +1873,7 @@ pub mod supernodal {
 				let Ls = s.matrix;
 				let (Ls_top, Ls_bot) = Ls.split_at_row(size);
 				let mut x_top = x.rb_mut().subrows_mut(s.start(), size);
-				linalg::triangular_solve::solve_unit_lower_triangular_in_place_with_conj(Ls_top, conj, x_top.rb_mut(), par);
+				linalg::triangular_solve::solve_unit_lower_triangular_in_place_with_conj(Ls_top, conj, x_top.rb_mut(), par.reborrow());
 				let (mut tmp, _) = unsafe {
 					temp_mat_uninit::<T, _, _>(s.pattern().len(), k, stack)
 				};
@@ -1886,7 +1886,7 @@ pub mod supernodal {
 					x_top.rb(),
 					Conj::No,
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				for j in 0..k {
 					for (idx, i) in s.pattern().iter().enumerate() {
@@ -1931,13 +1931,13 @@ pub mod supernodal {
 					tmp.rb(),
 					Conj::No,
 					-one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				linalg::triangular_solve::solve_unit_upper_triangular_in_place_with_conj(
 					Ls_top.transpose(),
 					conj.compose(Conj::Yes),
 					x_top.rb_mut(),
-					par,
+					par.reborrow(),
 				);
 			}
 		}
@@ -2004,7 +2004,7 @@ pub mod supernodal {
 			&self,
 			conj: Conj,
 			rhs: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) where
 			T: ComplexField,
@@ -2020,7 +2020,7 @@ pub mod supernodal {
 				let Ls = s.matrix;
 				let (Ls_top, Ls_bot) = Ls.split_at_row(size);
 				let mut x_top = x.rb_mut().subrows_mut(s.start(), size);
-				linalg::triangular_solve::solve_lower_triangular_in_place_with_conj(Ls_top, conj, x_top.rb_mut(), par);
+				linalg::triangular_solve::solve_lower_triangular_in_place_with_conj(Ls_top, conj, x_top.rb_mut(), par.reborrow());
 				let (mut tmp, _) = unsafe {
 					temp_mat_uninit::<T, _, _>(s.pattern().len(), k, stack)
 				};
@@ -2033,7 +2033,7 @@ pub mod supernodal {
 					x_top.rb(),
 					Conj::No,
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				for j in 0..k {
 					for (idx, i) in s.pattern().iter().enumerate() {
@@ -2054,7 +2054,7 @@ pub mod supernodal {
 			&self,
 			conj: Conj,
 			rhs: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) where
 			T: ComplexField,
@@ -2088,9 +2088,9 @@ pub mod supernodal {
 					tmp.rb(),
 					Conj::No,
 					-one::<T>(),
-					par,
+					par.reborrow(),
 				);
-				linalg::triangular_solve::solve_upper_triangular_in_place_with_conj(Ls_top.transpose(), conj, x_top.rb_mut(), par);
+				linalg::triangular_solve::solve_upper_triangular_in_place_with_conj(Ls_top.transpose(), conj, x_top.rb_mut(), par.reborrow());
 			}
 		}
 
@@ -2103,7 +2103,7 @@ pub mod supernodal {
 			&self,
 			conj: Conj,
 			rhs: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) where
 			T: ComplexField,
@@ -2119,7 +2119,7 @@ pub mod supernodal {
 				let Ls = s.matrix;
 				let (Ls_top, Ls_bot) = Ls.split_at_row(size);
 				let mut x_top = x.rb_mut().subrows_mut(s.start(), size);
-				linalg::triangular_solve::solve_lower_triangular_in_place_with_conj(Ls_top, conj, x_top.rb_mut(), par);
+				linalg::triangular_solve::solve_lower_triangular_in_place_with_conj(Ls_top, conj, x_top.rb_mut(), par.reborrow());
 				let (mut tmp, _) = unsafe {
 					temp_mat_uninit::<T, _, _>(s.pattern().len(), k, stack)
 				};
@@ -2132,7 +2132,7 @@ pub mod supernodal {
 					x_top.rb(),
 					Conj::No,
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				for j in 0..k {
 					for (idx, i) in s.pattern().iter().enumerate() {
@@ -2165,9 +2165,9 @@ pub mod supernodal {
 					tmp.rb(),
 					Conj::No,
 					-one::<T>(),
-					par,
+					par.reborrow(),
 				);
-				linalg::triangular_solve::solve_upper_triangular_in_place_with_conj(Ls_top.transpose(), conj.compose(Conj::Yes), x_top.rb_mut(), par);
+				linalg::triangular_solve::solve_upper_triangular_in_place_with_conj(Ls_top.transpose(), conj.compose(Conj::Yes), x_top.rb_mut(), par.reborrow());
 			}
 		}
 	}
@@ -2258,7 +2258,7 @@ pub mod supernodal {
 			self,
 			conj_lb: Conj,
 			rhs: MatMut<'_, T>,
-			par: Par,
+			mut par: Par,
 			stack: &mut MemStack,
 		) where
 			T: ComplexField,
@@ -2274,7 +2274,7 @@ pub mod supernodal {
 				let Ls = s.matrix;
 				let (Ls_top, Ls_bot) = Ls.split_at_row(size);
 				let mut x_top = x.rb_mut().subrows_mut(s.start(), size);
-				linalg::triangular_solve::solve_unit_lower_triangular_in_place_with_conj(Ls_top, conj_lb, x_top.rb_mut(), par);
+				linalg::triangular_solve::solve_unit_lower_triangular_in_place_with_conj(Ls_top, conj_lb, x_top.rb_mut(), par.reborrow());
 				let (mut tmp, _) = unsafe {
 					temp_mat_uninit::<T, _, _>(s.pattern().len(), k, stack)
 				};
@@ -2287,7 +2287,7 @@ pub mod supernodal {
 					x_top.rb(),
 					Conj::No,
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				let inv = self.perm.arrays().1;
 				for j in 0..k {
@@ -2357,13 +2357,13 @@ pub mod supernodal {
 					tmp.rb(),
 					Conj::No,
 					-one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				linalg::triangular_solve::solve_unit_upper_triangular_in_place_with_conj(
 					Ls_top.transpose(),
 					conj_lb.compose(Conj::Yes),
 					x_top.rb_mut(),
-					par,
+					par.reborrow(),
 				);
 			}
 		}
@@ -2971,7 +2971,7 @@ pub mod supernodal {
 		T: ComplexField,
 	>(
 		symbolic: &SymbolicSupernodalCholesky<I>,
-		par: Par,
+		par: ParShape,
 		params: Spec<LltParams, T>,
 	) -> StackReq {
 		let n_supernodes = symbolic.n_supernodes();
@@ -3021,7 +3021,7 @@ pub mod supernodal {
 		T: ComplexField,
 	>(
 		symbolic: &SymbolicSupernodalCholesky<I>,
-		par: Par,
+		par: ParShape,
 		params: Spec<LdltParams, T>,
 	) -> StackReq {
 		let n_supernodes = symbolic.n_supernodes();
@@ -3072,7 +3072,7 @@ pub mod supernodal {
 		T: ComplexField,
 	>(
 		symbolic: &SymbolicSupernodalCholesky<I>,
-		par: Par,
+		par: ParShape,
 		params: Spec<LbltParams, T>,
 	) -> StackReq {
 		let n_supernodes = symbolic.n_supernodes();
@@ -3135,7 +3135,7 @@ pub mod supernodal {
 		A_lower: SparseColMatRef<'_, I, T>,
 		regularization: LltRegularization<T::Real>,
 		symbolic: &SymbolicSupernodalCholesky<I>,
-		par: Par,
+		mut par: Par,
 		stack: &mut MemStack,
 		params: Spec<LltParams, T>,
 	) -> Result<LltInfo, LltError> {
@@ -3237,7 +3237,7 @@ pub mod supernodal {
 					Conj::Yes,
 					None,
 					-one::<T>(),
-					par,
+					par.reborrow(),
 					stack,
 				);
 			}
@@ -3247,7 +3247,7 @@ pub mod supernodal {
 				match linalg::cholesky::llt::factor::cholesky_in_place(
 					Ls_top.rb_mut(),
 					regularization.clone(),
-					par,
+					par.reborrow(),
 					stack,
 					params,
 				) {
@@ -3262,7 +3262,7 @@ pub mod supernodal {
 			linalg::triangular_solve::solve_lower_triangular_in_place(
 				Ls_top.rb().conjugate(),
 				Ls_bot.rb_mut().transpose_mut(),
-				par,
+				par.reborrow(),
 			);
 			for &row in s_pattern {
 				global_to_local[row.zx()] = none;
@@ -3289,7 +3289,7 @@ pub mod supernodal {
 		A_lower: SparseColMatRef<'_, I, T>,
 		regularization: LdltRegularization<'_, T::Real>,
 		symbolic: &SymbolicSupernodalCholesky<I>,
-		par: Par,
+		mut par: Par,
 		stack: &mut MemStack,
 		params: Spec<LdltParams, T>,
 	) -> Result<LdltInfo, LdltError> {
@@ -3393,7 +3393,7 @@ pub mod supernodal {
 					Conj::Yes,
 					Some(D.as_diagonal()),
 					-one::<T>(),
-					par,
+					par.reborrow(),
 					stack,
 				);
 			}
@@ -3408,7 +3408,7 @@ pub mod supernodal {
 							.map(|signs| &signs[s_start..s_end]),
 						..regularization.clone()
 					},
-					par,
+					par.reborrow(),
 					stack,
 					params,
 				) {
@@ -3426,7 +3426,7 @@ pub mod supernodal {
 			linalg::triangular_solve::solve_unit_lower_triangular_in_place(
 				Ls_top.rb().conjugate(),
 				Ls_bot.rb_mut().transpose_mut(),
-				par,
+				par.reborrow(),
 			);
 			for j in 0..s_ncols {
 				let ref d = Ls_top[(j, j)].real().recip();
@@ -3464,7 +3464,7 @@ pub mod supernodal {
 		perm_inverse: &mut [I],
 		A_lower: SparseColMatRef<'_, I, T>,
 		symbolic: &SymbolicSupernodalCholesky<I>,
-		par: Par,
+		mut par: Par,
 		stack: &mut MemStack,
 		params: Spec<LbltParams, T>,
 	) -> LbltInfo {
@@ -3592,7 +3592,7 @@ pub mod supernodal {
 					Ld_mid_x_D.rb().adjoint(),
 					triangular::BlockStructure::Rectangular,
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				matmul::matmul(
 					tmp_bot.rb_mut(),
@@ -3600,7 +3600,7 @@ pub mod supernodal {
 					Ld_bot,
 					Ld_mid_x_D.rb().adjoint(),
 					one::<T>(),
-					par,
+					par.reborrow(),
 				);
 				for (j_idx, j) in
 					d_pattern[d_pattern_start..d_pattern_mid].iter().enumerate()
@@ -3642,7 +3642,7 @@ pub mod supernodal {
 					ColMut::from_slice_mut(s_subdiag).as_diagonal_mut(),
 					&mut perm_forward[s_start..s_end],
 					&mut perm_inverse[s_start..s_end],
-					par,
+					par.reborrow(),
 					stack,
 					params,
 				);
@@ -3665,7 +3665,7 @@ pub mod supernodal {
 			linalg::triangular_solve::solve_unit_lower_triangular_in_place(
 				Ls_top.rb().conjugate(),
 				Ls_bot.rb_mut().transpose_mut(),
-				par,
+				par.reborrow(),
 			);
 			let mut j = 0;
 			while j < s_ncols {
@@ -3840,7 +3840,7 @@ impl<I: Index> SymbolicCholesky<I> {
 	#[inline]
 	pub fn factorize_numeric_llt_scratch<T: ComplexField>(
 		&self,
-		par: Par,
+		par: ParShape,
 		params: Spec<LltParams, T>,
 	) -> StackReq {
 		let n = self.nrows();
@@ -3873,7 +3873,7 @@ impl<I: Index> SymbolicCholesky<I> {
 	#[inline]
 	pub fn factorize_numeric_ldlt_scratch<T: ComplexField>(
 		&self,
-		par: Par,
+		par: ParShape,
 		params: Spec<LdltParams, T>,
 	) -> StackReq {
 		let n = self.nrows();
@@ -3908,7 +3908,7 @@ impl<I: Index> SymbolicCholesky<I> {
 	#[inline]
 	pub fn factorize_numeric_intranode_lblt_scratch<T: ComplexField>(
 		&self,
-		par: Par,
+		par: ParShape,
 		params: Spec<LbltParams, T>,
 	) -> StackReq {
 		let n = self.nrows();
@@ -4230,7 +4230,7 @@ impl<I: Index> SymbolicCholesky<I> {
 	pub fn solve_in_place_scratch<T: ComplexField>(
 		&self,
 		rhs_ncols: usize,
-		par: Par,
+		par: ParShape,
 	) -> StackReq {
 		temp_mat_scratch::<T>(self.nrows(), rhs_ncols).and(match self.raw() {
 			SymbolicCholeskyRaw::Simplicial(this) => {
@@ -5011,7 +5011,7 @@ pub(super) mod tests {
 					supernodal::factorize_supernodal_numeric_ldlt_scratch::<
 						usize,
 						c64,
-					>(symbolic, Par::Seq, Default::default()),
+					>(symbolic, ParShape::Seq, Default::default()),
 				)),
 				Default::default(),
 			)?;
@@ -5037,7 +5037,7 @@ pub(super) mod tests {
 					x.rb_mut(),
 					Par::Seq,
 					MemStack::new(&mut MemBuffer::new(
-						symbolic.solve_in_place_scratch::<c64>(k, Par::Seq),
+						symbolic.solve_in_place_scratch::<c64>(k, ParShape::Seq),
 					)),
 				);
 				let target = rhs.rb();
@@ -5066,7 +5066,7 @@ pub(super) mod tests {
 				MemStack::new(&mut MemBuffer::new(supernodal::factorize_supernodal_numeric_intranode_lblt_scratch::<
 					usize,
 					c64,
-				>(symbolic, Par::Seq, Default::default()))),
+				>(symbolic, ParShape::Seq, Default::default()))),
 				Default::default(),
 			);
 			let mut A = A_lower.to_dense();
@@ -5099,7 +5099,7 @@ pub(super) mod tests {
 					tmp.rb_mut(),
 					Par::Seq,
 					MemStack::new(&mut MemBuffer::new(
-						symbolic.solve_in_place_scratch::<c64>(k, Par::Seq),
+						symbolic.solve_in_place_scratch::<c64>(k, ParShape::Seq),
 					)),
 				);
 				for j in 0..k {
@@ -5132,7 +5132,7 @@ pub(super) mod tests {
 					supernodal::factorize_supernodal_numeric_llt_scratch::<
 						usize,
 						c64,
-					>(symbolic, Par::Seq, Default::default()),
+					>(symbolic, ParShape::Seq, Default::default()),
 				)),
 				Default::default(),
 			)?;
@@ -5157,7 +5157,7 @@ pub(super) mod tests {
 					x.rb_mut(),
 					Par::Seq,
 					MemStack::new(&mut MemBuffer::new(
-						symbolic.solve_in_place_scratch::<c64>(k, Par::Seq),
+						symbolic.solve_in_place_scratch::<c64>(k, ParShape::Seq),
 					)),
 				);
 				let target = rhs.rb();
@@ -5334,7 +5334,8 @@ pub(super) mod tests {
 				SupernodalThreshold::FORCE_SIMPLICIAL,
 				SupernodalThreshold::FORCE_SUPERNODAL,
 			] {
-				for par in [Par::Seq, Par::rayon(4)] {
+				for mut par in [Par::Seq, Par::rayon(4)] {
+			let par_shape = par.shape();
 					let symbolic = &factorize_symbolic_cholesky(
 						A.symbolic(),
 						side,
@@ -5350,10 +5351,10 @@ pub(super) mod tests {
 						A,
 						side,
 						Default::default(),
-						par,
+						par.reborrow(),
 						MemStack::new(&mut MemBuffer::new(
 							symbolic.factorize_numeric_llt_scratch::<c64>(
-								par,
+								par_shape,
 								Default::default(),
 							),
 						)),
@@ -5374,11 +5375,11 @@ pub(super) mod tests {
 							llt.solve_in_place_with_conj(
 								conj,
 								x.rb_mut(),
-								par,
+								par.reborrow(),
 								MemStack::new(&mut MemBuffer::new(
 									llt.solve_in_place_scratch::<c64>(
 										k,
-										Par::Seq,
+										ParShape::Seq,
 									),
 								)),
 							);
@@ -5415,7 +5416,8 @@ pub(super) mod tests {
 				SupernodalThreshold::FORCE_SIMPLICIAL,
 				SupernodalThreshold::FORCE_SUPERNODAL,
 			] {
-				for par in [Par::Seq, Par::rayon(4)] {
+				for mut par in [Par::Seq, Par::rayon(4)] {
+			let par_shape = par.shape();
 					let symbolic = &factorize_symbolic_cholesky(
 						A.symbolic(),
 						side,
@@ -5431,10 +5433,10 @@ pub(super) mod tests {
 						A,
 						side,
 						Default::default(),
-						par,
+						par.reborrow(),
 						MemStack::new(&mut MemBuffer::new(
 							symbolic.factorize_numeric_ldlt_scratch::<c64>(
-								par,
+								par_shape,
 								Default::default(),
 							),
 						)),
@@ -5455,11 +5457,11 @@ pub(super) mod tests {
 							ldlt.solve_in_place_with_conj(
 								conj,
 								x.rb_mut(),
-								par,
+								par.reborrow(),
 								MemStack::new(&mut MemBuffer::new(
 									ldlt.solve_in_place_scratch::<c64>(
 										k,
-										Par::Seq,
+										ParShape::Seq,
 									),
 								)),
 							);
@@ -5496,7 +5498,8 @@ pub(super) mod tests {
 				SupernodalThreshold::FORCE_SIMPLICIAL,
 				SupernodalThreshold::FORCE_SUPERNODAL,
 			] {
-				for par in [Par::Seq, Par::rayon(4)] {
+				for mut par in [Par::Seq, Par::rayon(4)] {
+			let par_shape = par.shape();
 					let symbolic = &factorize_symbolic_cholesky(
 						A.symbolic(),
 						side,
@@ -5517,11 +5520,11 @@ pub(super) mod tests {
 						bwd,
 						A,
 						side,
-						par,
+						par.reborrow(),
 						MemStack::new(&mut MemBuffer::new(
 							symbolic
 								.factorize_numeric_intranode_lblt_scratch::<c64>(
-									par,
+									par_shape,
 									Default::default(),
 								),
 						)),
@@ -5542,11 +5545,11 @@ pub(super) mod tests {
 							lblt.solve_in_place_with_conj(
 								conj,
 								x.rb_mut(),
-								par,
+								par.reborrow(),
 								MemStack::new(&mut MemBuffer::new(
 									lblt.solve_in_place_scratch::<c64>(
 										k,
-										Par::Seq,
+										ParShape::Seq,
 									),
 								)),
 							);

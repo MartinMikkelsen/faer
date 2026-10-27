@@ -1,7 +1,7 @@
 #![allow(non_snake_case, dead_code)]
 use curl::easy::Easy;
 use diol::prelude::*;
-use faer::Side;
+use faer::{Par, Side};
 use faer::reborrow::*;
 use faer::sparse::*;
 use std::collections::HashMap;
@@ -120,6 +120,7 @@ fn faer_llt(bencher: Bencher, name: String) {
 			symbolic.clone(),
 			A.rb(),
 			Side::Lower,
+			Par::Seq,
 		)
 	});
 }

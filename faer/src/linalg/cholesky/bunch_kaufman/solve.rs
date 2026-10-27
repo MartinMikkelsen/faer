@@ -11,7 +11,7 @@ use linalg::triangular_solve::{
 pub fn solve_in_place_scratch<I: Index, T: ComplexField>(
 	dim: usize,
 	rhs_ncols: usize,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	let _ = par;
 	temp_mat_scratch::<T>(dim, rhs_ncols)
@@ -53,13 +53,13 @@ pub fn solve_in_place_with_conj<I: Index, T: ComplexField>(
 		perm.len() == n
 	));
 	let a = L;
-	let par = par;
+	let mut par = par;
 	let not_conj = conj_A.compose(Conj::Yes);
 	let mut rhs = rhs;
 	let mut x = unsafe { temp_mat_uninit::<T, _, _>(n, k, stack).0 };
 	let mut x = x.as_mat_mut();
 	permute_rows(x.rb_mut(), rhs.rb(), perm);
-	solve_unit_lower_triangular_in_place_with_conj(a, conj_A, x.rb_mut(), par);
+	solve_unit_lower_triangular_in_place_with_conj(a, conj_A, x.rb_mut(), par.reborrow());
 	let mut i = 0;
 	while i < n {
 		let i0 = i;

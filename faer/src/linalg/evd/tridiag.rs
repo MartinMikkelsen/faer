@@ -1,20 +1,23 @@
 use crate::assert;
 use crate::internal_prelude::*;
+use crate::utils::cost::{ParThreshold, rate};
 use linalg::householder;
 use linalg::matmul::triangular::BlockStructure;
 use linalg::matmul::{self, dot};
 /// tridiagonalization tuning parameters
 #[derive(Copy, Clone, Debug)]
 pub struct TridiagParams {
-	/// threshold at which parallelism should be disabled
-	pub par_threshold: usize,
+	/// floor of the parallel regions: [`ParThreshold::Derived`] (the default) runs a step in
+	/// parallel when its serial time pays for one section; [`ParThreshold::Fixed`] counts
+	/// elements `rem*rem/2` of the triangle
+	pub par_threshold: ParThreshold,
 	#[doc(hidden)]
 	pub non_exhaustive: NonExhaustive,
 }
 impl<T: ComplexField> Auto<T> for TridiagParams {
 	fn auto() -> Self {
 		Self {
-			par_threshold: 192 * 256,
+			par_threshold: ParThreshold::Derived,
 			non_exhaustive: NonExhaustive(()),
 		}
 	}
@@ -23,7 +26,7 @@ impl<T: ComplexField> Auto<T> for TridiagParams {
 /// matrix's tridiagonalization
 pub fn tridiag_in_place_scratch<T: ComplexField>(
 	dim: usize,
-	par: Par,
+	par: ParShape,
 	params: Spec<TridiagParams, T>,
 ) -> StackReq {
 	_ = par;
@@ -183,7 +186,7 @@ fn tridiag_fused_op_fallback<T: ComplexField>(
 	v2: ColRef<'_, T>,
 	f: T,
 ) {
-	let par = Par::Seq;
+	let mut par = Par::Seq;
 	let mut A = A;
 	let mut y2 = y2;
 	let n = A.ncols();
@@ -201,7 +204,7 @@ fn tridiag_fused_op_fallback<T: ComplexField>(
 		ry2.adjoint(),
 		BlockStructure::Rectangular,
 		-one::<T>(),
-		par,
+		par.reborrow(),
 	);
 	matmul::triangular::matmul(
 		A0.rb_mut(),
@@ -212,7 +215,7 @@ fn tridiag_fused_op_fallback<T: ComplexField>(
 		u1.adjoint(),
 		BlockStructure::Rectangular,
 		-one::<T>(),
-		par,
+		par.reborrow(),
 	);
 	matmul::matmul(
 		A1.rb_mut(),
@@ -220,7 +223,7 @@ fn tridiag_fused_op_fallback<T: ComplexField>(
 		u01,
 		ry2.adjoint(),
 		-one::<T>(),
-		par,
+		par.reborrow(),
 	);
 	matmul::matmul(
 		A1.rb_mut(),
@@ -228,7 +231,7 @@ fn tridiag_fused_op_fallback<T: ComplexField>(
 		rz21,
 		u1.adjoint(),
 		-one::<T>(),
-		par,
+		par.reborrow(),
 	);
 	matmul::triangular::matmul(
 		z20.rb_mut(),
@@ -239,7 +242,7 @@ fn tridiag_fused_op_fallback<T: ComplexField>(
 		u2,
 		BlockStructure::Rectangular,
 		f.clone(),
-		par,
+		par.reborrow(),
 	);
 	matmul::triangular::matmul(
 		y2.rb_mut(),
@@ -250,9 +253,9 @@ fn tridiag_fused_op_fallback<T: ComplexField>(
 		v20,
 		BlockStructure::Rectangular,
 		f.clone(),
-		par,
+		par.reborrow(),
 	);
-	matmul::matmul(z21.rb_mut(), Accum::Replace, A1.rb(), u2, f.clone(), par);
+	matmul::matmul(z21.rb_mut(), Accum::Replace, A1.rb(), u2, f.clone(), par.reborrow());
 	matmul::matmul(
 		y2.rb_mut(),
 		Accum::Add,
@@ -319,7 +322,14 @@ pub fn tridiag_in_place<T: ComplexField>(
 				break;
 			}
 			let rem = n - k - 1;
-			if rem * rem / 2 < params.par_threshold {
+			// One section per step: the symmetric fused update over column blocks; the unit is
+			// an element of the triangle.
+			if !params.par_threshold.region_pays::<T>(
+				par.shape(),
+				rem * rem / 2,
+				rate::tridiag(),
+				1,
+			) {
 				par = Par::Seq;
 			}
 			let k1 = k + 1;
@@ -373,7 +383,8 @@ pub fn tridiag_in_place<T: ComplexField>(
 							);
 						},
 						#[cfg(feature = "rayon")]
-						Par::Rayon(nthreads) => {
+						_ => {
+						let nthreads = core::num::NonZeroUsize::new(par.degree()).unwrap();
 							use rayon::prelude::*;
 							let nthreads = nthreads.get();
 							let mut z2 = z2.rb_mut().subcols_mut(0, nthreads);
@@ -390,7 +401,7 @@ pub fn tridiag_in_place<T: ComplexField>(
 								let A22 = A22.rb();
 								let y2 = y2.rb();
 								let ref f = tau_inv.to_cplx::<T>();
-								spindle::for_each(
+								crate::utils::thread::for_each(par.reborrow(), 
 									nthreads,
 									z2.rb_mut().par_col_iter_mut().enumerate(),
 									|(idx, mut z2)| {
@@ -460,7 +471,7 @@ pub fn tridiag_in_place<T: ComplexField>(
 						x2.rb(),
 						BlockStructure::Rectangular,
 						tau_inv.to_cplx(),
-						par,
+						par.reborrow(),
 					);
 					matmul::triangular::matmul(
 						y2.rb_mut(),
@@ -471,7 +482,7 @@ pub fn tridiag_in_place<T: ComplexField>(
 						x2.rb(),
 						BlockStructure::Rectangular,
 						tau_inv.to_cplx(),
-						par,
+						par.reborrow(),
 					);
 				}
 				z!(y2.rb_mut(), A21.rb()).for_each(
@@ -521,7 +532,7 @@ pub fn tridiag_in_place<T: ComplexField>(
 				A.submatrix(j, j, n - j, b),
 				b,
 				1,
-				par,
+				par.reborrow(),
 			);
 			j += b;
 		}
@@ -555,7 +566,7 @@ mod tests {
 				Par::Seq,
 				MemStack::new(&mut MemBuffer::new(StackReq::all_of(&[
 					householder::apply_block_householder_sequence_transpose_on_the_left_in_place_scratch::<f64>(n - 1, b, n),
-					tridiag_in_place_scratch::<f64>(n, Par::Seq, default()),
+					tridiag_in_place_scratch::<f64>(n, ParShape::Seq, default()),
 				]))),
 				default(),
 			);
@@ -620,7 +631,7 @@ mod tests {
 				MemStack::new(&mut MemBuffer::new(tridiag_in_place_scratch::<
 					c64,
 				>(
-					n, Par::Seq, default()
+					n, ParShape::Seq, default()
 				))),
 				default(),
 			);

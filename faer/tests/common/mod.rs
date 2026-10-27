@@ -3,7 +3,7 @@ pub use dyn_stack::{MemBuffer, MemStack};
 pub use faer::traits::ext::*;
 pub use faer::traits::math_utils::*;
 pub use faer::traits::{ComplexField, RealField};
-pub use faer::{Col, Mat, MatRef, Par, c32, c64};
+pub use faer::{Col, Mat, MatRef, Par, ParShape, c32, c64};
 
 pub const SIZES: [usize; 6] = [1, 2, 3, 8, 33, 100];
 pub fn sample(i: usize, j: usize) -> f64 {

@@ -671,7 +671,6 @@ pub mod linalg {
 		#[repr(faer::linalg::qr::no_pivoting::factor::QrParams)]
 		pub struct QrParams {
 			blocking_threshold: usize,
-			par_threshold: usize,
 		}
 		#[repr(faer::linalg::qr::col_pivoting::factor::ColPivQrParams)]
 		pub struct ColPivQrParams {
@@ -2519,26 +2518,6 @@ pub mod linalg {
 			}
 		}
 	});
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn libfaer_v0_23_get_global_par() -> Par {
-	match faer::get_global_parallelism() {
-		faer::Par::Seq => Par {
-			tag: ParTag::Seq,
-			nthreads: 1,
-		},
-		faer::Par::Rayon(nthreads) => Par {
-			tag: ParTag::Rayon,
-			nthreads: nthreads.get(),
-		},
-	}
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn libfaer_v0_23_set_global_par(par: Par) {
-	faer::set_global_parallelism(match par.tag {
-		ParTag::Seq => faer::Par::Seq,
-		ParTag::Rayon => faer::Par::rayon(par.nthreads),
-	})
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn libfaer_v0_23_alloc(

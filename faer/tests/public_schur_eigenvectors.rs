@@ -26,7 +26,7 @@ fn real<T: RealField>() {
 			let mut qr_mem = MemBuffer::new(hessenberg_schur_scratch::<T>(
 				n,
 				true,
-				Par::Seq,
+				ParShape::Seq,
 				Default::default(),
 			));
 			hessenberg_schur_real(
@@ -118,7 +118,7 @@ fn complex<T: ComplexField>(make: fn(f64, f64) -> T) {
 			let mut qr_mem = MemBuffer::new(hessenberg_schur_scratch::<T>(
 				n,
 				true,
-				Par::Seq,
+				ParShape::Seq,
 				Default::default(),
 			));
 			hessenberg_schur_cplx(
@@ -208,7 +208,7 @@ fn tridiagonal_dedicated_scratch() {
 				MemBuffer::new(tridiagonal_self_adjoint_evd_scratch::<c64>(
 					n,
 					compute,
-					Par::Seq,
+					ParShape::Seq,
 					params,
 				));
 			tridiagonal_self_adjoint_evd(

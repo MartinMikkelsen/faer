@@ -43,7 +43,7 @@ mod tests {
 			let mut mem = MemBuffer::new(factor::cholesky_in_place_scratch::<
 				usize,
 				f64,
-			>(n, Par::Seq, params));
+			>(n, ParShape::Seq, params));
 			let (_, perm) = factor::cholesky_in_place(
 				ldl.as_mut(),
 				subdiag.as_mut(),
@@ -56,7 +56,7 @@ mod tests {
 			let mut mem = MemBuffer::new(solve::solve_in_place_scratch::<
 				usize,
 				f64,
-			>(n, rhs.ncols(), Par::Seq));
+			>(n, rhs.ncols(), ParShape::Seq));
 			let mut x = rhs.clone();
 			solve::solve_in_place_with_conj(
 				ldl.as_ref(),
@@ -118,7 +118,7 @@ mod tests {
 					MemBuffer::new(factor::cholesky_in_place_scratch::<
 						usize,
 						c64,
-					>(n, Par::Seq, params.into()));
+					>(n, ParShape::Seq, params.into()));
 				let (_, perm) = factor::cholesky_in_place(
 					ldl.as_mut(),
 					subdiag.as_mut(),
@@ -132,7 +132,7 @@ mod tests {
 				let mut mem = MemBuffer::new(solve::solve_in_place_scratch::<
 					usize,
 					c64,
-				>(n, rhs.ncols(), Par::Seq));
+				>(n, rhs.ncols(), ParShape::Seq));
 				solve::solve_in_place_with_conj(
 					ldl.as_ref(),
 					ldl.diagonal(),

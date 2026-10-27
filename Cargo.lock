@@ -2676,7 +2676,7 @@ dependencies = [
 
 [[package]]
 name = "t4a-faer"
-version = "0.24.10"
+version = "0.25.0"
 dependencies = [
  "aligned-vec",
  "amd",
@@ -2722,6 +2722,7 @@ dependencies = [
  "t4a-faer-traits",
  "t4a-private-gemm-x86",
  "tar",
+ "threadteam",
  "toml 0.9.8",
 ]
 
@@ -2742,9 +2743,9 @@ dependencies = [
 
 [[package]]
 name = "t4a-private-gemm-x86"
-version = "0.1.24"
+version = "0.1.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6e140e3b2522528a14dc01752648b0eefa6594e1b8e7e7baff2c217acfb2c62"
+checksum = "718e4349dce54baef0be67f410529bee5e9190b78d525e2456450f506d24a66a"
 dependencies = [
  "crossbeam",
  "defer",
@@ -2827,6 +2828,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f60246a4944f24f6e018aa17cdeffb7818b76356965d03b07d6a9886e8962185"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "threadteam"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d539fbcb550c65bbbb2b55350f279e0049bab0a3dbd6333274030839d4e4da70"
+dependencies = [
+ "libc",
+ "loom",
+ "rayon",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

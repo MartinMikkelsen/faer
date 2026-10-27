@@ -135,7 +135,7 @@ fn compute_gevd_generic<T: ComplexField>(
 	beta: ColMut<'_, T>,
 	u_left: Option<MatMut<'_, T>>,
 	u_right: Option<MatMut<'_, T>>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 	params: GevdParams,
 	hessenberg_to_qz: fn(
@@ -259,7 +259,7 @@ fn compute_gevd_generic<T: ComplexField>(
 		linalg::qr::no_pivoting::factor::qr_in_place(
 			B.rb_mut(),
 			householder.rb_mut(),
-			par,
+			par.reborrow(),
 			stack,
 			default(),
 		);
@@ -268,7 +268,7 @@ fn compute_gevd_generic<T: ComplexField>(
 			householder.rb(),
 			Conj::Yes,
 			A.rb_mut(),
-			par,
+			par.reborrow(),
 			stack,
 		);
 		if let Some(u_left) = u_left.rb_mut() {
@@ -277,7 +277,7 @@ fn compute_gevd_generic<T: ComplexField>(
 				householder.rb(),
 				Conj::No,
 				u_left,
-				par,
+				par.reborrow(),
 				stack,
 			);
 		}
@@ -291,7 +291,7 @@ fn compute_gevd_generic<T: ComplexField>(
 		B.rb_mut(),
 		u_left.rb_mut(),
 		u_right.rb_mut(),
-		par,
+		par.reborrow(),
 		stack,
 		params.hessenberg,
 	);
@@ -308,7 +308,7 @@ fn compute_gevd_generic<T: ComplexField>(
 		} else {
 			ComputeEigenvectors::No
 		},
-		par,
+		par.reborrow(),
 		params.schur,
 		stack,
 	);
@@ -497,7 +497,7 @@ fn qz_to_gevd_real<T: RealField>(
 	B: MatRef<'_, T>,
 	Q: Option<MatMut<'_, T>>,
 	Z: Option<MatMut<'_, T>>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let n = A.nrows();
@@ -768,7 +768,7 @@ fn qz_to_gevd_real<T: RealField>(
 				u.rb().get(.., je..),
 				rhs.rb().get(je.., ..),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			let mut u = u.rb_mut().subcols_mut(je, nw);
 			u.copy_from(&tmp);
@@ -996,7 +996,7 @@ fn qz_to_gevd_real<T: RealField>(
 				u.rb().get(.., ..je + nw),
 				rhs.rb().get(..je + nw, ..),
 				one(),
-				par,
+				par.reborrow(),
 			);
 			let mut u = u.rb_mut().subcols_mut(je, nw);
 			u.copy_from(&tmp);
@@ -1012,7 +1012,7 @@ fn qz_to_gevd_cplx<T: ComplexField>(
 	B: MatRef<'_, T>,
 	Q: Option<MatMut<'_, T>>,
 	Z: Option<MatMut<'_, T>>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 ) {
 	let n = A.nrows();
@@ -1151,7 +1151,7 @@ fn qz_to_gevd_cplx<T: ComplexField>(
 				u.rb().get(.., je..),
 				rhs.rb().get(je..),
 				one().to_cplx(),
-				par,
+				par.reborrow(),
 			);
 			let mut u = u.rb_mut().col_mut(je);
 			u.copy_from(&tmp);
@@ -1252,7 +1252,7 @@ fn qz_to_gevd_cplx<T: ComplexField>(
 				u.rb().get(.., ..je + 1),
 				rhs.rb().get(..je + 1),
 				one().to_cplx(),
-				par,
+				par.reborrow(),
 			);
 			let mut u = u.rb_mut().col_mut(je);
 			u.copy_from(&tmp);
@@ -1264,7 +1264,7 @@ fn qz_to_gevd_cplx<T: ComplexField>(
 	}
 }
 
-fn qz_to_gevd_real_scratch<T: RealField>(n: usize, _: Par) -> StackReq {
+fn qz_to_gevd_real_scratch<T: RealField>(n: usize, _: ParShape) -> StackReq {
 	StackReq::all_of(&[
 		temp_mat_scratch::<T>(n, 1),
 		temp_mat_scratch::<T>(n, 1),
@@ -1277,17 +1277,17 @@ fn qz_to_gevd_real_scratch<T: RealField>(n: usize, _: Par) -> StackReq {
 			linalg::lu::full_pivoting::factor::lu_in_place_scratch::<
 				usize,
 				Complex<T>,
-			>(2, 2, Par::Seq, Default::default()),
+			>(2, 2, ParShape::Seq, Default::default()),
 			linalg::lu::full_pivoting::solve::solve_in_place_scratch::<
 				usize,
 				Complex<T>,
-			>(2, 1, Par::Seq),
+			>(2, 1, ParShape::Seq),
 		]),
 		temp_mat_scratch::<T>(n, 2),
 	])
 }
 
-fn qz_to_gevd_cplx_scratch<T: ComplexField>(n: usize, _: Par) -> StackReq {
+fn qz_to_gevd_cplx_scratch<T: ComplexField>(n: usize, _: ParShape) -> StackReq {
 	StackReq::all_of(&[temp_mat_scratch::<T>(n, 1); 4])
 }
 
@@ -1297,7 +1297,7 @@ pub fn gevd_scratch<T: ComplexField>(
 	dim: usize,
 	left: ComputeEigenvectors,
 	right: ComputeEigenvectors,
-	par: Par,
+	par: ParShape,
 	params: Spec<GevdParams, T>,
 ) -> StackReq {
 	let _ = (left, right);
@@ -1506,7 +1506,7 @@ mod tests {
 					n,
 					ComputeEigenvectors::Yes,
 					ComputeEigenvectors::Yes,
-					Par::Seq,
+					ParShape::Seq,
 					default(),
 				))),
 				default(),
@@ -1598,7 +1598,7 @@ mod tests {
 					n,
 					ComputeEigenvectors::Yes,
 					ComputeEigenvectors::Yes,
-					Par::Seq,
+					ParShape::Seq,
 					default(),
 				))),
 				default(),
@@ -1660,7 +1660,7 @@ mod t {
 			n,
 			CE::No,
 			ce,
-			Par::Seq,
+			ParShape::Seq,
 			Spec::default(),
 		));
 		linalg::gevd::gevd_real(
@@ -1818,7 +1818,7 @@ mod t {
 								2,
 								ce(want_left),
 								ce(want_right),
-								Par::Seq,
+								ParShape::Seq,
 								Spec::default(),
 							),
 						)),

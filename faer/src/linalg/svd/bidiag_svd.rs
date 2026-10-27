@@ -1004,7 +1004,7 @@ pub(super) fn divide_and_conquer_scratch<T: ComplexField>(
 	qr_fallback_threshold: usize,
 	compute_u: bool,
 	compute_v: bool,
-	par: Par,
+	par: ParShape,
 ) -> StackReq {
 	let qr_fallback_threshold = Ord::max(qr_fallback_threshold, 4);
 	if n < qr_fallback_threshold {
@@ -1026,7 +1026,7 @@ pub(super) fn divide_and_conquer<T: RealField>(
 	subdiag: ColMut<'_, T, usize, ContiguousFwd>,
 	u: MatU<'_, T>,
 	v: Option<MatMut<'_, T>>,
-	par: Par,
+	mut par: Par,
 	stack: &mut MemStack,
 	qr_fallback_threshold: usize,
 ) -> Result<(), SvdError> {
@@ -1155,6 +1155,13 @@ pub(super) fn divide_and_conquer<T: RealField>(
 		let stack1 = MemStack::new(&mut stack1);
 		let mut r1 = Ok(());
 		let mut r2 = Ok(());
+		// one section for the join of the two halves, each a whole solve of size `n / 2`
+		let join_par =
+			if crate::utils::cost::halves_pays::<T>(&par, n, crate::utils::cost::rate::bidiag_svd_dc(), 2) {
+				par.reborrow()
+			} else {
+				Par::Seq
+			};
 		crate::utils::thread::join_raw(
 			|par| {
 				r1 = divide_and_conquer(
@@ -1178,7 +1185,7 @@ pub(super) fn divide_and_conquer<T: RealField>(
 					qr_fallback_threshold,
 				);
 			},
-			par,
+			join_par,
 		);
 		r1?;
 		r2?;
@@ -1356,7 +1363,7 @@ pub(super) fn divide_and_conquer<T: RealField>(
 	}
 	let _v_is_none = v.is_none();
 	let update_v =
-		|mut v: Option<MatMut<'_, T>>, par: Par, stack: &mut MemStack| {
+		|mut v: Option<MatMut<'_, T>>, mut par: Par, stack: &mut MemStack| {
 			let (mut combined_v, _) =
 				unsafe { temp_mat_uninit(n, allocate_vm * n, stack) };
 			let mut combined_v = if v.is_some() {
@@ -1381,6 +1388,17 @@ pub(super) fn divide_and_conquer<T: RealField>(
 				let v_lhs1 = v_lhs.submatrix(0, 1, k, k);
 				let v_lhs2 = v_lhs.submatrix(k + 1, k + 1, rem, rem);
 				let (v_rhs1, v_rhs2) = v_rhs.split_at_row(1).1.split_at_row(k);
+				// one section; the two products `k x k` and `rem x rem` against `n` columns
+				let join_par = if crate::utils::cost::join_pays::<T>(
+					&par,
+					(k * k + rem * rem).saturating_mul(n),
+					crate::utils::cost::rate::gemm_mac(),
+					1,
+				) {
+					par.reborrow()
+				} else {
+					Par::Seq
+				};
 				crate::utils::thread::join_raw(
 					|par| {
 						crate::linalg::matmul::matmul(
@@ -1402,7 +1420,7 @@ pub(super) fn divide_and_conquer<T: RealField>(
 							par,
 						)
 					},
-					par,
+					join_par,
 				);
 				crate::linalg::matmul::matmul(
 					combined_v.rb_mut().submatrix_mut(k, 0, 1, n),
@@ -1431,15 +1449,27 @@ pub(super) fn divide_and_conquer<T: RealField>(
 			u_lhs.submatrix(k + 1, k + 1, rem + 1, rem + 1),
 		);
 		let (u_rhs1, u_rhs2) = u_rhs.split_at_row(k + 1);
+		// one section; the two products `(k+1) x (k+1)` and `(rem+1) x (rem+1)` against `n + 1`
+		// columns
+		let join_par = if crate::utils::cost::join_pays::<T>(
+			&par,
+			((k + 1) * (k + 1) + (rem + 1) * (rem + 1)).saturating_mul(n + 1),
+			crate::utils::cost::rate::gemm_mac(),
+			1,
+		) {
+			par
+		} else {
+			Par::Seq
+		};
 		crate::utils::thread::join_raw(
-			|par| {
+			|mut par| {
 				crate::linalg::matmul::matmul(
 					combined_u1.rb_mut(),
 					Accum::Replace,
 					u_lhs1,
 					u_rhs1,
 					one(),
-					par,
+					par.reborrow(),
 				);
 				crate::linalg::matmul::matmul(
 					combined_u1.rb_mut(),
@@ -1450,14 +1480,14 @@ pub(super) fn divide_and_conquer<T: RealField>(
 					par,
 				);
 			},
-			|par| {
+			|mut par| {
 				crate::linalg::matmul::matmul(
 					combined_u2.rb_mut(),
 					Accum::Replace,
 					u_lhs2,
 					u_rhs2,
 					one(),
-					par,
+					par.reborrow(),
 				);
 				crate::linalg::matmul::matmul(
 					combined_u2.rb_mut(),
@@ -1468,7 +1498,7 @@ pub(super) fn divide_and_conquer<T: RealField>(
 					par,
 				);
 			},
-			par,
+			join_par,
 		);
 		u.copy_from(combined_u.rb());
 	};
@@ -1477,7 +1507,7 @@ pub(super) fn divide_and_conquer<T: RealField>(
 			update_v(v.rb_mut(), par, stack);
 		},
 		MatU::TwoRows(mut u) => {
-			update_v(v.rb_mut(), par, stack);
+			update_v(v.rb_mut(), par.reborrow(), stack);
 			let (mut combined_u, _) =
 				unsafe { temp_mat_uninit(2, n + 1, stack) };
 			let mut combined_u = combined_u.as_mat_mut();
@@ -1500,14 +1530,27 @@ pub(super) fn divide_and_conquer<T: RealField>(
 					req_v.align_bytes(),
 				);
 				let stack_v = MemStack::new(mem_v);
+				// one section; the products of both updates
+				let join_par = if crate::utils::cost::join_pays::<T>(
+					&par,
+					(k * k + rem * rem).saturating_mul(n).saturating_add(
+						((k + 1) * (k + 1) + (rem + 1) * (rem + 1)).saturating_mul(n + 1),
+					),
+					crate::utils::cost::rate::gemm_mac(),
+					1,
+				) {
+					par
+				} else {
+					Par::Seq
+				};
 				crate::utils::thread::join_raw(
 					|par| update_v(v.rb_mut(), par, stack_v),
 					|par| update_u(u, par, stack_u),
-					par,
+					join_par,
 				);
 			},
 			_ => {
-				update_v(v.rb_mut(), par, stack);
+				update_v(v.rb_mut(), par.reborrow(), stack);
 				update_u(u, par, stack);
 			},
 		},
@@ -1696,7 +1739,7 @@ mod tests {
 						4,
 						true,
 						true,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 				4,
@@ -1760,7 +1803,7 @@ mod tests {
 						4,
 						true,
 						true,
-						Par::Seq,
+						ParShape::Seq,
 					),
 				)),
 				4,
@@ -2011,7 +2054,7 @@ mod tests {
 								4,
 								true,
 								true,
-								Par::Seq,
+								ParShape::Seq,
 							),
 						)),
 						4,
