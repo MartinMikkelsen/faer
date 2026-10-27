@@ -117,7 +117,7 @@ fn lu_case(
 	kind: usize,
 	layout: usize,
 	full: bool,
-	par: Par,
+	mut par: Par,
 ) {
 	let a = lu_fixture(m, n, kind);
 	let mut ap = guarded(m, n, layout);
@@ -131,33 +131,33 @@ fn lu_case(
 	let pp = Spec::new(pp::factor::PartialPivLuParams { ..auto!(Scalar) });
 	let fp = Spec::new(fp::factor::FullPivLuParams { ..auto!(Scalar) });
 	let req = if full {
-		fp::factor::lu_in_place_scratch::<usize, Scalar>(m, n, par, fp)
+		fp::factor::lu_in_place_scratch::<usize, Scalar>(m, n, par.shape(), fp)
 	} else {
-		pp::factor::lu_in_place_scratch::<usize, Scalar>(m, n, par, pp)
+		pp::factor::lu_in_place_scratch::<usize, Scalar>(m, n, par.shape(), pp)
 	};
 	let mut mem = MemBuffer::new(req);
 	let mut recmem = MemBuffer::new(if full {
-		fp::reconstruct::reconstruct_scratch::<usize, Scalar>(m, n, par)
+		fp::reconstruct::reconstruct_scratch::<usize, Scalar>(m, n, par.shape())
 	} else {
-		pp::reconstruct::reconstruct_scratch::<usize, Scalar>(m, n, par)
+		pp::reconstruct::reconstruct_scratch::<usize, Scalar>(m, n, par.shape())
 	});
 	let mut smem = MemBuffer::new(if full {
-		fp::solve::solve_in_place_scratch::<usize, Scalar>(n, 3, par).or(
+		fp::solve::solve_in_place_scratch::<usize, Scalar>(n, 3, par.shape()).or(
 			fp::solve::solve_transpose_in_place_scratch::<usize, Scalar>(
-				n, 3, par,
+				n, 3, par.shape(),
 			),
 		)
 	} else {
-		pp::solve::solve_in_place_scratch::<usize, Scalar>(n, 3, par).or(
+		pp::solve::solve_in_place_scratch::<usize, Scalar>(n, 3, par.shape()).or(
 			pp::solve::solve_transpose_in_place_scratch::<usize, Scalar>(
-				n, 3, par,
+				n, 3, par.shape(),
 			),
 		)
 	});
 	let mut imem = MemBuffer::new(if full {
-		fp::inverse::inverse_scratch::<usize, Scalar>(n, par)
+		fp::inverse::inverse_scratch::<usize, Scalar>(n, par.shape())
 	} else {
-		pp::inverse::inverse_scratch::<usize, Scalar>(n, par)
+		pp::inverse::inverse_scratch::<usize, Scalar>(n, par.shape())
 	});
 	for pass in 0..2 {
 		let input = scaled(a.as_ref(), if pass == 0 { 1.0 } else { 0.5 });
@@ -173,7 +173,7 @@ fn lu_case(
 					&mut ip,
 					&mut c,
 					&mut ic,
-					par,
+					par.reborrow(),
 					MemStack::new(&mut mem),
 					fp,
 				);
@@ -182,7 +182,7 @@ fn lu_case(
 					interior_mut(ap.as_mut(), layout),
 					&mut p,
 					&mut ip,
-					par,
+					par.reborrow(),
 					MemStack::new(&mut mem),
 					pp,
 				);
@@ -215,7 +215,7 @@ fn lu_case(
 							lu,
 							rp,
 							cp,
-							par,
+							par.reborrow(),
 							MemStack::new(&mut recmem),
 						);
 					} else {
@@ -224,7 +224,7 @@ fn lu_case(
 							lu,
 							lu,
 							rp,
-							par,
+							par.reborrow(),
 							MemStack::new(&mut recmem),
 						);
 					}
@@ -247,7 +247,7 @@ fn lu_case(
 						let op = op(input.as_ref(), mode);
 						let b = product(op.as_ref(), want.as_ref());
 						interior_mut(rhs.as_mut(), layout).copy_from(&b);
-						if run.aux(&ctx,||{let conj=if mode==2{Conj::Yes}else{Conj::No};if full{if mode==0{fp::solve::solve_in_place_with_conj(lu,lu,rp,cp,conj,interior_mut(rhs.as_mut(),layout),par,MemStack::new(&mut smem));}else{fp::solve::solve_transpose_in_place_with_conj(lu,lu,rp,cp,conj,interior_mut(rhs.as_mut(),layout),par,MemStack::new(&mut smem));}}else{if mode==0{pp::solve::solve_in_place_with_conj(lu,lu,rp,conj,interior_mut(rhs.as_mut(),layout),par,MemStack::new(&mut smem));}else{pp::solve::solve_transpose_in_place_with_conj(lu,lu,rp,conj,interior_mut(rhs.as_mut(),layout),par,MemStack::new(&mut smem));}}Ok::<_,()>(())}){run.ratio(&ctx,&format!("solve mode {mode}"),solve_ratio(op.as_ref(),interior(rhs.as_ref(),layout),b.as_ref()),30.0);}
+						if run.aux(&ctx,||{let conj=if mode==2{Conj::Yes}else{Conj::No};if full{if mode==0{fp::solve::solve_in_place_with_conj(lu,lu,rp,cp,conj,interior_mut(rhs.as_mut(),layout),par.reborrow(),MemStack::new(&mut smem));}else{fp::solve::solve_transpose_in_place_with_conj(lu,lu,rp,cp,conj,interior_mut(rhs.as_mut(),layout),par.reborrow(),MemStack::new(&mut smem));}}else{if mode==0{pp::solve::solve_in_place_with_conj(lu,lu,rp,conj,interior_mut(rhs.as_mut(),layout),par.reborrow(),MemStack::new(&mut smem));}else{pp::solve::solve_transpose_in_place_with_conj(lu,lu,rp,conj,interior_mut(rhs.as_mut(),layout),par.reborrow(),MemStack::new(&mut smem));}}Ok::<_,()>(())}){run.ratio(&ctx,&format!("solve mode {mode}"),solve_ratio(op.as_ref(),interior(rhs.as_ref(),layout),b.as_ref()),30.0);}
 					}
 					if run.aux(&ctx, || {
 						if full {
@@ -257,7 +257,7 @@ fn lu_case(
 								lu,
 								rp,
 								cp,
-								par,
+								par.reborrow(),
 								MemStack::new(&mut imem),
 							);
 						} else {
@@ -266,7 +266,7 @@ fn lu_case(
 								lu,
 								lu,
 								rp,
-								par,
+								par.reborrow(),
 								MemStack::new(&mut imem),
 							);
 						}

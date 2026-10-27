@@ -20,7 +20,7 @@ fn qr_case(
 	layout: usize,
 	bs: usize,
 	pivot: bool,
-	par: Par,
+	mut par: Par,
 ) {
 	let a = qr_fixture(m, n, kind);
 	let k = m.min(n);
@@ -32,14 +32,14 @@ fn qr_case(
 	let np = Spec::new(np::factor::QrParams { ..auto!(Scalar) });
 	let cp = Spec::new(cp::factor::ColPivQrParams { ..auto!(Scalar) });
 	let mut mem = MemBuffer::new(if pivot {
-		cp::factor::qr_in_place_scratch::<usize, Scalar>(m, n, bs, par, cp)
+		cp::factor::qr_in_place_scratch::<usize, Scalar>(m, n, bs, par.shape(), cp)
 	} else {
-		np::factor::qr_in_place_scratch::<Scalar>(m, n, bs, par, np)
+		np::factor::qr_in_place_scratch::<Scalar>(m, n, bs, par.shape(), np)
 	});
 	let mut rm = MemBuffer::new(if pivot {
-		cp::reconstruct::reconstruct_scratch::<usize, Scalar>(m, n, bs, par)
+		cp::reconstruct::reconstruct_scratch::<usize, Scalar>(m, n, bs, par.shape())
 	} else {
-		np::reconstruct::reconstruct_scratch::<Scalar>(m, n, bs, par)
+		np::reconstruct::reconstruct_scratch::<Scalar>(m, n, bs, par.shape())
 	});
 	for pass in 0..2 {
 		let input = scaled(a.as_ref(), if pass == 0 { 1.0 } else { 0.5 });
@@ -55,7 +55,7 @@ fn qr_case(
 					coeff.as_mut(),
 					&mut p,
 					&mut ip,
-					par,
+					par.reborrow(),
 					MemStack::new(&mut mem),
 					cp,
 				);
@@ -64,7 +64,7 @@ fn qr_case(
 					np::factor::qr_in_place(
 						interior_mut(ap.as_mut(), layout),
 						coeff.as_mut(),
-						par,
+						par.reborrow(),
 						MemStack::new(&mut mem),
 						np,
 					)
@@ -127,7 +127,7 @@ fn qr_case(
 							coeff.as_ref(),
 							packed.subrows(0, k),
 							perm,
-							par,
+							par.reborrow(),
 							MemStack::new(&mut rm),
 						);
 					} else {
@@ -136,7 +136,7 @@ fn qr_case(
 							packed.subcols(0, k),
 							coeff.as_ref(),
 							packed.subrows(0, k),
-							par,
+							par.reborrow(),
 							MemStack::new(&mut rm),
 						);
 					}
@@ -168,7 +168,7 @@ fn qr_case(
 							product(oq.as_ref(), original.as_ref())
 						};
 						interior_mut(xp.as_mut(), layout).copy_from(&original);
-						if run.aux(&ctx,||{let basis=packed.subcols(0,k);let c=coeff.as_ref();let x=interior_mut(xp.as_mut(),layout);match(side,adj){(false,false)=>hh::apply_block_householder_sequence_on_the_left_in_place_with_conj(basis,c,Conj::No,x,par,MemStack::new(&mut am)),(false,true)=>hh::apply_block_householder_sequence_transpose_on_the_left_in_place_with_conj(basis,c,Conj::Yes,x,par,MemStack::new(&mut am)),(true,false)=>hh::apply_block_householder_sequence_on_the_right_in_place_with_conj(basis,c,Conj::No,x,par,MemStack::new(&mut am)),(true,true)=>hh::apply_block_householder_sequence_transpose_on_the_right_in_place_with_conj(basis,c,Conj::Yes,x,par,MemStack::new(&mut am))};Ok::<_,()>(())}){run.ratio(&ctx,&format!("Q application right={side} adjoint={adj}"),lin_difference(interior(xp.as_ref(),layout),expected.as_ref(),m),30.0);}
+						if run.aux(&ctx,||{let basis=packed.subcols(0,k);let c=coeff.as_ref();let x=interior_mut(xp.as_mut(),layout);match(side,adj){(false,false)=>hh::apply_block_householder_sequence_on_the_left_in_place_with_conj(basis,c,Conj::No,x,par.reborrow(),MemStack::new(&mut am)),(false,true)=>hh::apply_block_householder_sequence_transpose_on_the_left_in_place_with_conj(basis,c,Conj::Yes,x,par.reborrow(),MemStack::new(&mut am)),(true,false)=>hh::apply_block_householder_sequence_on_the_right_in_place_with_conj(basis,c,Conj::No,x,par.reborrow(),MemStack::new(&mut am)),(true,true)=>hh::apply_block_householder_sequence_transpose_on_the_right_in_place_with_conj(basis,c,Conj::Yes,x,par.reborrow(),MemStack::new(&mut am))};Ok::<_,()>(())}){run.ratio(&ctx,&format!("Q application right={side} adjoint={adj}"),lin_difference(interior(xp.as_ref(),layout),expected.as_ref(),m),30.0);}
 						run.require(
 							&ctx,
 							"application guards",

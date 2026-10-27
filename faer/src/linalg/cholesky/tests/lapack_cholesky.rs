@@ -108,7 +108,7 @@ fn cholesky_case(
 	kind: usize,
 	layout: usize,
 	pivot: bool,
-	par: Par,
+	mut par: Par,
 ) {
 	let a = positive_fixture(n, kind);
 	let mut ap = guarded(n, n, layout);
@@ -119,24 +119,24 @@ fn cholesky_case(
 	let lp = Spec::new(llt::factor::LltParams { ..auto!(Scalar) });
 	let pp = Spec::new(pllt::factor::PivLltParams { ..auto!(Scalar) });
 	let mut mem = MemBuffer::new(if pivot {
-		pllt::factor::cholesky_in_place_scratch::<usize, Scalar>(n, par, pp)
+		pllt::factor::cholesky_in_place_scratch::<usize, Scalar>(n, par.shape(), pp)
 	} else {
-		llt::factor::cholesky_in_place_scratch::<Scalar>(n, par, lp)
+		llt::factor::cholesky_in_place_scratch::<Scalar>(n, par.shape(), lp)
 	});
 	let mut rm = MemBuffer::new(if pivot {
-		pllt::reconstruct::reconstruct_scratch::<usize, Scalar>(n, par)
+		pllt::reconstruct::reconstruct_scratch::<usize, Scalar>(n, par.shape())
 	} else {
-		llt::reconstruct::reconstruct_scratch::<Scalar>(n, par)
+		llt::reconstruct::reconstruct_scratch::<Scalar>(n, par.shape())
 	});
 	let mut sm = MemBuffer::new(if pivot {
-		pllt::solve::solve_in_place_scratch::<usize, Scalar>(n, 3, par)
+		pllt::solve::solve_in_place_scratch::<usize, Scalar>(n, 3, par.shape())
 	} else {
-		llt::solve::solve_in_place_scratch::<Scalar>(n, 3, par)
+		llt::solve::solve_in_place_scratch::<Scalar>(n, 3, par.shape())
 	});
 	let mut im = MemBuffer::new(if pivot {
-		pllt::inverse::inverse_scratch::<usize, Scalar>(n, par)
+		pllt::inverse::inverse_scratch::<usize, Scalar>(n, par.shape())
 	} else {
-		llt::inverse::inverse_scratch::<Scalar>(n, par)
+		llt::inverse::inverse_scratch::<Scalar>(n, par.shape())
 	});
 	for pass in 0..2 {
 		let input = scaled(a.as_ref(), if pass == 0 { 1.0 } else { 0.5 });
@@ -161,7 +161,7 @@ fn cholesky_case(
 					interior_mut(ap.as_mut(), layout),
 					&mut p,
 					&mut ip,
-					par,
+					par.reborrow(),
 					MemStack::new(&mut mem),
 					pp,
 				)
@@ -174,7 +174,7 @@ fn cholesky_case(
 				llt::factor::cholesky_in_place(
 					interior_mut(ap.as_mut(), layout),
 					default(),
-					par,
+					par.reborrow(),
 					MemStack::new(&mut mem),
 					lp,
 				)
@@ -218,14 +218,14 @@ fn cholesky_case(
 								interior_mut(out.as_mut(), layout),
 								l,
 								perm,
-								par,
+								par.reborrow(),
 								MemStack::new(&mut rm),
 							);
 						} else {
 							llt::reconstruct::reconstruct(
 								interior_mut(out.as_mut(), layout),
 								l,
-								par,
+								par.reborrow(),
 								MemStack::new(&mut rm),
 							);
 						}
@@ -256,7 +256,7 @@ fn cholesky_case(
 										perm,
 										conj,
 										interior_mut(rhs.as_mut(), layout),
-										par,
+										par.reborrow(),
 										MemStack::new(&mut sm),
 									);
 								} else {
@@ -264,7 +264,7 @@ fn cholesky_case(
 										l,
 										conj,
 										interior_mut(rhs.as_mut(), layout),
-										par,
+										par.reborrow(),
 										MemStack::new(&mut sm),
 									);
 								}
@@ -288,14 +288,14 @@ fn cholesky_case(
 									interior_mut(out.as_mut(), layout),
 									l,
 									perm,
-									par,
+									par.reborrow(),
 									MemStack::new(&mut im),
 								);
 							} else {
 								llt::inverse::inverse(
 									interior_mut(out.as_mut(), layout),
 									l,
-									par,
+									par.reborrow(),
 									MemStack::new(&mut im),
 								);
 							}

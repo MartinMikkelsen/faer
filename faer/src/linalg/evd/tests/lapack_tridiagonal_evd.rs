@@ -175,7 +175,7 @@ fn tridiagonal_evd_case(
 	kind: usize,
 	layout: usize,
 	threshold: usize,
-	par: Par,
+	mut par: Par,
 ) {
 	let (a, known) = tridiagonal_fixture(n, kind);
 	let mut dp = guarded(n, 1, layout);
@@ -190,13 +190,13 @@ fn tridiagonal_evd_case(
 		tridiagonal_self_adjoint_evd_scratch::<Scalar>(
 			n,
 			ComputeEigenvectors::Yes,
-			par,
+			par.shape(),
 			params,
 		)
 		.or(tridiagonal_self_adjoint_evd_scratch::<Scalar>(
 			n,
 			ComputeEigenvectors::No,
-			par,
+			par.shape(),
 			params,
 		)),
 	);
@@ -228,7 +228,7 @@ fn tridiagonal_evd_case(
 					} else {
 						None
 					},
-					par,
+					par.reborrow(),
 					MemStack::new(&mut mem),
 					params,
 				)

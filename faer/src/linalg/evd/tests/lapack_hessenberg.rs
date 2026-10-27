@@ -28,7 +28,7 @@ fn hessenberg_case(
 	run: &mut Run,
 	a: MatRef<'_, Scalar>,
 	layout: usize,
-	par: Par,
+	mut par: Par,
 ) {
 	let n = a.nrows();
 	let bs = 3;
@@ -38,7 +38,7 @@ fn hessenberg_case(
 	let params = Spec::new(hessenberg::HessenbergParams { ..auto!(Scalar) });
 	let mut mem = MemBuffer::new(hessenberg::hessenberg_in_place_scratch::<
 		Scalar,
-	>(n, bs, par, params));
+	>(n, bs, par.shape(), params));
 	let mut qmem=MemBuffer::new(householder::apply_block_householder_sequence_on_the_left_in_place_scratch::<Scalar>(n.saturating_sub(1),bs,n));
 	for pass in 0..2 {
 		let input = scaled(a, if pass == 0 { 1.0 } else { 0.5 });
@@ -49,7 +49,7 @@ fn hessenberg_case(
 			hessenberg::hessenberg_in_place(
 				interior_mut(parent.as_mut(), layout),
 				coeff.as_mut(),
-				par,
+				par.reborrow(),
 				MemStack::new(&mut mem),
 				params,
 			);
@@ -66,7 +66,7 @@ fn hessenberg_case(
 			}
 			if run.aux(&ctx, || {
 				if n > 1 {
-					householder::apply_block_householder_sequence_on_the_left_in_place_with_conj(packed.submatrix(1,0,n-1,n-1),coeff.as_ref(),Conj::No,q.rb_mut().subrows_mut(1,n-1),par,MemStack::new(&mut qmem));
+					householder::apply_block_householder_sequence_on_the_left_in_place_with_conj(packed.submatrix(1,0,n-1,n-1),coeff.as_ref(),Conj::No,q.rb_mut().subrows_mut(1,n-1),par.reborrow(),MemStack::new(&mut qmem));
 				}
 				Ok::<_, ()>(())
 			}) {

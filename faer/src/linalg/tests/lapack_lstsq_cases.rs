@@ -79,7 +79,7 @@ fn qr_lstsq_case(
 	kind: usize,
 	layout: usize,
 	pivot: bool,
-	par: Par,
+	mut par: Par,
 ) {
 	let q = unitary(m);
 	let sigma: Vec<_> = (0..n)
@@ -106,16 +106,16 @@ fn qr_lstsq_case(
 	let np = Spec::new(np::factor::QrParams { ..auto!(Scalar) });
 	let cp = Spec::new(cp::factor::ColPivQrParams { ..auto!(Scalar) });
 	let mut mem = MemBuffer::new(if pivot {
-		cp::factor::qr_in_place_scratch::<usize, Scalar>(m, n, 4, par, cp)
+		cp::factor::qr_in_place_scratch::<usize, Scalar>(m, n, 4, par.shape(), cp)
 	} else {
-		np::factor::qr_in_place_scratch::<Scalar>(m, n, 4, par, np)
+		np::factor::qr_in_place_scratch::<Scalar>(m, n, 4, par.shape(), np)
 	});
 	let mut sm = MemBuffer::new(if pivot {
 		cp::solve::solve_lstsq_in_place_scratch::<usize, Scalar>(
-			m, n, 4, 3, par,
+			m, n, 4, 3, par.shape(),
 		)
 	} else {
-		np::solve::solve_lstsq_in_place_scratch::<Scalar>(m, n, 4, 3, par)
+		np::solve::solve_lstsq_in_place_scratch::<Scalar>(m, n, 4, 3, par.shape())
 	});
 	for pass in 0..2 {
 		let input = scaled(a.as_ref(), if pass == 0 { 1.0 } else { 0.5 });
@@ -130,7 +130,7 @@ fn qr_lstsq_case(
 					coeff.as_mut(),
 					&mut p,
 					&mut ip,
-					par,
+					par.reborrow(),
 					MemStack::new(&mut mem),
 					cp,
 				);
@@ -138,7 +138,7 @@ fn qr_lstsq_case(
 				np::factor::qr_in_place(
 					interior_mut(ap.as_mut(), layout),
 					coeff.as_mut(),
-					par,
+					par.reborrow(),
 					MemStack::new(&mut mem),
 					np,
 				);
@@ -189,7 +189,7 @@ fn qr_lstsq_case(
 									perm,
 									c,
 									interior_mut(xp.as_mut(), layout),
-									par,
+									par.reborrow(),
 									MemStack::new(&mut sm),
 								);
 							} else {
@@ -199,7 +199,7 @@ fn qr_lstsq_case(
 									packed.subrows(0, n),
 									c,
 									interior_mut(xp.as_mut(), layout),
-									par,
+									par.reborrow(),
 									MemStack::new(&mut sm),
 								);
 							}
@@ -258,6 +258,7 @@ fn svd_lstsq_case(
 	n: usize,
 	kind: usize,
 	layout: usize,
+	mut par: Par,
 ) {
 	let a = if kind == 1 {
 		Mat::from_fn(m, n, |i, j| {
@@ -289,7 +290,10 @@ fn svd_lstsq_case(
 	let ctx = format!("SVD LS m={m} n={n} kind={kind} layout={layout}");
 	let mut svd = None;
 	if run.call(&ctx, || {
-		svd = Some(Svd::new_thin(interior(ap.as_ref(), layout))?);
+		svd = Some(Svd::new_thin(
+			interior(ap.as_ref(), layout),
+			par.reborrow(),
+		)?);
 		Ok::<_, crate::linalg::svd::SvdError>(())
 	}) {
 		let svd = svd.unwrap();
@@ -329,6 +333,7 @@ fn svd_lstsq_case(
 					svd.solve_lstsq_in_place_with_conj(
 						if conjugate { Conj::Yes } else { Conj::No },
 						interior_mut(xp.as_mut(), layout),
+						par.reborrow(),
 					);
 					Ok::<_, ()>(())
 				}) {
@@ -405,7 +410,7 @@ fn lapack_lstsq_cases() {
 	for (m, n) in [(3, 2), (5, 3), (10, 5)] {
 		for kind in [0, 1] {
 			for layout in 0..4 {
-				svd_lstsq_case(&mut run, m, n, kind, layout);
+				svd_lstsq_case(&mut run, m, n, kind, layout, Par::Seq);
 			}
 		}
 	}

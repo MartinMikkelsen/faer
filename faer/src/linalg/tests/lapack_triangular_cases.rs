@@ -17,7 +17,7 @@ fn triangular_case(
 	unit: bool,
 	scale: Real,
 	layout: usize,
-	par: Par,
+	mut par: Par,
 ) {
 	let actual = Mat::from_fn(n, n, |i, j| {
 		if i == j {
@@ -66,22 +66,22 @@ fn triangular_case(
 				match (upper, unit) {
 					(false, false) => {
 						ts::solve_lower_triangular_in_place_with_conj(
-							a, conj, x, par,
+							a, conj, x, par.reborrow(),
 						)
 					},
 					(false, true) => {
 						ts::solve_unit_lower_triangular_in_place_with_conj(
-							a, conj, x, par,
+							a, conj, x, par.reborrow(),
 						)
 					},
 					(true, false) => {
 						ts::solve_upper_triangular_in_place_with_conj(
-							a, conj, x, par,
+							a, conj, x, par.reborrow(),
 						)
 					},
 					(true, true) => {
 						ts::solve_unit_upper_triangular_in_place_with_conj(
-							a, conj, x, par,
+							a, conj, x, par.reborrow(),
 						)
 					},
 				}

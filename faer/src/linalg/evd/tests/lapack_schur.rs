@@ -117,7 +117,7 @@ fn schur_case(
 	h: MatRef<'_, Scalar>,
 	kind: usize,
 	layout: usize,
-	par: Par,
+	mut par: Par,
 ) {
 	let n = h.nrows();
 	let mut hp = guarded(n, n, layout);
@@ -128,7 +128,7 @@ fn schur_case(
 	let mut reference: [Option<Vec<(Real, Real)>>; 2] = [None, None];
 	for want_q in [true, false] {
 		let mut mem = MemBuffer::new(hessenberg_schur_scratch::<Scalar>(
-			n, want_q, par, params,
+			n, want_q, par.shape(), params,
 		));
 		for pass in 0..2 {
 			let input = scaled(h, if pass == 0 { 1.0 } else { 0.5 });
@@ -158,7 +158,7 @@ fn schur_case(
 					},
 					wr.as_mut(),
 					wi.as_mut(),
-					par,
+					par.reborrow(),
 					MemStack::new(&mut mem),
 					params,
 				)

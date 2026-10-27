@@ -329,7 +329,7 @@ fn run_case(
 			n,
 			left,
 			right,
-			Par::Seq,
+			ParShape::Seq,
 			params,
 		));
 		*attempted += 1;
@@ -492,7 +492,7 @@ fn run_bidiagonal_case(
 			n,
 			want_u,
 			want_v,
-			Par::Seq,
+			ParShape::Seq,
 			params,
 		));
 		*attempted += 1;

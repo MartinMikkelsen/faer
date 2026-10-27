@@ -140,7 +140,7 @@ fn lapack_indefinite_checkers_and_separate_d() {
 	let mut mem = MemBuffer::new(lblt::reconstruct::reconstruct_scratch::<
 		usize,
 		Scalar,
-	>(3, Par::Seq));
+	>(3, ParShape::Seq));
 	lblt::reconstruct::reconstruct(
 		out.as_mut(),
 		l.as_ref(),
@@ -162,7 +162,7 @@ fn indefinite_case(
 	kind: usize,
 	layout: usize,
 	pivot: bool,
-	par: Par,
+	mut par: Par,
 	prefill: bool,
 ) {
 	let a = indefinite_fixture(n, kind);
@@ -175,24 +175,24 @@ fn indefinite_case(
 	let lp = Spec::new(ldlt::factor::LdltParams { ..auto!(Scalar) });
 	let bp = Spec::new(lblt::factor::LbltParams { ..auto!(Scalar) });
 	let mut mem = MemBuffer::new(if pivot {
-		lblt::factor::cholesky_in_place_scratch::<usize, Scalar>(n, par, bp)
+		lblt::factor::cholesky_in_place_scratch::<usize, Scalar>(n, par.shape(), bp)
 	} else {
-		ldlt::factor::cholesky_in_place_scratch::<Scalar>(n, par, lp)
+		ldlt::factor::cholesky_in_place_scratch::<Scalar>(n, par.shape(), lp)
 	});
 	let mut rm = MemBuffer::new(if pivot {
-		lblt::reconstruct::reconstruct_scratch::<usize, Scalar>(n, par)
+		lblt::reconstruct::reconstruct_scratch::<usize, Scalar>(n, par.shape())
 	} else {
-		ldlt::reconstruct::reconstruct_scratch::<Scalar>(n, par)
+		ldlt::reconstruct::reconstruct_scratch::<Scalar>(n, par.shape())
 	});
 	let mut sm = MemBuffer::new(if pivot {
-		lblt::solve::solve_in_place_scratch::<usize, Scalar>(n, 3, par)
+		lblt::solve::solve_in_place_scratch::<usize, Scalar>(n, 3, par.shape())
 	} else {
-		ldlt::solve::solve_in_place_scratch::<Scalar>(n, 3, par)
+		ldlt::solve::solve_in_place_scratch::<Scalar>(n, 3, par.shape())
 	});
 	let mut im = MemBuffer::new(if pivot {
-		lblt::inverse::inverse_scratch::<usize, Scalar>(n, par)
+		lblt::inverse::inverse_scratch::<usize, Scalar>(n, par.shape())
 	} else {
-		ldlt::inverse::inverse_scratch::<Scalar>(n, par)
+		ldlt::inverse::inverse_scratch::<Scalar>(n, par.shape())
 	});
 	for pass in 0..2 {
 		let input = scaled(a.as_ref(), if pass == 0 { 1.0 } else { 0.5 });
@@ -218,7 +218,7 @@ fn indefinite_case(
 					sub.as_mut().as_diagonal_mut(),
 					&mut p,
 					&mut ip,
-					par,
+					par.reborrow(),
 					MemStack::new(&mut mem),
 					bp,
 				);
@@ -232,7 +232,7 @@ fn indefinite_case(
 				accepted = ldlt::factor::cholesky_in_place(
 					interior_mut(ap.as_mut(), layout),
 					default(),
-					par,
+					par.reborrow(),
 					MemStack::new(&mut mem),
 					lp,
 				)
@@ -296,7 +296,7 @@ fn indefinite_case(
 									d.as_ref().as_diagonal(),
 									sub.as_ref().as_diagonal(),
 									perm,
-									par,
+									par.reborrow(),
 									MemStack::new(&mut rm),
 								);
 							} else {
@@ -304,7 +304,7 @@ fn indefinite_case(
 									interior_mut(out.as_mut(), layout),
 									l,
 									d.as_ref().as_diagonal(),
-									par,
+									par.reborrow(),
 									MemStack::new(&mut rm),
 								);
 							}
@@ -346,7 +346,7 @@ fn indefinite_case(
 											conj,
 											perm,
 											interior_mut(rhs.as_mut(), layout),
-											par,
+											par.reborrow(),
 											MemStack::new(&mut sm),
 										);
 									} else {
@@ -355,7 +355,7 @@ fn indefinite_case(
 											d.as_ref().as_diagonal(),
 											conj,
 											interior_mut(rhs.as_mut(), layout),
-											par,
+											par.reborrow(),
 											MemStack::new(&mut sm),
 										);
 									}
@@ -381,7 +381,7 @@ fn indefinite_case(
 										d.as_ref().as_diagonal(),
 										sub.as_ref().as_diagonal(),
 										perm,
-										par,
+										par.reborrow(),
 										MemStack::new(&mut im),
 									);
 								} else {
@@ -389,7 +389,7 @@ fn indefinite_case(
 										interior_mut(out.as_mut(), layout),
 										l,
 										d.as_ref().as_diagonal(),
-										par,
+										par.reborrow(),
 										MemStack::new(&mut im),
 									);
 								}

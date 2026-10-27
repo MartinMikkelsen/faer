@@ -155,7 +155,7 @@ fn full_evd_case(
 	run: &mut Run,
 	a: MatRef<'_, Scalar>,
 	layout: usize,
-	par: Par,
+	mut par: Par,
 	threshold: usize,
 	kind: usize,
 ) {
@@ -186,7 +186,7 @@ fn full_evd_case(
 			} else {
 				ComputeEigenvectors::No
 			},
-			par,
+			par.shape(),
 			p,
 		));
 		for pass in 0..2 {
@@ -212,7 +212,7 @@ fn full_evd_case(
 					} else {
 						None
 					},
-					par,
+					par.reborrow(),
 					MemStack::new(&mut mem),
 					p,
 				)

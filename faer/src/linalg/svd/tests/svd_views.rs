@@ -53,7 +53,7 @@ fn run_view_case(
 	a: MatRef<'_, Scalar>,
 	expected: &[Real],
 	threshold: usize,
-	par: Par,
+	mut par: Par,
 	mode: (ComputeSvdVectors, ComputeSvdVectors),
 	row_major: bool,
 ) {
@@ -86,7 +86,7 @@ fn run_view_case(
 		..auto!(Scalar)
 	});
 	let mut memory =
-		MemBuffer::new(svd_scratch::<Scalar>(m, n, left, right, par, params));
+		MemBuffer::new(svd_scratch::<Scalar>(m, n, left, right, par.shape(), params));
 	let before = Mat::from_fn(m, n, |i, j| a[(i, j)]);
 	let next = Mat::from_fn(m, n, |i, j| -0.5 * a[(i, j)]);
 	let next_spectrum: Vec<_> = expected.iter().map(|s| 0.5 * s).collect();
@@ -110,7 +110,7 @@ fn run_view_case(
 				s.as_diagonal_mut(),
 				if left == No { None } else { Some(u) },
 				if right == No { None } else { Some(v) },
-				par,
+				par.reborrow(),
 				MemStack::new(&mut memory),
 				params,
 			)

@@ -13,7 +13,7 @@ fn dense_self_adjoint_case(
 	kind: usize,
 	layout: usize,
 	threshold: usize,
-	par: Par,
+	mut par: Par,
 ) {
 	let (a, mut known) = if kind == 8 {
 		assert_eq!(n, 2);
@@ -56,19 +56,19 @@ fn dense_self_adjoint_case(
 		..auto!(Scalar)
 	});
 	let mut mem =
-		MemBuffer::new(tridiag::tridiag_in_place_scratch::<Scalar>(n, par, tp));
+		MemBuffer::new(tridiag::tridiag_in_place_scratch::<Scalar>(n, par.shape(), tp));
 	let mut qm=MemBuffer::new(householder::apply_block_householder_sequence_on_the_left_in_place_scratch::<Scalar>(n.saturating_sub(1),bs,n));
 	let mut em = MemBuffer::new(
 		self_adjoint_evd_scratch::<Scalar>(
 			n,
 			ComputeEigenvectors::Yes,
-			par,
+			par.shape(),
 			ep,
 		)
 		.or(self_adjoint_evd_scratch::<Scalar>(
 			n,
 			ComputeEigenvectors::No,
-			par,
+			par.shape(),
 			ep,
 		)),
 	);
@@ -90,7 +90,7 @@ fn dense_self_adjoint_case(
 			tridiag::tridiag_in_place(
 				interior_mut(ap.as_mut(), layout),
 				coeff.as_mut(),
-				par,
+				par.reborrow(),
 				MemStack::new(&mut mem),
 				tp,
 			);
@@ -113,7 +113,7 @@ fn dense_self_adjoint_case(
 			}
 			if run.aux(&ctx, || {
 				if n > 1 {
-					householder::apply_block_householder_sequence_on_the_left_in_place_with_conj(packed.submatrix(1,0,n-1,n-1),coeff.as_ref(),Conj::No,q.rb_mut().subrows_mut(1,n-1),par,MemStack::new(&mut qm));
+					householder::apply_block_householder_sequence_on_the_left_in_place_with_conj(packed.submatrix(1,0,n-1,n-1),coeff.as_ref(),Conj::No,q.rb_mut().subrows_mut(1,n-1),par.reborrow(),MemStack::new(&mut qm));
 				}
 				Ok::<_, ()>(())
 			}) {
@@ -154,7 +154,7 @@ fn dense_self_adjoint_case(
 					} else {
 						None
 					},
-					par,
+					par.reborrow(),
 					MemStack::new(&mut em),
 					ep,
 				)
