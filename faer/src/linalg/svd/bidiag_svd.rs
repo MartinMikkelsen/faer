@@ -343,10 +343,10 @@ pub(super) fn qr_algorithm<T: RealField>(
 			while start >= 1 && !(subdiag[start - 1] == zero()) {
 				start -= 1;
 			}
-			let mut found_zero_diag = false;
+			let mut deflated = false;
 			for i in start..end - 1 {
 				if diag[i].abs() <= *eps {
-					found_zero_diag = true;
+					deflated = true;
 					let mut val = subdiag[i].copy();
 					subdiag[i] = zero();
 					for j in i + 1..end {
@@ -367,7 +367,60 @@ pub(super) fn qr_algorithm<T: RealField>(
 					}
 				}
 			}
-			if found_zero_diag {
+			if !deflated && end - start == 2 {
+				let i = start;
+				let j = i + 1;
+				let ref f = diag[i].copy();
+				let ref g = subdiag[i].copy();
+				let ref h = diag[j].copy();
+				// Symmetrize the block, then diagonalize it with a Jacobi rotation.
+				let polar = JacobiRotation::make_givens(f + h, g.copy());
+				let (s00, s01, _, s11) = polar.apply_on_the_left_2x2(
+					f.copy(),
+					zero(),
+					g.copy(),
+					h.copy(),
+				);
+				let ref gap = (&s11 - &s00).mul_pow2(from_f64::<T>(0.5));
+				let ref t = if s01 == zero() {
+					zero()
+				} else {
+					let denom = gap.abs() + gap.hypot(s01.copy());
+					if *gap < zero() {
+						&s01 / denom
+					} else {
+						-&s01 / denom
+					}
+				};
+				let ref c = t.hypot(one::<T>()).recip();
+				let right = JacobiRotation {
+					c: c.copy(),
+					s: t * c,
+				};
+				let left = JacobiRotation {
+					c: &polar.c * &right.c + &polar.s * &right.s,
+					s: &polar.c * &right.s - &polar.s * &right.c,
+				};
+				let mut d0 = &s00 + t * &s01;
+				let mut d1 = &s11 - t * &s01;
+				// Recover the smaller value from det(B), avoiding cancellation.
+				if d0.abs() >= d1.abs() {
+					d1 = (f / &d0) * h;
+				} else {
+					d0 = (f / &d1) * h;
+				}
+				diag[i] = d0;
+				diag[j] = d1;
+				subdiag[i] = zero();
+				if let Some(u) = u.rb_mut() {
+					left.apply_on_the_right_in_place(u.two_cols_mut(i, j));
+				}
+				if let Some(v) = v.rb_mut() {
+					right.apply_on_the_right_in_place(v.two_cols_mut(i, j));
+				}
+				deflated = true;
+			}
+			if deflated {
 				if iter + 1 == max_iters {
 					for x in diag.rb_mut().iter_mut() {
 						*x *= max;
@@ -381,11 +434,7 @@ pub(super) fn qr_algorithm<T: RealField>(
 			}
 			let end2 = end - 2;
 			let end1 = end - 1;
-			let t00 = if end - start == 2 {
-				diag[end2].abs2()
-			} else {
-				diag[end2].abs2() + subdiag[end - 3].abs2()
-			};
+			let t00 = diag[end2].abs2() + subdiag[end - 3].abs2();
 			let t11 = diag[end1].abs2() + subdiag[end2].abs2();
 			let t01 = &diag[end2] * &subdiag[end2];
 			let ref t01_2 = t01.abs2();
@@ -1659,6 +1708,125 @@ mod tests {
 				assert!((distance / tiny - 1.0).abs() < 1e-14);
 			}
 		}
+	}
+	#[test]
+	fn test_issue81_qr_near_repeated_pair() {
+		fn check<T: RealField>(f: T, g: T, h: T, expected: [f64; 3]) {
+			for scale in [1.0, 2.0, 1e-8, 1e8] {
+				let ref scale = from_f64::<T>(scale);
+				for (want_u, want_v) in
+					[(true, true), (true, false), (false, true), (false, false)]
+				{
+					let mut d = Col::<T>::from_fn(3, |i| {
+						(match i {
+							0 => one(),
+							1 => f.copy(),
+							_ => h.copy(),
+						}) * scale
+					});
+					let mut e = Col::<T>::from_fn(3, |i| {
+						if i == 1 { &g * scale } else { zero() }
+					});
+					let original = bidiag_to_mat(
+						d.as_ref().try_as_col_major().unwrap(),
+						e.as_ref().try_as_col_major().unwrap(),
+					);
+					let mut u = Mat::<T>::identity(3, 3);
+					let mut v = Mat::<T>::identity(3, 3);
+					qr_algorithm(
+						d.as_mut().try_as_col_major_mut().unwrap(),
+						e.as_mut().try_as_col_major_mut().unwrap(),
+						if want_u { Some(u.as_mut()) } else { None },
+						if want_v { Some(v.as_mut()) } else { None },
+					)
+					.unwrap();
+					let tol = from_f64::<T>(32.0) * eps::<T>();
+					for i in 0..3 {
+						let expected = from_f64::<T>(expected[i]);
+						assert!(
+							((&d[i] / scale) - &expected).abs()
+								<= &tol * expected
+						);
+						assert_eq!(e[i], zero::<T>());
+					}
+					if want_u {
+						assert!(
+							(u.adjoint() * &u - Mat::<T>::identity(3, 3))
+								.norm_max() <= tol
+						);
+					}
+					if want_v {
+						assert!(
+							(v.adjoint() * &v - Mat::<T>::identity(3, 3))
+								.norm_max() <= tol
+						);
+					}
+					if want_u && want_v {
+						let back = &u * d.as_diagonal() * v.adjoint();
+						assert!(
+							(&back - &original).norm_max()
+								/ original.norm_max() <= tol
+						);
+					}
+				}
+			}
+		}
+		let f = 0.02874731110238686_f64;
+		let h = 0.028747311102386864_f64;
+		check(f, 2.0_f64.powi(-57), h, [1.0, h, f]);
+		let f = f as f32;
+		let h = f32::from_bits(f.to_bits() + 1);
+		check(f, 2.0_f32.powi(-28), h, [1.0, h as f64, f as f64]);
+		check(
+			1.0_f64,
+			1.0,
+			1.0,
+			[1.618033988749895, 1.0, 0.6180339887498948],
+		);
+		check(
+			1.0_f32,
+			1.0,
+			-1.0,
+			[1.618033988749895, 1.0, 0.6180339887498948],
+		);
+		check(
+			1.0_f64,
+			-1.0,
+			1e-200,
+			[
+				core::f64::consts::SQRT_2,
+				1.0,
+				1e-200 / core::f64::consts::SQRT_2,
+			],
+		);
+		check(
+			-1.0_f32,
+			1.0,
+			1e-30,
+			[
+				core::f64::consts::SQRT_2,
+				1.0,
+				1e-30 / core::f64::consts::SQRT_2,
+			],
+		);
+		// Multiplying f*h first would lose precision in this subnormal value.
+		let mut d = Col::from_fn(3, |i| match i {
+			0 => 1.0,
+			1 => 1e-15,
+			_ => f64::MIN_POSITIVE,
+		});
+		let mut e = Col::from_fn(3, |i| if i == 1 { 1e-15 } else { 0.0 });
+		qr_algorithm(
+			d.as_mut().try_as_col_major_mut().unwrap(),
+			e.as_mut().try_as_col_major_mut().unwrap(),
+			None,
+			None,
+		)
+		.unwrap();
+		assert!(
+			(d[2] - f64::MIN_POSITIVE / core::f64::consts::SQRT_2).abs()
+				<= 64.0 * f64::EPSILON * f64::MIN_POSITIVE
+		);
 	}
 	#[test]
 	fn test_qr_algorithm() {
