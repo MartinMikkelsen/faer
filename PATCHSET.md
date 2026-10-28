@@ -29,7 +29,7 @@ gate has changed and two kinds of adoption are now in the ledger.
   `KEEP` rows. They predate the comparator and are kept, but no page or claim may cite them as a
   gated result, and re-measuring them as campaign pairs is a separate decision (faer-benchmark#20).
 * **Correctness only** (tests, no timing): the SVD zero-subproblem boundary fix, the SVD secular-root stagnation fix, the EVD normalization,
-  the unpivoted QR column skip, the empty block Householder apply, the `join_raw` width split, the SVD subnormal-deflation ordering fix,
+  the unpivoted QR column skip, the empty block Householder apply, the `join_raw` width split, the SVD subnormal-deflation ordering fix, the SVD merge boundary rotation,
   and the native indexed/diagonal GEMM extents fix. A performance claim for the last one would need a
   declared cell that executes it, and there is none.
 
