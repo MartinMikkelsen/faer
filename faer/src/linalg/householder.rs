@@ -260,7 +260,7 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 					partials.par_chunks_mut(n * n).enumerate(),
 					|(index, part)| {
 						#[cfg(test)]
-						region_probe::note();
+						region_probe::note(source.as_ptr() as usize);
 						let lo = index * chunk;
 						let hi = rows.min(lo + chunk);
 						let mut part =
@@ -507,7 +507,6 @@ fn apply_block_householder_on_the_left_in_place_generic<
 				M.unbound(),
 				N.unbound(),
 				matrix.ncols().unbound(),
-				2,
 			),
 			1,
 		) {
@@ -675,7 +674,6 @@ fn apply_block_householder_on_the_left_in_place_generic<
 				M.unbound(),
 				N.unbound(),
 				K.unbound(),
-				2,
 			);
 			#[cfg(feature = "par-trace")]
 			{
@@ -1030,13 +1028,27 @@ pub fn apply_block_householder_sequence_transpose_on_the_right_in_place_with_con
 /// `Some` exactly on a group worker, and the caller of `spindle::with_lock` is not one.
 #[cfg(all(test, feature = "rayon"))]
 mod region_probe {
-	use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
-	/// armed by the dispatch test alone, so the regions of the other tests do not count here
-	pub(super) static ARMED: AtomicBool = AtomicBool::new(false);
-	/// the number of chunks a group worker ran
+	use core::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+	/// the address range of the matrix one test's region reduces over, or `(0, 0)` when disarmed.
+	/// A time window alone cannot say whose region a chunk came from: another test's region can run
+	/// inside it. The address of the data can, so the test arms its own matrix and nothing else
+	/// counts.
+	pub(super) static ARMED_LO: AtomicUsize = AtomicUsize::new(0);
+	pub(super) static ARMED_HI: AtomicUsize = AtomicUsize::new(0);
+	/// the number of chunks of that matrix a group worker ran
 	pub(super) static ON_WORKER: AtomicUsize = AtomicUsize::new(0);
-	pub(super) fn note() {
-		if !ARMED.load(Relaxed) {
+	pub(super) fn arm(lo: usize, hi: usize) {
+		ON_WORKER.store(0, Relaxed);
+		ARMED_LO.store(lo, Relaxed);
+		ARMED_HI.store(hi, Relaxed);
+	}
+	pub(super) fn disarm() {
+		ARMED_LO.store(0, Relaxed);
+		ARMED_HI.store(0, Relaxed);
+	}
+	pub(super) fn note(ptr: usize) {
+		let (lo, hi) = (ARMED_LO.load(Relaxed), ARMED_HI.load(Relaxed));
+		if lo == 0 || ptr < lo || ptr >= hi {
 			return;
 		}
 		if spindle::current_thread_index().is_some() {
@@ -1170,7 +1182,8 @@ mod tests {
 		}
 	}
 
-	/// The same for a panel of reflectors: `b > 1` gives the row split both kinds of basis -- the
+	/// The same for a panel of reflectors: `b > 1` splits the reduction at the unit-triangular head
+	/// and gives the products both kinds of basis -- the
 	/// unit-triangular top and the rectangular bottom -- and is the shape a trailing update takes.
 	fn check_panel(m: usize, b: usize, k: usize) {
 		check_panel_with(m, b, k, 4);
@@ -1323,9 +1336,10 @@ mod tests {
 		});
 		let mut factor = Mat::<f64>::from_fn(n, n, |_, _| 0.25);
 		let probe = &super::region_probe::ON_WORKER;
-		probe.store(0, core::sync::atomic::Ordering::Relaxed);
-		super::region_probe::ARMED
-			.store(true, core::sync::atomic::Ordering::Relaxed);
+		super::region_probe::arm(
+			basis.as_ptr() as usize,
+			basis.as_ptr() as usize + m * n * core::mem::size_of::<f64>(),
+		);
 		pool.install(|| {
 			spindle::with_lock(threads, || {
 				upgrade_householder_factor(
@@ -1337,8 +1351,7 @@ mod tests {
 				)
 			})
 		});
-		super::region_probe::ARMED
-			.store(false, core::sync::atomic::Ordering::Relaxed);
+		super::region_probe::disarm();
 		let chunks = probe.load(core::sync::atomic::Ordering::Relaxed);
 		assert!(
 			chunks > 0,
