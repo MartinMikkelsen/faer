@@ -110,32 +110,6 @@ pub mod thread {
 		}
 	}
 
-	/// the raw Rayon `iter.for_each(f)` of the regions that never used spindle, with `Team`
-	/// consuming the team of a `Team` (items dealt in static blocks, one part per member)
-	#[cfg(feature = "rayon")]
-	pub fn par_for_each<
-		T: Send,
-		I: rayon::iter::IntoParallelIterator<Item = T>,
-	>(
-		par: Par,
-		iter: I,
-		f: impl Send + Sync + Fn(T),
-	) where
-		I::Iter: rayon::iter::IndexedParallelIterator,
-	{
-		match par {
-			#[cfg(feature = "threadteam")]
-			Par::Team(team) => {
-				let width = team.size().get();
-				super::team::for_each(team, width, iter, f)
-			},
-			_ => {
-				use rayon::iter::ParallelIterator;
-				iter.into_par_iter().for_each(f)
-			},
-		}
-	}
-
 	/// `spindle::for_each` on the backend of `par`: the spindle group for `Rayon`, the team
 	/// itself for `Team`, the caller for `Seq`
 	#[cfg(feature = "rayon")]

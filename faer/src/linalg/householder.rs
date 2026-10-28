@@ -254,8 +254,9 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 				let n_chunks = rows.div_ceil(chunk);
 				let mut partials = vec![T::zero(); n_chunks * n * n];
 				let source = basis_bot;
-				crate::utils::thread::par_for_each(
+				crate::utils::thread::for_each(
 					par,
+					n_chunks,
 					partials.par_chunks_mut(n * n).enumerate(),
 					|(index, part)| {
 						let lo = index * chunk;
@@ -761,10 +762,13 @@ fn apply_block_householder_on_the_left_in_place_generic<
 				let top_basis = essentials_top.as_dyn_rows().as_dyn_cols();
 				let bot_basis = essentials_bot.as_dyn_rows().as_dyn_cols();
 				let conj = Conj::Yes.compose(conj_lhs);
-				crate::utils::thread::par_for_each(
+				crate::utils::thread::for_each(
 					par.reborrow(),
+					n_chunks,
 					partials.par_chunks_mut(n * k).enumerate(),
 					|(index, part)| {
+						#[cfg(test)]
+						row_split_probe::note();
 						let lo = index * chunk;
 						let hi = rows.min(lo + chunk);
 						let mut part =
@@ -1144,9 +1148,31 @@ pub fn apply_block_householder_sequence_transpose_on_the_right_in_place_with_con
 	)
 }
 
+/// Test-only observation of the block apply's row-split region: whether a worker of the caller's
+/// held group, rather than the caller alone, ran part of it. `spindle::current_thread_index` is
+/// `Some` exactly on a group worker, and the caller of `spindle::with_lock` is not one.
+#[cfg(all(test, feature = "rayon"))]
+mod row_split_probe {
+	use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
+	/// armed by the dispatch test alone, so the row splits of the other tests do not count here
+	pub(super) static ARMED: AtomicBool = AtomicBool::new(false);
+	/// the number of chunks a group worker ran
+	pub(super) static ON_WORKER: AtomicUsize = AtomicUsize::new(0);
+	pub(super) fn note() {
+		if !ARMED.load(Relaxed) {
+			return;
+		}
+		if spindle::current_thread_index().is_some() {
+			ON_WORKER.fetch_add(1, Relaxed);
+		}
+	}
+}
+
 #[cfg(all(test, feature = "rayon"))]
 mod tests {
 	use super::{
+		apply_block_householder_on_the_left_in_place_scratch,
+		apply_block_householder_on_the_left_in_place_with_conj,
 		apply_block_householder_transpose_on_the_left_in_place_scratch,
 		apply_block_householder_transpose_on_the_left_in_place_with_conj,
 		make_householder_in_place, upgrade_householder_factor,
@@ -1397,6 +1423,58 @@ mod tests {
 		// (`n_tasks == 8`), which is the shape a blocked QR's trailing update takes.
 		check_panel_with(256, 32, 224, 8);
 		check_panel_with(512, 48, 464, 8);
+	}
+
+	/// The row split is a region, and a region of this crate runs on the worker group the caller
+	/// holds (`spindle::with_lock`, the way a caller with a thread budget calls faer). A region
+	/// dispatched through a plain Rayon iterator instead finds every pool thread inside that group
+	/// and runs on the caller alone -- the row split did, and `4096x256` f64 took 14.6 ms at eight
+	/// threads against 5.9 through the group. This watches who runs a chunk, not a clock: it fails
+	/// however fast the caller-alone path happens to be.
+	#[test]
+	fn row_split_reaches_the_held_group() {
+		let threads = 4;
+		let pool = rayon::ThreadPoolBuilder::new()
+			.num_threads(threads)
+			.build()
+			.unwrap();
+		let m = 4096;
+		let (n, k) = (16, 240);
+		let basis = Mat::<f64>::from_fn(m, n, |i, j| {
+			((i * 31 + j * 17) % 23) as f64 / 23.0 - 0.5
+		});
+		let factor = Mat::<f64>::from_fn(n, n, |i, j| {
+			if i == j { 2.0 } else { 0.25 }
+		});
+		let mut target = Mat::<f64>::from_fn(m, k, |i, j| {
+			((i * 11 + j * 5) % 29) as f64 / 29.0 - 0.5
+		});
+		let mut mem = MemBuffer::new(
+			apply_block_householder_on_the_left_in_place_scratch::<f64>(m, n, k),
+		);
+		let probe = &super::row_split_probe::ON_WORKER;
+		probe.store(0, core::sync::atomic::Ordering::Relaxed);
+		super::row_split_probe::ARMED
+			.store(true, core::sync::atomic::Ordering::Relaxed);
+		pool.install(|| {
+			spindle::with_lock(threads, || {
+				apply_block_householder_on_the_left_in_place_with_conj(
+					basis.as_ref(),
+					factor.as_ref(),
+					Conj::No,
+					target.as_mut(),
+					Par::rayon(threads),
+					MemStack::new(&mut mem),
+				)
+			})
+		});
+		super::row_split_probe::ARMED
+			.store(false, core::sync::atomic::Ordering::Relaxed);
+		let chunks = probe.load(core::sync::atomic::Ordering::Relaxed);
+		assert!(
+			chunks > 0,
+			"no worker of the held group of {threads} ran a row-split chunk: the region ran on the caller alone"
+		);
 	}
 
 	/// The row split slices the reduction's rows, but the top `n` rows are applied through one
