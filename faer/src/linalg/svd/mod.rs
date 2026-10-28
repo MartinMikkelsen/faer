@@ -937,6 +937,7 @@ pub fn pseudoinverse_from_svd_with_tolerance<T: ComplexField>(
 }
 #[cfg(test)]
 mod tests {
+	mod qr_stall;
 	// Instantiate the same cases and checks at each native precision.
 	mod lapack_svd_f64 {
 		type Real = f64;
