@@ -1008,17 +1008,49 @@ pub(super) fn divide_and_conquer_scratch<T: ComplexField>(
 ) -> StackReq {
 	let qr_fallback_threshold = Ord::max(qr_fallback_threshold, 4);
 	if n < qr_fallback_threshold {
-		temp_mat_scratch::<T>(n + 1, n + 1).array(2)
+		temp_mat_scratch::<T>(n + 1, n + 1)
 	} else {
-		let _ = par;
-		let perm = StackReq::new::<usize>(n).array(8);
+		let perm = StackReq::new::<usize>(n);
 		let jacobi_coeffs = StackReq::new::<JacobiRotation<T>>(n);
 		let um = temp_mat_scratch::<T>(n + 1, n + 1);
 		let vm = temp_mat_scratch::<T>(n, if compute_v { n } else { 0 });
 		let combined_u =
 			temp_mat_scratch::<T>(if compute_u { n + 1 } else { 2 }, n + 1);
 		let combined_v = vm;
-		StackReq::all_of(&[perm, jacobi_coeffs, um, vm, combined_u, combined_v])
+		let compute_m = StackReq::all_of(&[
+			perm,
+			temp_mat_scratch::<T>(n, 1).array(6),
+			perm.array(2),
+		]);
+		let merge = StackReq::all_of(&[
+			perm,
+			jacobi_coeffs,
+			perm,
+			StackReq::any_of(&[
+				perm.array(3),
+				StackReq::all_of(&[
+					um,
+					vm,
+					StackReq::any_of(&[
+						compute_m,
+						StackReq::all_of(&[combined_u, combined_v]),
+					]),
+				]),
+			]),
+		]);
+		let k = n / 2;
+		let rem = n - k - 1;
+		let child = divide_and_conquer_scratch::<T>(
+			Ord::max(k, rem),
+			qr_fallback_threshold,
+			compute_u,
+			compute_v,
+			par,
+		);
+		// Recursion halves the bytes without aligning the second child.
+		let recurse =
+			StackReq::new::<u8>(child.unaligned_bytes_required()).array(2);
+		StackReq::any_of(&[merge, recurse])
 	}
 }
 pub(super) fn divide_and_conquer<T: RealField>(
@@ -1702,6 +1734,146 @@ mod tests {
 					* (n as f64).sqrt();
 			let reconstructed = &u * d.as_diagonal() * v.adjoint();
 			assert!(reconstructed ~ bidiag_to_mat(diag, subdiag));
+		}
+	}
+	#[test]
+	fn test_divide_and_conquer_exact_scratch() {
+		for n in 1..=70 {
+			for threshold in [4, 5, 8] {
+				for u_mode in 0..3 {
+					for want_v in [false, true] {
+						check_divide_and_conquer_scratch::<f32>(
+							n,
+							threshold,
+							u_mode,
+							want_v,
+							Par::Seq,
+						);
+						check_divide_and_conquer_scratch::<f64>(
+							n,
+							threshold,
+							u_mode,
+							want_v,
+							Par::Seq,
+						);
+					}
+				}
+			}
+		}
+	}
+	#[test]
+	#[cfg(feature = "rayon")]
+	fn test_divide_and_conquer_exact_scratch_rayon() {
+		let pool = rayon::ThreadPoolBuilder::new()
+			.num_threads(2)
+			.build()
+			.unwrap();
+		pool.install(|| {
+			for n in [4, 5, 7, 8, 9, 15, 16, 17, 63, 64, 65] {
+				for threshold in [4, 5, 8] {
+					check_divide_and_conquer_scratch::<f32>(
+						n,
+						threshold,
+						0,
+						true,
+						Par::rayon(2),
+					);
+					check_divide_and_conquer_scratch::<f64>(
+						n,
+						threshold,
+						0,
+						true,
+						Par::rayon(2),
+					);
+				}
+			}
+		});
+	}
+	fn check_divide_and_conquer_scratch<T: RealField>(
+		n: usize,
+		threshold: usize,
+		u_mode: usize,
+		want_v: bool,
+		mut par: Par,
+	) {
+		for rank_one in [false, true] {
+			for unaligned in [false, true] {
+				let mut d = Col::<T>::from_fn(n, |i| {
+					if rank_one {
+						if i == 0 { one() } else { zero() }
+					} else {
+						from_f64(2.0 + (i % 11) as f64 / 11.0)
+					}
+				});
+				let mut e = Col::<T>::from_fn(n, |i| {
+					if rank_one {
+						zero()
+					} else {
+						from_f64(0.25 + (i % 7) as f64 / 16.0)
+					}
+				});
+				let norm = (d.squared_norm_l2() + e.squared_norm_l2()).sqrt();
+				let u_rows = if u_mode == 0 { n + 1 } else { 2 };
+				let mut u = Mat::<T>::zeros(u_rows, n + 1);
+				let mut v = Mat::<T>::zeros(n, if want_v { n } else { 0 });
+				let req = divide_and_conquer_scratch::<T>(
+					n,
+					threshold,
+					u_mode == 0,
+					want_v,
+					par.shape(),
+				);
+				let mut mem = MemBuffer::new(StackReq::new_aligned::<u8>(
+					req.unaligned_bytes_required() + 1,
+					req.align_bytes(),
+				));
+				let (offset, len) = if unaligned {
+					(1, req.unaligned_bytes_required())
+				} else {
+					(0, req.size_bytes())
+				};
+				assert_eq!(mem[offset..].as_ptr() as usize % 2, offset);
+				let stack = MemStack::new(&mut mem[offset..][..len]);
+				assert_eq!(stack.len_bytes(), len);
+				let u_arg = match u_mode {
+					0 => MatU::Full(u.as_mut()),
+					1 => MatU::TwoRows(u.as_mut()),
+					_ => MatU::TwoRowsStorage(u.as_mut()),
+				};
+				divide_and_conquer(
+					d.as_mut().try_as_col_major_mut().unwrap(),
+					e.as_mut().try_as_col_major_mut().unwrap(),
+					u_arg,
+					if want_v { Some(v.as_mut()) } else { None },
+					par.reborrow(),
+					stack,
+					threshold,
+				)
+				.unwrap();
+				assert!(
+					d.is_all_finite() && u.is_all_finite() && v.is_all_finite()
+				);
+				let tol = from_f64::<T>(128.0 * n as f64) * eps::<T>();
+				assert!((d.norm_l2() - &norm).abs() <= &tol * norm);
+				if rank_one {
+					let expected = Col::<T>::from_fn(n, |i| {
+						if i == 0 { one() } else { zero() }
+					});
+					assert!((&d - &expected).norm_max() <= tol);
+				}
+				if u_mode != 2 {
+					assert!(
+						(&u * u.adjoint() - Mat::<T>::identity(u_rows, u_rows))
+							.norm_max() <= tol
+					);
+				}
+				if want_v {
+					assert!(
+						(v.adjoint() * &v - Mat::<T>::identity(n, n))
+							.norm_max() <= tol
+					);
+				}
+			}
 		}
 	}
 	#[test]
