@@ -259,6 +259,8 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 					n_chunks,
 					partials.par_chunks_mut(n * n).enumerate(),
 					|(index, part)| {
+						#[cfg(test)]
+						region_probe::note();
 						let lo = index * chunk;
 						let hi = rows.min(lo + chunk);
 						let mut part =
@@ -487,13 +489,12 @@ fn apply_block_householder_on_the_left_in_place_generic<
 	let N = householder_basis.ncols();
 	// An empty block Householder transformation is the identity, so there is nothing to apply. A
 	// column block that adds no rank reaches this with `N == 0`: the QR factor keeps only the
-	// nonzero columns of each block, and a block that is exactly zero keeps none. Both branches
-	// below size work by `N` -- the row split's chunk is `N * K`, which rayon rejects at zero.
+	// nonzero columns of each block, and a block that is exactly zero keeps none.
 	if N.unbound() == 0 {
 		return;
 	}
 	// The floor of the whole apply, asked once. Every parallel decision below (the rank-one split, the
-	// row split, the column split, and the gates inside the products and the triangular steps) is
+	// column split, and the gates inside the products and the triangular steps) is
 	// over a part of the work of the two products and the streaming of the target, at one section or
 	// more, so none can pay when the whole apply does not at one section of the cheapest width (`min_cost`): the sequential path is the
 	// result of all of them, and the nested calls need not ask. A QR 128 applies 59 blocks, and
@@ -656,50 +657,16 @@ fn apply_block_householder_on_the_left_in_place_generic<
 		let (mut tmp, _) = unsafe { temp_mat_uninit::<T, _, _>(N, K, stack) };
 		let mut tmp = tmp.as_mat_mut();
 		let threads = crate::utils::thread::parallelism_degree(&par);
-		// The split below slices the reduction's rows, but the top `n` rows carry the unit
-		// diagonal and are applied through their own `n x n` factor -- a chunk whose rows
-		// are a *subrange* of those `n` would need that factor column-sliced, and the
-		// triangular kernel cannot express the trapezoid that leaves. So the split is taken
-		// only while one chunk swallows the whole top block. Below that the products further
-		// down stay exactly as they were.
-		// `2 * K` (depth against width), `4 * threads` (rows per task) and the chunk covering the
-		// unit block (`div_ceil(threads) >= N`) are shape conditions; the work floor is the
-		// cost rule: the reduction `V^H C`, `M * N * K` multiply-adds at the GEMM rate, one
-		// section.
-		#[cfg(feature = "par-trace")]
-		crate::utils::cost::trace::shape("row_split", M.unbound(), N.unbound(), K.unbound());
-		let row_split = cfg!(feature = "rayon")
-			&& threads > 1
-			&& M.unbound() >= 2 * K.unbound()
-			&& M.unbound() >= 4 * threads
-			&& M.unbound().div_ceil(threads) >= N.unbound()
-			&& crate::utils::cost::par_pays::<T>(
-				&par,
-				M.unbound()
-					.saturating_mul(N.unbound())
-					.saturating_mul(K.unbound()),
-				crate::utils::cost::rate::gemm_mac(),
-				1,
-			);
-		#[cfg(feature = "par-trace")]
-		crate::utils::cost::trace::shape("", 0, 0, 0);
 		// The column split is the only parallelism when the rows are not split, so it takes
 		// the whole budget and leaves `inner_parallelism` at one thread: the block apply a
 		// blocked QR performs is short and wide (`N` columns of basis against the whole
 		// trailing block), and capping the split at four tasks made the rest nest a second
 		// region inside each -- `512 x 512` `qr_in_place` f64 at eight threads: 5.27 ms with
-		// the cap, 4.74 ms with eight tasks, and `1024 x 1024`: 20.5 -> 16.9 ms. When the
-		// rows *are* split, that split already owns the thread budget and the four-task cap
-		// stays, because the nested column split is then only a second level over a much
-		// smaller target (`4096 x 16` basis, 240-column target: 0.397 ms capped, 0.405 ms
-		// uncapped at eight threads).
-		let mut n_tasks = Ord::min(
-			Ord::min(threads, K.unbound()),
-			if row_split { 4 } else { threads },
-		);
-		// The column split is one section over `n_tasks` participants; its work is the two
-		// products of the update, `2 * M * N * K` multiply-adds (one of them when the row split
-		// already did the reduction), plus the streaming of the `M * K` target
+		// the cap, 4.74 ms with eight tasks, and `1024 x 1024`: 20.5 -> 16.9 ms.
+		let mut n_tasks = Ord::min(threads, K.unbound());
+		// The column split is one section over `n_tasks` participants; its work is the reduction
+		// plus the two products of the update, `2 * M * N * K` multiply-adds, plus the streaming
+		// of the `M * K` target
 		// (`cost::block_apply_estimate`). With the multiply-adds alone this estimate was 0.6 to
 		// 0.8 of the measured serial time of an `N = 8` block (`QR 128`).
 		if n_tasks > 1 {
@@ -708,7 +675,7 @@ fn apply_block_householder_on_the_left_in_place_generic<
 				M.unbound(),
 				N.unbound(),
 				K.unbound(),
-				if row_split { 1 } else { 2 },
+				2,
 			);
 			#[cfg(feature = "par-trace")]
 			{
@@ -734,96 +701,6 @@ fn apply_block_householder_on_the_left_in_place_generic<
 				n_tasks = 1;
 			}
 		}
-		// The reduction `tmp = V^H C` has an `N x K` output and reduces over every row of the
-		// target. The products below are good at that while the output is wide; with `N` small and
-		// the target long they are one serial reduction inside one task, so the column split cannot
-		// help -- and that is exactly the shape a tall blocked QR's panel and its trailing update
-		// take. Split the rows instead, one `N x K` partial per thread, then add them: the partials
-		// are tiny against the target. `1T` and short targets keep the products below unchanged.
-		// Splitting the rows is a split along the reduction's depth: it adds parallel work there, and
-		// it adds `threads` partials of `N x K` to write, read and add. It pays only while the serial
-		// kernel it replaces is depth-bound, which is a property of the shape, not of one size: a
-		// sweep over `M` against `K` at eight threads puts the crossover at `M ~ 2 K` -- a reduction
-		// four times deeper than it is wide gains 3-4x, and one as wide as it is deep (the 512x512
-		// trailing update, `M = 512`, `K = 496`) loses for the partials it pays for. The thread and
-		// work floors keep small problems on the products below.
-		if row_split {
-			#[cfg(feature = "rayon")]
-			{
-				use rayon::prelude::*;
-				let rows = M.unbound();
-				let (n, k) = (N.unbound(), K.unbound());
-				// The first `n` rows carry the unit diagonal; below them the basis is rectangular.
-				let split_at = n;
-				let chunk = rows.div_ceil(threads);
-				let n_chunks = rows.div_ceil(chunk);
-				let mut partials = vec![T::zero(); n_chunks * n * k];
-				let source = matrix.rb().as_dyn_rows().as_dyn_cols();
-				let top_basis = essentials_top.as_dyn_rows().as_dyn_cols();
-				let bot_basis = essentials_bot.as_dyn_rows().as_dyn_cols();
-				let conj = Conj::Yes.compose(conj_lhs);
-				crate::utils::thread::for_each(
-					par.reborrow(),
-					n_chunks,
-					partials.par_chunks_mut(n * k).enumerate(),
-					|(index, part)| {
-						#[cfg(test)]
-						row_split_probe::note();
-						let lo = index * chunk;
-						let hi = rows.min(lo + chunk);
-						let mut part =
-							MatMut::from_column_major_slice_mut(part, n, k);
-						let top_hi = split_at.min(hi);
-						if lo < top_hi {
-							triangular::matmul_with_conj(
-								part.rb_mut(),
-								BlockStructure::Rectangular,
-								Accum::Replace,
-								top_basis.transpose(),
-								BlockStructure::UnitTriangularUpper,
-								conj,
-								source.subrows(lo, top_hi - lo),
-								BlockStructure::Rectangular,
-								Conj::No,
-								one(),
-								Par::Seq,
-							);
-						}
-						let bot_lo = split_at.max(lo);
-						if hi > bot_lo {
-							matmul_with_conj(
-								part.rb_mut(),
-								if lo < top_hi {
-									Accum::Add
-								} else {
-									Accum::Replace
-								},
-								bot_basis
-									.transpose()
-									.subcols(bot_lo - split_at, hi - bot_lo),
-								conj,
-								source.subrows(bot_lo, hi - bot_lo),
-								Conj::No,
-								one(),
-								Par::Seq,
-							);
-						}
-					},
-				);
-				let mut tmp_dynamic =
-					tmp.rb_mut().as_dyn_rows_mut().as_dyn_cols_mut();
-				for col in 0..k {
-					for row in 0..n {
-						let mut sum = T::zero();
-						for index in 0..n_chunks {
-							sum +=
-								partials[index * n * k + row + col * n].clone();
-						}
-						tmp_dynamic[(row, col)] = sum;
-					}
-				}
-			}
-		}
 		let func = |(mut tmp, mut matrix): (
 			MatMut<'_, T, Dim<'N>>,
 			MatMut<'_, T, Dim<'M>>,
@@ -831,7 +708,7 @@ fn apply_block_householder_on_the_left_in_place_generic<
 		            mut inner_parallelism: Par| {
 			let (mut top, mut bot) =
 				matrix.rb_mut().split_rows_with_mut(midpoint);
-			if !row_split {
+			{
 				triangular::matmul_with_conj(
 					tmp.rb_mut(),
 					BlockStructure::Rectangular,
@@ -1148,13 +1025,13 @@ pub fn apply_block_householder_sequence_transpose_on_the_right_in_place_with_con
 	)
 }
 
-/// Test-only observation of the block apply's row-split region: whether a worker of the caller's
+/// Test-only observation of a parallel region of this module: whether a worker of the caller's
 /// held group, rather than the caller alone, ran part of it. `spindle::current_thread_index` is
 /// `Some` exactly on a group worker, and the caller of `spindle::with_lock` is not one.
 #[cfg(all(test, feature = "rayon"))]
-mod row_split_probe {
+mod region_probe {
 	use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
-	/// armed by the dispatch test alone, so the row splits of the other tests do not count here
+	/// armed by the dispatch test alone, so the regions of the other tests do not count here
 	pub(super) static ARMED: AtomicBool = AtomicBool::new(false);
 	/// the number of chunks a group worker ran
 	pub(super) static ON_WORKER: AtomicUsize = AtomicUsize::new(0);
@@ -1417,7 +1294,7 @@ mod tests {
 	fn threaded_panel_matches_the_sequential_one() {
 		check_panel(2048, 4, 32);
 		check_panel(4096, 16, 240);
-		// Not tall enough for the row split: the column path must still be right.
+		// Short: below the split's floors, the sequential products must still be right.
 		check_panel(128, 8, 16);
 		// Short and wide, so the column split takes the whole eight-thread budget
 		// (`n_tasks == 8`), which is the shape a blocked QR's trailing update takes.
@@ -1425,67 +1302,48 @@ mod tests {
 		check_panel_with(512, 48, 464, 8);
 	}
 
-	/// The row split is a region, and a region of this crate runs on the worker group the caller
-	/// holds (`spindle::with_lock`, the way a caller with a thread budget calls faer). A region
-	/// dispatched through a plain Rayon iterator instead finds every pool thread inside that group
-	/// and runs on the caller alone -- the row split did, and `4096x256` f64 took 14.6 ms at eight
-	/// threads against 5.9 through the group. This watches who runs a chunk, not a clock: it fails
+	/// A parallel region of this module runs on the worker group the caller holds
+	/// (`spindle::with_lock`, the way a caller with a thread budget calls faer). A region dispatched
+	/// through a plain Rayon iterator instead finds every pool thread inside that group and runs on
+	/// the caller alone -- three of them did, and `4096x256` f64 `householder_apply` took 14.6 ms at
+	/// eight threads against 5.9 through the group. This watches the dispatch, not a clock: it fails
 	/// however fast the caller-alone path happens to be.
 	#[test]
-	fn row_split_reaches_the_held_group() {
+	fn upgrade_region_reaches_the_held_group() {
 		let threads = 4;
 		let pool = rayon::ThreadPoolBuilder::new()
 			.num_threads(threads)
 			.build()
 			.unwrap();
-		let m = 4096;
-		let (n, k) = (16, 240);
-		let basis = Mat::<f64>::from_fn(m, n, |i, j| {
+		// a tall, narrow panel: the `T += V_bot^H V_bot` reduction is deep against its `n x n`
+		// output, which is the shape that split exists for
+		let (m, n) = (4096, 16);
+		let basis: Mat<f64> = Mat::from_fn(m, n, |i, j| {
 			((i * 31 + j * 17) % 23) as f64 / 23.0 - 0.5
 		});
-		let factor = Mat::<f64>::from_fn(n, n, |i, j| {
-			if i == j { 2.0 } else { 0.25 }
-		});
-		let mut target = Mat::<f64>::from_fn(m, k, |i, j| {
-			((i * 11 + j * 5) % 29) as f64 / 29.0 - 0.5
-		});
-		let mut mem = MemBuffer::new(
-			apply_block_householder_on_the_left_in_place_scratch::<f64>(m, n, k),
-		);
-		let probe = &super::row_split_probe::ON_WORKER;
+		let mut factor = Mat::<f64>::from_fn(n, n, |_, _| 0.25);
+		let probe = &super::region_probe::ON_WORKER;
 		probe.store(0, core::sync::atomic::Ordering::Relaxed);
-		super::row_split_probe::ARMED
+		super::region_probe::ARMED
 			.store(true, core::sync::atomic::Ordering::Relaxed);
 		pool.install(|| {
 			spindle::with_lock(threads, || {
-				apply_block_householder_on_the_left_in_place_with_conj(
+				upgrade_householder_factor(
+					factor.as_mut(),
 					basis.as_ref(),
-					factor.as_ref(),
-					Conj::No,
-					target.as_mut(),
+					n,
+					1,
 					Par::rayon(threads),
-					MemStack::new(&mut mem),
 				)
 			})
 		});
-		super::row_split_probe::ARMED
+		super::region_probe::ARMED
 			.store(false, core::sync::atomic::Ordering::Relaxed);
 		let chunks = probe.load(core::sync::atomic::Ordering::Relaxed);
 		assert!(
 			chunks > 0,
-			"no worker of the held group of {threads} ran a row-split chunk: the region ran on the caller alone"
+			"no worker of the held group of {threads} ran a region chunk: it ran on the caller alone"
 		);
-	}
-
-	/// The row split slices the reduction's rows, but the top `n` rows are applied through one
-	/// `n x n` factor: the split is only valid while a single chunk carries that whole top block.
-	/// A panel wider than the row chunk does not -- and it used to trip the triangular shape
-	/// assertion (64 factor columns against a 32-row chunk) from `qr_in_place`, which is the abort
-	/// [tensor4all/faer#12](https://github.com/tensor4all/faer/issues/12) reports. Both sides of
-	/// the threshold must compute the same map.
-	#[test]
-	fn threaded_panel_narrower_than_the_row_chunk_matches_the_sequential_one() {
-		check_panel(256, 128, 64);
 	}
 
 	#[test]
@@ -1596,9 +1454,8 @@ mod gate_tests {
 	}
 
 	fn check_apply<T: ComplexField<Real = f64>>() {
-		// row split: tall, `M >= 2 K`, 3.1 million multiply-adds
 		// rank one: `N == 1`, 0.5 million target elements
-		// column split: wide target
+		// column split: tall target and wide target
 		for (m, n, k) in
 			[(2048, 16, 96), (2048, 1, 256), (512, 16, 1024), (4096, 32, 64)]
 		{

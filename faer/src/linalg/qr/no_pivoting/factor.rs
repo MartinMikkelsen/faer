@@ -5111,9 +5111,9 @@ mod tests {
 
 	/// A column block of exactly zero columns retains no reflectors, so it has no trailing update
 	/// to make. `A1.ncols() > 0` used to be the only condition there, so the block reached the
-	/// block Householder apply with an empty basis, whose row split took `N * K = 0` as its chunk
-	/// size and panicked in rayon -- [tensor4all/faer#51](https://github.com/tensor4all/faer/issues/51).
-	/// The threaded factorization must produce the sequential one.
+	/// block Householder apply with an empty basis and panicked in rayon --
+	/// [tensor4all/faer#51](https://github.com/tensor4all/faer/issues/51). The threaded
+	/// factorization must produce the sequential one.
 	#[test]
 	fn zero_column_block_does_not_panic_with_threads() {
 		let pool = rayon::ThreadPoolBuilder::new()

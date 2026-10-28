@@ -809,7 +809,7 @@ pub(crate) fn halves_pays<T: crate::ComplexField>(
 
 /// Estimated serial time of a block Householder apply with an `m x n` basis on an `m x k`
 /// target: the two products of the update, `products * m * n * k` multiply-adds at the GEMM rate
-/// (`products` is 2, or 1 when the row split already did the reduction), plus a streaming term
+/// (`products` is 2), plus a streaming term
 /// per target element (the temporaries and the triangular steps, `m * k` elements at the rank one
 /// apply rate). Fitted over `m` 24 to 512, `n` 2 to 32 with one thread: the median error is 7
 /// percent (f64), 4 percent (c64); a single rate per multiply-add was 1.0 to 2.7 times too low
