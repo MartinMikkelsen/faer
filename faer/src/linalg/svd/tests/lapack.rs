@@ -440,7 +440,11 @@ fn complex_phase(index: usize) -> Scalar {
 }
 
 fn logarithmic_bidiagonal(n: usize) -> Mat<Scalar> {
-	let mut rng = StdRng::seed_from_u64(BIDIAGONAL_SEED);
+	logarithmic_bidiagonal_seeded(n, BIDIAGONAL_SEED)
+}
+
+fn logarithmic_bidiagonal_seeded(n: usize, seed: u64) -> Mat<Scalar> {
+	let mut rng = StdRng::seed_from_u64(seed);
 	Mat::from_fn(n, n, |i, j| {
 		if i == j || i == j + 1 {
 			Scalar::from(Real::EPSILON.powf(rng.random_range(-2.0..2.0)))
@@ -449,6 +453,72 @@ fn logarithmic_bidiagonal(n: usize) -> Mat<Scalar> {
 			zero::<Scalar>()
 		}
 	})
+}
+
+/// #75: the divide-and-conquer merge forms its boundary rotation from
+/// `alpha * lambda` and `beta * phi`. Both are subnormal for a deeply split
+/// bidiagonal, so their squares underflowed and the rotation stopped being
+/// orthogonal; the returned V lost orthogonality while U and the
+/// reconstruction stayed inside their bounds.
+#[test]
+fn bidiagonal_merge_boundary_rotation_is_orthogonal() {
+	// The reported case and the two neighbouring seeds that failed harder, the
+	// last one at the default recursion threshold.
+	for (seed, n, threshold) in [
+		(BIDIAGONAL_SEED, 127, 8),
+		(0x4C41_5041_4351, 126, 8),
+		(0x4C41_5041_434D, 128, 128),
+	] {
+		let context = format!(
+			"merge rotation, seed={seed:#x}, n={n}, threshold={threshold}"
+		);
+		let a = logarithmic_bidiagonal_seeded(n, seed);
+		let params = Spec::new(SvdParams {
+			recursion_threshold: threshold,
+			..auto!(Scalar)
+		});
+		let mut u = Mat::<Scalar>::zeros(n, n);
+		let mut v = Mat::<Scalar>::zeros(n, n);
+		let mut s = Col::<Scalar>::zeros(n);
+		let mut memory = MemBuffer::new(svd_scratch::<Scalar>(
+			n,
+			n,
+			ComputeSvdVectors::Full,
+			ComputeSvdVectors::Full,
+			ParShape::Seq,
+			params,
+		));
+		let result = svd(
+			a.as_ref(),
+			s.as_mut().as_diagonal_mut(),
+			Some(u.as_mut()),
+			Some(v.as_mut()),
+			Par::Seq,
+			MemStack::new(&mut memory),
+			params,
+		);
+		assert!(result.is_ok(), "{context}: {result:?}");
+		let spectrum: Vec<Real> = s.iter().copied().map(|s| real(&s)).collect();
+		let v_ratio = orthogonality_ratio(v.as_ref());
+		let u_ratio = orthogonality_ratio(u.as_ref());
+		let residual =
+			reconstruction_ratio(a.as_ref(), &spectrum, u.as_ref(), v.as_ref());
+		assert!(
+			v_ratio < THRESHOLD,
+			"{context}: V orthogonality ratio={v_ratio:e}, \
+			 threshold={THRESHOLD}"
+		);
+		assert!(
+			u_ratio < THRESHOLD,
+			"{context}: U orthogonality ratio={u_ratio:e}, \
+			 threshold={THRESHOLD}"
+		);
+		assert!(
+			residual < THRESHOLD,
+			"{context}: reconstruction ratio={residual:e}, \
+			 threshold={THRESHOLD}"
+		);
+	}
 }
 
 fn run_bidiagonal_case(

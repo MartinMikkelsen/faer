@@ -32,14 +32,14 @@ and safe-minimum handling. Complex-modulus adaptations are identified explicitly
 
 | Filter suffix (`lapack_...`) | Port status | Source checks/helpers | Threshold | Owning test module | Deliberate adaptation/omission |
 | --- | --- | --- | --- | --- | --- |
-| svd | adapted; numerical failures recorded | S/D/C/ZCHKBD; D/S/C/ZDRVBD; BDT03, ORT01/UNT01 | 50 | svd::tests | Existing four-type pilot; see linked record |
+| svd | adapted; passing (f32 V orthogonality fixed by #75, rank-one scratch by #73) | S/D/C/ZCHKBD; D/S/C/ZDRVBD; BDT03, ORT01/UNT01 | 50 | svd::tests | Existing four-type pilot; see linked record |
 | hessenberg | adapted; passing | CHKHS 1–2, HST01, ORT01/UNT01 | 20 | evd::lapack | Packed reflectors extracted to logical H |
 | schur | adapted; passing | CHKHS 3–8; HST01 | 20 | evd::lapack | Equivalent Schur forms; compare invariant/residual/spectra |
 | nonsymmetric_evd | adapted; residual failures recorded | CHKHS right/left residuals; GET22 | 20 | evd::lapack | Full EVD exposes both sides; Schur-vector helper exposes right only |
 | schur_reorder | implemented; passing | S/DGET34, S/D/C/ZGET36; *ec.in selected records | 20 | evd::lapack | Real 1×1/2×2; complex 1×1; rejection contract |
 | balance | implemented; passing | CHKBL/CHKBK; *bal.in/*bak.in | source checker | evd::lapack | Combined balance; right-vector back-transform; metadata adaptation |
 | tridiagonal_evd | implemented; failures recorded | CHKST 9–12/22–26 where applicable | 60 | evd::lapack | QR/DC properties; no MRRR/range selection/Sturm certification |
-| self_adjoint_evd | implemented; failures recorded | CHKST reduction/full interface; SYT21/HET21 | 60 | evd::lapack | Lower-triangle ownership; no packed/banded interfaces |
+| self_adjoint_evd | implemented; passing (spectrum accuracy fixed by #76) | CHKST reduction/full interface; SYT21/HET21 | 60 | evd::lapack | Lower-triangle ownership; no packed/banded interfaces |
 | lu | implemented; passing | CHKGE, GET01/02/03 | 30 | lu::lapack | Full-pivoting labeled extension; omit RFS/CON |
 | cholesky | implemented; failures recorded | CHKPO/DRVPO/CHKPS, POT01/02/03 | 30 | cholesky::lapack | LLT/pivoted LLT; omit RFS/CON |
 | indefinite | implemented; failures recorded | S/DCHKSY, C/ZCHKHE, SYT01/HET01 | 30 | cholesky::lapack | Separate D; unpivoted LDL extension; no complex-symmetric contract |
@@ -303,15 +303,21 @@ misclassification, and this final run confirms complete counts.
 | triangular | 11,472 | 0 | 6.12 | failures retained |
 | lstsq | 784 | 3,136 | 0.83 | pass |
 
-The seven failing families retain these findings:
+The failing families of that run, and the status of their findings:
 
-- SVD: existing f32/c32 rank-one scratch panics and f32 V orthogonality.
-- Nonsymmetric EVD: residual/normalization findings, plus six c32 values-only
-  mode discrepancies at the n=129 clustered fixture (sequential/2T/4T, both passes).
+- SVD: the f32/c32 rank-one scratch panics (#73) and the f32 V orthogonality (#75)
+  are fixed; the family passes.
+- Nonsymmetric EVD: residual/normalization findings. The six c32 values-only
+  mode discrepancies at the n=129 clustered fixture (sequential/2T/4T, both passes)
+  were a checker-budget defect (#78): each mode's spectrum lies within 20 epsilons of
+  an exact-input double reference, but their mutual gap reached 21. Mode-vs-mode
+  agreement now uses the composed budget 2×20 at all four types; residual and
+  unit-norm thresholds stay at 20.
 - Tridiagonal EVD: 72 empty-complex, vector-producing call panics across both types.
-- Dense self-adjoint EVD: spectrum/mode comparisons in f64/f32/c32; all reduction,
-  reconstruction, AV−VΛ and unitary checks pass. The added 192 near-MAX/subnormal
-  2×2 calls pass at all types.
+- Dense self-adjoint EVD: the spectrum/mode comparisons in f64/f32/c32 came from the
+  tridiagonal QR sweep's diagonal update (#76) and are fixed; the family passes. All
+  reduction, reconstruction, AV−VΛ and unitary checks pass, and the added 192
+  near-MAX/subnormal 2×2 calls pass at all types.
 - Pivoted LLT: the first pivot is not compared with the rank tolerance; the n=1
   zero matrix reports rank one (four diagnostics/type) and larger zero matrices
   return NonPositivePivot instead of rank 0 (22 diagnostics/type).

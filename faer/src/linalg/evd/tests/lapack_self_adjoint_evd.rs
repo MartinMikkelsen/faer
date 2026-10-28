@@ -321,3 +321,70 @@ fn lapack_self_adjoint_evd_range() {
 	}
 	run.finish(48);
 }
+
+// faer#76. The values-only path, and any vector-producing block that is not
+// divided, solve the tridiagonal eigenproblem with the QR fallback. Its
+// diagonal update used to re-round every diagonal of size `|d|` on each
+// rotation, so this fixture — `s[i] = 1 - 2 i / (n - 1)` behind adjacent
+// 0.6/0.8 rotations, which puts the intended eigenvalues on an even grid of
+// spacing `2/126` — came out about 150 f32 epsilons wrong, while the
+// divide-and-conquer path on the same input stayed within 5. Both recursion
+// thresholds and both compute-eigenvectors modes answer to the same CHKST
+// bound of 60 epsilons.
+#[test]
+fn dense_self_adjoint_qr_spectrum_accuracy() {
+	let n = 127;
+	let (a, mut known) = hermitian(n, 2);
+	known.sort_by(|x, y| x.partial_cmp(y).unwrap());
+	for threshold in [8, 128] {
+		let params = Spec::new(SelfAdjointEvdParams {
+			recursion_threshold: threshold,
+			..auto!(Scalar)
+		});
+		let mut mem = MemBuffer::new(
+			self_adjoint_evd_scratch::<Scalar>(
+				n,
+				ComputeEigenvectors::Yes,
+				ParShape::Seq,
+				params,
+			)
+			.or(self_adjoint_evd_scratch::<Scalar>(
+				n,
+				ComputeEigenvectors::No,
+				ParShape::Seq,
+				params,
+			)),
+		);
+		for vectors in [false, true] {
+			let mut s = Mat::<Scalar>::zeros(n, 1);
+			let mut u = Mat::<Scalar>::zeros(n, n);
+			self_adjoint_evd(
+				a.as_ref(),
+				s.as_mut().col_mut(0).as_diagonal_mut(),
+				if vectors { Some(u.as_mut()) } else { None },
+				Par::Seq,
+				MemStack::new(&mut mem),
+				params,
+			)
+			.unwrap();
+			let values: Vec<_> = (0..n).map(|i| real(&s[(i, 0)])).collect();
+			let ctx = format!(
+				"dense self-adjoint n={n} threshold={threshold} \
+				 vectors={vectors}"
+			);
+			let ratio = ordered_spectrum_ratio(&values, &known);
+			crate::assert!(
+				ratio < 60.0,
+				"{ctx}: known spectrum ratio={ratio:e}, threshold=60"
+			);
+			if vectors {
+				let residual =
+					self_adjoint_residual(a.as_ref(), u.as_ref(), s.as_ref());
+				crate::assert!(
+					residual < 60.0,
+					"{ctx}: AV-VD ratio={residual:e}, threshold=60"
+				);
+			}
+		}
+	}
+}
