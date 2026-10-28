@@ -1102,6 +1102,24 @@ pub(super) fn divide_and_conquer_scratch<T: ComplexField>(
 		StackReq::any_of(&[merge, recurse])
 	}
 }
+/// `sqrt(x^2 + y^2)` scaled by the larger argument: `w * sqrt(1 + (z / w)^2)`
+/// with `w = max(|x|, |y|)` and `z = min(|x|, |y|)`.
+///
+/// Squaring first is not usable for the merge's boundary rotation below.
+/// `alpha * lambda` and `beta * phi` are products of entries of an already
+/// rescaled subproblem, so a deeply split bidiagonal makes them as small as
+/// `1e-41`, where `x.abs2() + y.abs2()` is subnormal or zero even after the
+/// `sqrt(max_positive)` rescaling that `hypot` applies.
+fn hypot_scaled<T: RealField>(x: &T, y: &T) -> T {
+	let (x, y) = (x.abs(), y.abs());
+	let (w, z) = if x > y { (x, y) } else { (y, x) };
+	if w == zero() || !w.is_finite() {
+		w
+	} else {
+		let ref r = z / &w;
+		&w * (one::<T>() + r * r).sqrt()
+	}
+}
 pub(super) fn divide_and_conquer<T: RealField>(
 	diag: ColMut<'_, T, usize, ContiguousFwd>,
 	subdiag: ColMut<'_, T, usize, ContiguousFwd>,
@@ -1301,9 +1319,28 @@ pub(super) fn divide_and_conquer<T: RealField>(
 	};
 	let ref al = alpha * lambda;
 	let ref bp = beta * phi;
-	let ref r0 = (al.abs2() + bp.abs2()).sqrt();
+	let ref squares = al.abs2() + bp.abs2();
+	// The boundary rotation has to stay orthogonal: it is applied to the first
+	// and last column of the merged left factor. Squaring `al` and `bp` loses
+	// that once the merge sits deep enough in the recursion for them to fall
+	// below `sqrt(min_positive)`, because then `squares` is subnormal, `r0` is
+	// accurate to a few bits only and `c0^2 + s0^2` drifts from one. Inside the
+	// normal range the squares are exact to rounding, so the historical
+	// arithmetic stays bit for bit.
+	let scaled = !(squares.is_finite() && *squares >= min_positive::<T>());
+	let ref r0 = if scaled {
+		hypot_scaled(al, bp)
+	} else {
+		squares.sqrt()
+	};
 	let (ref c0, ref s0) = if *r0 == zero() {
 		(one(), zero())
+	} else if scaled {
+		// A subnormal `r0` cannot produce an orthogonal pair from `al / r0`;
+		// normalizing by a ratio keeps `c0^2 + s0^2` one to rounding.
+		let JacobiRotation { c, s } =
+			JacobiRotation::make_givens(al.copy(), bp.copy());
+		(c, -s)
 	} else {
 		(al / r0, bp / r0)
 	};
