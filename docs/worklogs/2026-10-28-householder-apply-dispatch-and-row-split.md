@@ -53,14 +53,28 @@
 
 - Focused test `linalg::householder::tests::upgrade_region_reaches_the_held_group` fails on the
   pre-change dispatch and passes after it. Whole library suite: 461 passed, 0 failed, 138 ignored.
-- Campaign pair, boost off, `linalg-tall` + `linalg-mid`, three process sets, f64 and c64, 1/4/8T,
-  baseline `2592bad` against the branch: the 32 tall `householder_apply` cells at 4T/8T go from
-  2.0-4.1x behind `faer-upstream` to 0.65-1.14x, 31 of 32 inside 1.10. The one cell above the band
-  (`f64` column-major `4096x256` block at 8T, 1.14) has an upstream row whose own block and sequence
-  forms differ by 30% for identical work (5.07 vs 6.57 ms) while the fork's two agree (5.79 / 5.71
-  ms), so that band crossing is not a fork mechanism. Guards: no cell of the 496 compared regressed
-  past 1.10, and the tall `qr_factor`, `qr`, `svd_thin` and `svd_values` families are 13-34% faster
-  than the same cells at the baseline.
+- Campaign pair, boost off, three process sets, f64 and c64, 1/4/8T, baseline `2592bad` against the
+  branch, read as the campaign's rotation-averaged ratio (the median of per-start ratios, not a
+  ratio of aggregate medians), `faer-upstream` as the in-run control (its median ratio 1.0036 over
+  the tall/mid pair and 1.0019 over the small/wide pair, so no global shift):
+  - Target, the 32 tall `householder_apply` cells at 4T/8T: 2.0-3.8x behind `faer-upstream` at the
+    baseline, 0.63-1.07 after, none above 1.10, worst 1.073 (`f64` column-major `4096x256` block,
+    8T). The two forms of each cell agree after the change (1.03 and 0.95 in the two adjacent
+    column-major `4096x256` 8T cells) where upstream's own two forms differ by 29% (6.71 and 5.04 ms
+    in one start), which is the uncertainty in that cell, not an explanation of it.
+  - Guards, 988 cells over the four linalg regimes (`linalg-tall` + `linalg-mid` + `linalg-small` +
+    `linalg-wide`, `full_piv_lu` included in the last two): every family median sits between 0.996
+    and 1.007, and the tall `qr_factor`, `qr`, `svd_thin` and `svd_values` medians are 0.66, 0.74,
+    0.77 and 0.87 (13-34% faster than the same cells at the baseline). Two cells move consistently and are recorded rather than explained away:
+    `lu f64` column-major `64x1024` at 1T/4T/8T (+4.6 / +7.2 / +8.7%, upstream flat at 1.001 / 0.970
+    / 0.992) -- its 1T row is +4.6% with the changed branch not taken at all, so at least part of
+    the movement is the binary's layout, not the dispatch -- and `householder_apply c64`
+    column-major `128x128` sequence at 8T (+7.1%, upstream flat), a cell below every split floor.
+    Three further cells exceed the baseline's between-start spread only because one of the three
+    process sets was disturbed (`qr_factor f64 c 96x96` 8T 7.0 ms against 0.17 ms in its other two
+    starts, `qr c64 c 64x1024` 8T 4.1 against 0.64, `solve f64 c 128x128` 8T 2.28 against 0.14). Those
+    are the between-start warning the protocol prints, not a guard failure, and the same binary in
+    the other two starts is within 1.01 of the baseline.
 - LAPACK reference: the OpenBLAS arm has no block-apply row, as expected: reference `DLARFB` is
   `W = V2^T C2` (DGEMM), `W = T^T W` (DTRMM), `C -= V W` (DGEMM), with its parallelism inside each
   call over the output and no row-split analogue. The declared `gemm` legs that mirror the apply
@@ -68,8 +82,10 @@
   composite 0.40-0.82, so on the calls LAPACK can express the fork is at or ahead of it.
 - Limits. Turbo was off for every number above (`cpufreq_boost=0`); earlier attempts in the same
   session ran with boost on and are diagnostics only. `cpufreq_boost` is a host setting the account
-  that measured cannot change without root. Three column-major cells at 8T lost 8-16% with the row
-  split removed; they are recorded in the table above rather than tuned away with a threshold.
+  that measured cannot change without root. `f32`/`c32` were not measured: the campaign's declared
+  pages for this suite and both of its example commands are `f64`/`c64`. Three column-major cells at
+  8T lost 8-16% with the row split removed; they are recorded in the table above rather than tuned
+  away with a threshold.
   `upgrade_factor` and `eig` are declared families the harness skips, so the
   `upgrade_householder_factor` route is covered through `qr_factor`/`qr` composites only, and the
   other tall losses on the same page (`qr`, `svd_thin`, `svd_values` versus OpenBLAS in column-major
