@@ -306,8 +306,12 @@ misclassification, and this final run confirms complete counts.
 The seven failing families retain these findings:
 
 - SVD: existing f32/c32 rank-one scratch panics and f32 V orthogonality.
-- Nonsymmetric EVD: residual/normalization findings, plus six c32 values-only
-  mode discrepancies at the n=129 clustered fixture (sequential/2T/4T, both passes).
+- Nonsymmetric EVD: residual/normalization findings. The six c32 values-only
+  mode discrepancies at the n=129 clustered fixture (sequential/2T/4T, both passes)
+  were a checker-budget defect (#78): each mode's spectrum lies within 20 epsilons of
+  an exact-input double reference, but their mutual gap reached 21. Mode-vs-mode
+  agreement now uses the composed budget 2×20 at all four types; residual and
+  unit-norm thresholds stay at 20.
 - Tridiagonal EVD: 72 empty-complex, vector-producing call panics across both types.
 - Dense self-adjoint EVD: spectrum/mode comparisons in f64/f32/c32; all reduction,
   reconstruction, AV−VΛ and unitary checks pass. The added 192 near-MAX/subnormal
