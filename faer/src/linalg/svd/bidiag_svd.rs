@@ -907,12 +907,13 @@ fn deflate<T: RealField>(
 			break;
 		}
 	}
-	// The entries of `diag` that are exactly zero are collected first so that the
-	// reversal below leaves them at the end, where `compute_svd_of_m` counts them
-	// as trailing zeros. The group's own order is by index, so it is only
-	// interchangeable when every member is zero: a nonzero subnormal value must
-	// keep its place in the magnitude-ordered merge, which is why this is an
-	// exact-zero test and not the `sml` tolerance used for the deflation tests.
+	// The entries of `diag` that are exactly zero are collected first so that
+	// the reversal below leaves them at the end, where `compute_svd_of_m`
+	// counts them as trailing zeros. The group's own order is by index, so it
+	// is only interchangeable when every member is zero: a nonzero subnormal
+	// value must keep its place in the magnitude-ordered merge, which is why
+	// this is an exact-zero test and not the `sml` tolerance used for the
+	// deflation tests.
 	perm[first] = first;
 	let mut p = 1;
 	for i in first + 1..n {
@@ -2465,11 +2466,12 @@ mod tests {
 			}
 		}
 	}
-	/// A nonzero value below `min_positive` is a real singular value, not a deflated
-	/// zero. The merge collects the exactly-zero entries into a group that the final
-	/// reversal leaves at the end; that group's own order is by index, so a nonzero
-	/// subnormal value placed in it comes out unordered. Group by an exact-zero test
-	/// instead and the spectrum stays sorted (#82).
+	/// A nonzero value below `min_positive` is a real singular value, not a
+	/// deflated zero. The merge collects the exactly-zero entries into a group
+	/// that the final reversal leaves at the end; that group's own order is by
+	/// index, so a nonzero subnormal value placed in it comes out unordered.
+	/// Group by an exact-zero test instead and the spectrum stays sorted
+	/// (#82).
 	fn subnormal_diag_at_split_is_ordered<T: RealField>(threshold: usize) {
 		let n = 128;
 		let tiny = min_positive::<T>().mul_pow2(from_f64::<T>(0.5));
@@ -2511,7 +2513,8 @@ mod tests {
 				if i + 1 < n {
 					assert!(
 						d[i] >= d[i + 1],
-						"pos={pos} threshold={threshold}: d[{i}] = {:?} < d[{}] = {:?}",
+						"pos={pos} threshold={threshold}: d[{i}] = {:?} < \
+						 d[{}] = {:?}",
 						d[i],
 						i + 1,
 						d[i + 1],
@@ -2544,8 +2547,8 @@ mod tests {
 			assert!(u.is_all_finite() && v.is_all_finite());
 			let rec = &u * &sigma * v.transpose();
 			let residual = (&rec - bidiag_to_mat2(d0, e0)).norm_max();
-			// the merge's deflated-value perturbation is `8 * eps`, which is the
-			// accuracy the reconstruction carries
+			// the merge's deflated-value perturbation is `8 * eps`, which is
+			// the accuracy the reconstruction carries
 			assert!(residual <= from_f64::<T>(100.0) * eps::<T>());
 		}
 	}

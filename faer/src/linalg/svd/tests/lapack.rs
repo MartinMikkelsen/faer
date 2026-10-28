@@ -469,8 +469,9 @@ fn bidiagonal_merge_boundary_rotation_is_orthogonal() {
 		(0x4C41_5041_4351, 126, 8),
 		(0x4C41_5041_434D, 128, 128),
 	] {
-		let context =
-			format!("merge rotation, seed={seed:#x}, n={n}, threshold={threshold}");
+		let context = format!(
+			"merge rotation, seed={seed:#x}, n={n}, threshold={threshold}"
+		);
 		let a = logarithmic_bidiagonal_seeded(n, seed);
 		let params = Spec::new(SvdParams {
 			recursion_threshold: threshold,
@@ -497,22 +498,25 @@ fn bidiagonal_merge_boundary_rotation_is_orthogonal() {
 			params,
 		);
 		assert!(result.is_ok(), "{context}: {result:?}");
-		let spectrum: Vec<Real> =
-			s.iter().copied().map(|s| real(&s)).collect();
+		let spectrum: Vec<Real> = s.iter().copied().map(|s| real(&s)).collect();
 		let v_ratio = orthogonality_ratio(v.as_ref());
 		let u_ratio = orthogonality_ratio(u.as_ref());
-		let residual = reconstruction_ratio(a.as_ref(), &spectrum, u.as_ref(), v.as_ref());
+		let residual =
+			reconstruction_ratio(a.as_ref(), &spectrum, u.as_ref(), v.as_ref());
 		assert!(
 			v_ratio < THRESHOLD,
-			"{context}: V orthogonality ratio={v_ratio:e}, threshold={THRESHOLD}"
+			"{context}: V orthogonality ratio={v_ratio:e}, \
+			 threshold={THRESHOLD}"
 		);
 		assert!(
 			u_ratio < THRESHOLD,
-			"{context}: U orthogonality ratio={u_ratio:e}, threshold={THRESHOLD}"
+			"{context}: U orthogonality ratio={u_ratio:e}, \
+			 threshold={THRESHOLD}"
 		);
 		assert!(
 			residual < THRESHOLD,
-			"{context}: reconstruction ratio={residual:e}, threshold={THRESHOLD}"
+			"{context}: reconstruction ratio={residual:e}, \
+			 threshold={THRESHOLD}"
 		);
 	}
 }

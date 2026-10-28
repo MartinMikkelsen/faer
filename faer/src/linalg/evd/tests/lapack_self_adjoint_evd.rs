@@ -369,7 +369,8 @@ fn dense_self_adjoint_qr_spectrum_accuracy() {
 			.unwrap();
 			let values: Vec<_> = (0..n).map(|i| real(&s[(i, 0)])).collect();
 			let ctx = format!(
-				"dense self-adjoint n={n} threshold={threshold} vectors={vectors}"
+				"dense self-adjoint n={n} threshold={threshold} \
+				 vectors={vectors}"
 			);
 			let ratio = ordered_spectrum_ratio(&values, &known);
 			crate::assert!(
