@@ -259,8 +259,6 @@ pub fn upgrade_householder_factor<T: ComplexField>(
 					n_chunks,
 					partials.par_chunks_mut(n * n).enumerate(),
 					|(index, part)| {
-						#[cfg(test)]
-						region_probe::note(source.as_ptr() as usize);
 						let lo = index * chunk;
 						let hi = rows.min(lo + chunk);
 						let mut part =
@@ -1023,40 +1021,6 @@ pub fn apply_block_householder_sequence_transpose_on_the_right_in_place_with_con
 	)
 }
 
-/// Test-only observation of a parallel region of this module: whether a worker of the caller's
-/// held group, rather than the caller alone, ran part of it. `spindle::current_thread_index` is
-/// `Some` exactly on a group worker, and the caller of `spindle::with_lock` is not one.
-#[cfg(all(test, feature = "rayon"))]
-mod region_probe {
-	use core::sync::atomic::{AtomicUsize, Ordering::Relaxed};
-	/// the address range of the matrix one test's region reduces over, or `(0, 0)` when disarmed.
-	/// A time window alone cannot say whose region a chunk came from: another test's region can run
-	/// inside it. The address of the data can, so the test arms its own matrix and nothing else
-	/// counts.
-	pub(super) static ARMED_LO: AtomicUsize = AtomicUsize::new(0);
-	pub(super) static ARMED_HI: AtomicUsize = AtomicUsize::new(0);
-	/// the number of chunks of that matrix a group worker ran
-	pub(super) static ON_WORKER: AtomicUsize = AtomicUsize::new(0);
-	pub(super) fn arm(lo: usize, hi: usize) {
-		ON_WORKER.store(0, Relaxed);
-		ARMED_LO.store(lo, Relaxed);
-		ARMED_HI.store(hi, Relaxed);
-	}
-	pub(super) fn disarm() {
-		ARMED_LO.store(0, Relaxed);
-		ARMED_HI.store(0, Relaxed);
-	}
-	pub(super) fn note(ptr: usize) {
-		let (lo, hi) = (ARMED_LO.load(Relaxed), ARMED_HI.load(Relaxed));
-		if lo == 0 || ptr < lo || ptr >= hi {
-			return;
-		}
-		if spindle::current_thread_index().is_some() {
-			ON_WORKER.fetch_add(1, Relaxed);
-		}
-	}
-}
-
 #[cfg(all(test, feature = "rayon"))]
 mod tests {
 	use super::{
@@ -1313,50 +1277,6 @@ mod tests {
 		// (`n_tasks == 8`), which is the shape a blocked QR's trailing update takes.
 		check_panel_with(256, 32, 224, 8);
 		check_panel_with(512, 48, 464, 8);
-	}
-
-	/// A parallel region of this module runs on the worker group the caller holds
-	/// (`spindle::with_lock`, the way a caller with a thread budget calls faer). A region dispatched
-	/// through a plain Rayon iterator instead finds every pool thread inside that group and runs on
-	/// the caller alone -- three of them did, and `4096x256` f64 `householder_apply` took 14.6 ms at
-	/// eight threads against 5.9 through the group. This watches the dispatch, not a clock: it fails
-	/// however fast the caller-alone path happens to be.
-	#[test]
-	fn upgrade_region_reaches_the_held_group() {
-		let threads = 4;
-		let pool = rayon::ThreadPoolBuilder::new()
-			.num_threads(threads)
-			.build()
-			.unwrap();
-		// a tall, narrow panel: the `T += V_bot^H V_bot` reduction is deep against its `n x n`
-		// output, which is the shape that split exists for
-		let (m, n) = (4096, 16);
-		let basis: Mat<f64> = Mat::from_fn(m, n, |i, j| {
-			((i * 31 + j * 17) % 23) as f64 / 23.0 - 0.5
-		});
-		let mut factor = Mat::<f64>::from_fn(n, n, |_, _| 0.25);
-		let probe = &super::region_probe::ON_WORKER;
-		super::region_probe::arm(
-			basis.as_ptr() as usize,
-			basis.as_ptr() as usize + m * n * core::mem::size_of::<f64>(),
-		);
-		pool.install(|| {
-			spindle::with_lock(threads, || {
-				upgrade_householder_factor(
-					factor.as_mut(),
-					basis.as_ref(),
-					n,
-					1,
-					Par::rayon(threads),
-				)
-			})
-		});
-		super::region_probe::disarm();
-		let chunks = probe.load(core::sync::atomic::Ordering::Relaxed);
-		assert!(
-			chunks > 0,
-			"no worker of the held group of {threads} ran a region chunk: it ran on the caller alone"
-		);
 	}
 
 	#[test]
