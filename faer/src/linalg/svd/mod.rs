@@ -1252,6 +1252,53 @@ mod tests {
 		}
 	}
 	#[test]
+	fn test_v_only_rank_one_exact_scratch() {
+		fn check<T: ComplexField>(entry: T, tol: f64) {
+			let n = 8;
+			let a = Mat::<T>::from_fn(n, n, |i, j| {
+				if i == 0 && j == 0 {
+					entry.copy()
+				} else {
+					zero()
+				}
+			});
+			let mut params = Spec::<SvdParams, T>::default();
+			params.recursion_threshold = 4;
+			let mut s = Col::<T>::zeros(n);
+			let mut v = Mat::<T>::zeros(n, n);
+			let mut mem = MemBuffer::new(svd_scratch::<T>(
+				n,
+				n,
+				ComputeSvdVectors::No,
+				ComputeSvdVectors::Thin,
+				ParShape::Seq,
+				params,
+			));
+			svd(
+				a.as_ref(),
+				s.as_mut().as_diagonal_mut(),
+				None,
+				Some(v.as_mut()),
+				Par::Seq,
+				MemStack::new(&mut mem),
+				params,
+			)
+			.unwrap();
+			assert!(s.is_all_finite() && v.is_all_finite());
+			let expected =
+				Col::<T>::from_fn(n, |i| if i == 0 { one() } else { zero() });
+			let tol = from_f64::<T::Real>(tol);
+			assert!((&s - &expected).norm_max() <= tol.copy());
+			assert!(
+				(v.adjoint() * &v - Mat::<T>::identity(n, n)).norm_max() <= tol
+			);
+		}
+		check::<f32>(1.0, 1e-5);
+		check::<c32>(c32::new(0.0, 1.0), 1e-5);
+		check::<f64>(1.0, 1e-13);
+		check::<c64>(c64::new(0.0, 1.0), 1e-13);
+	}
+	#[test]
 	fn test_tiny_diagonal_at_split() {
 		for n in [128, 256] {
 			for tiny in [0.0, 1e-15, 1e-13, 1e-10, 1e-6] {
