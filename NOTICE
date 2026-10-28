@@ -22,7 +22,7 @@ terms and their notices ship alongside the crate:
   faer/COPYING.EIGEN.MPL2               divide-and-conquer SVD (Eigen)
   faer/COPYING.LAPACK.BSD               jacobi/givens, LLT full pivoting,
                                         column-pivoting QR, Schur, Hessenberg,
-                                        Schur reordering,
+                                        Schur reordering, tridiagonal QR step,
                                         selected LAPACK EIG/LIN numerical validation tests
   faer/COPYING.SUITE_SPARSE.AMD.BSD     AMD ordering
   faer/COPYING.SUITE_SPARSE.COLAMD.BSD  COLAMD ordering

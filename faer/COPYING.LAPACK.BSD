@@ -7,6 +7,7 @@ ported algorithms:
 - generalized schur decomposition (real + complex)
 - schur reordering, 1x2 / 2x1 block swaps (dlaexc, dlasy2, order-3 dlarfx, dlapy2,
   dlanv2-style norm fallback)
+- tridiagonal QR iteration: shift and implicit QR step (dsteqr, QR branch)
 - selected SVD validation families and checks (src/linalg/svd/tests/{lapack,svd_views}.rs;
   original 1992-2023 / 2000-2023 / 2006-2023 notices retained in those files)
 - selected EIG/LIN numerical validation families (src/linalg/{evd,lu,cholesky,qr}/tests/

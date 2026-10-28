@@ -150,45 +150,55 @@ pub(crate) fn qr_algorithm<T: RealField>(
 			start -= 1;
 		}
 		{
-			let td = (&diag[end - 1] - &diag[end]).mul_pow2(from_f64::<T>(0.5));
+			// The shift and the implicit QR step below translate the QR branch
+			// (labels 90-140) of DSTEQR, `SRC/dsteqr.f` of Reference-LAPACK
+			// release v3.12.1, commit 6ec7f2bc4ecf4c4a93496aa2fa519575bc0e39ca
+			// (https://github.com/Reference-LAPACK/lapack). Material changes:
+			// faer's block splitting, deflation test, ordering and eigenvector
+			// update are kept, and `make_givens` replaces DLARTG. LAPACK's
+			// copyright notice and license terms are in
+			// `faer/COPYING.LAPACK.BSD` (see `NOTICE`).
+			//
+			// Shift `g = diag[start] - mu`, where `mu` is the eigenvalue of the
+			// trailing 2x2 block that is nearest to `diag[end]`.
+			let p0 = diag[end].copy();
 			let ref e = offdiag[end - 1].copy();
-			let mut mu = diag[end].copy();
-			if td == zero() {
-				mu -= e.abs();
-			} else if *e != zero() {
-				let e2 = e.abs2();
-				let h = td.hypot(e);
-				let h = if td > zero() { h.copy() } else { -h };
-				if e2 == zero() {
-					mu = mu - e / ((td + h) / e)
-				} else {
-					mu = mu - e2 / (td + h)
-				};
-			}
-			let mut x = &diag[start] - mu;
-			let mut z = offdiag[start].copy();
-			let mut k = start;
-			while k < end && z != zero() {
-				let rot = JacobiRotation::make_givens(x.copy(), z.copy());
-				let ref sdk = &rot.s * &diag[k] + &rot.c * &offdiag[k];
-				let ref dkp1 = &rot.s * &offdiag[k] + &rot.c * &diag[k + 1];
-				diag[k] = &rot.c * (&rot.c * &diag[k] - &rot.s * &offdiag[k])
-					- &rot.s * (&rot.c * &offdiag[k] - &rot.s * &diag[k + 1]);
-				diag[k + 1] = &rot.s * sdk + &rot.c * dkp1;
-				offdiag[k] = &rot.c * sdk - &rot.s * dkp1;
+			let g0 = (&diag[end - 1] - &p0) / (e + e);
+			let r0 = g0.hypot(one::<T>());
+			let ref sgn = if g0 >= zero() { r0.copy() } else { -r0 };
+			// implicit QR step, chased from `start` to `end`. `p` carries the
+			// correction that the previous rotation applied to the entry being
+			// visited, so a diagonal is updated as `g + p` instead of being
+			// re-rounded as `c^2 d - 2 c s e + s^2 d'` on every rotation (#76).
+			let ref two = from_f64::<T>(2.0);
+			let mut g = &diag[start] - &p0 + e / (g0 + sgn);
+			let mut c = one::<T>();
+			let mut s = one::<T>();
+			let mut p = zero::<T>();
+			for k in start..end {
+				let ref ek = offdiag[k].copy();
+				let ref f = &s * ek;
+				let ref b = &c * ek;
+				let rot = JacobiRotation::make_givens(g.copy(), f.copy());
 				if k > start {
-					offdiag[k - 1] = &rot.c * &offdiag[k - 1] - &rot.s * &z;
+					offdiag[k - 1] = &rot.c * &g - &rot.s * f;
 				}
-				x = offdiag[k].copy();
-				if k < end - 1 {
-					z = -&rot.s * &offdiag[k + 1];
-					offdiag[k + 1] = &rot.c * &offdiag[k + 1];
-				}
+				// `make_givens` and `dlartg` describe the same rotation but
+				// carry opposite signs for its sine; the update below is the
+				// `dlartg` one.
+				s = -&rot.s;
+				c = rot.c.copy();
+				g = &diag[k] - &p;
+				let ref r = (&diag[k + 1] - &g) * &s + (&c * b).mul_pow2(two);
+				p = &s * r;
+				diag[k] = &g + &p;
+				g = &c * r - b;
 				if let Some(u) = u.rb_mut() {
 					rot.apply_on_the_right_in_place(u.two_cols_mut(k + 1, k));
 				}
-				k += 1;
 			}
+			diag[end] = &diag[end] - &p;
+			offdiag[end - 1] = g;
 		}
 	}
 	for i in 0..n - 1 {
