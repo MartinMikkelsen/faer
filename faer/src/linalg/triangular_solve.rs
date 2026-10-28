@@ -106,6 +106,40 @@ fn solve_lower_triangular_in_place_base_case_generic_imp<
 ) {
 	let N = tril.nrows();
 	let n = N.unbound();
+	// Form residuals before division when a tiny pivot's reciprocal can overflow.
+	if N.indices().any(|i| {
+		let pivot = &tril[(i, i)];
+		let max = pivot.real().abs().fmax(pivot.imag().abs());
+		max != zero() && max < min_positive::<T::Real>()
+	}) {
+		let mut rhs = rhs;
+		for i in N.indices() {
+			let ref pivot = maybe_conj_lhs(tril[(i, i)].copy());
+			let ref inv = pivot.recip();
+			let ref scale = if T::IS_REAL || inv.is_finite() {
+				one::<T::Real>()
+			} else {
+				// Leave headroom for both complex products when scaling a tiny divisor.
+				from_f64::<T::Real>(0.25) * min_positive::<T::Real>().recip()
+			};
+			let ref scaled_pivot = pivot.mul_real(scale);
+			for k in rhs.ncols().indices() {
+				let mut value = rhs[(i, k)].copy();
+				for j in 0..i.unbound() {
+					let j = N.check(j);
+					value -= maybe_conj_lhs(tril[(i, j)].copy()) * &rhs[(j, k)];
+				}
+				rhs[(i, k)] = if T::IS_REAL {
+					value / pivot
+				} else if inv.is_finite() {
+					value * inv
+				} else {
+					value.mul_real(scale) / scaled_pivot
+				};
+			}
+		}
+		return;
+	}
 	match n {
 		0 => {},
 		1 => {
@@ -113,16 +147,7 @@ fn solve_lower_triangular_in_place_base_case_generic_imp<
 			let inv = &maybe_conj_lhs(tril[(i0, i0)].recip());
 			let (x0, rhs) = rhs.split_first_row_mut().unwrap();
 			_ = rhs;
-			if T::IS_REAL && !inv.is_finite() {
-				// a tiny real pivot overflows its reciprocal even when
-				// `x / pivot` is representable, so divide in that case; a
-				// complex quotient squares the denominator and would turn the
-				// same input into NaN, so complex keeps the reciprocal path
-				let l00 = &maybe_conj_lhs(tril[(i0, i0)].copy());
-				zip!(x0).for_each(|unzip!(x0)| *x0 = &*x0 / l00);
-			} else {
-				zip!(x0).for_each(|unzip!(x0)| *x0 = &*x0 * inv);
-			}
+			zip!(x0).for_each(|unzip!(x0)| *x0 = &*x0 * inv);
 		},
 		2 => {
 			let i0 = N.check(0);
@@ -699,6 +724,129 @@ fn solve_upper_triangular_in_place_imp<'N, 'K, T: ComplexField>(
 #[cfg(test)]
 mod tests {
 	use super::*;
+	fn check_subnormal_solve<T: ComplexField>(pivot: T, coupled: bool) {
+		let large =
+			from_f64::<T>(0.0625).mul_real(min_positive::<T::Real>().recip());
+		for n in [1, 2, 3, 4, 5, 8, 16, 17, 32, 64, 65, 128, 129] {
+			for upper in [false, true] {
+				let diagonal = |i| {
+					if coupled && i % 2 == 1 {
+						large.copy()
+					} else {
+						pivot.copy()
+					}
+				};
+				let a = Mat::<T>::from_fn(n, n, |i, j| {
+					if i == j {
+						diagonal(i)
+					} else if coupled
+						&& (if upper { j == i + 1 } else { i == j + 1 })
+					{
+						-diagonal(i)
+					} else {
+						zero()
+					}
+				});
+				for conj in [Conj::No, Conj::Yes] {
+					for row_major in [false, true] {
+						let b = |i| {
+							let d = if !coupled
+								|| i == (if upper { n - 1 } else { 0 })
+							{
+								diagonal(i)
+							} else {
+								zero()
+							};
+							if conj == Conj::Yes { d.conj() } else { d }
+						};
+						let mut rhs = if row_major {
+							Mat::<T>::from_fn(2, n, |_, i| b(i))
+						} else {
+							Mat::<T>::from_fn(n, 2, |i, _| b(i))
+						};
+						let view = if row_major {
+							rhs.as_mut().transpose_mut()
+						} else {
+							rhs.as_mut()
+						};
+						if upper {
+							solve_upper_triangular_in_place_with_conj(
+								a.as_ref(),
+								conj,
+								view,
+								Par::Seq,
+							);
+						} else {
+							solve_lower_triangular_in_place_with_conj(
+								a.as_ref(),
+								conj,
+								view,
+								Par::Seq,
+							);
+						}
+						for j in 0..rhs.ncols() {
+							for i in 0..rhs.nrows() {
+								assert_eq!(
+									rhs[(i, j)],
+									one::<T>(),
+									"n={n}, upper={upper}, conj={conj:?}, row_major={row_major}, coupled={coupled}"
+								);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	#[test]
+	fn subnormal_real_diagonal_solve() {
+		for tiny in [f32::from_bits(1), f32::MIN_POSITIVE / 2.0, 1.0] {
+			for pivot in [tiny, -tiny] {
+				check_subnormal_solve(pivot, false);
+			}
+		}
+		for tiny in [f64::from_bits(1), f64::MIN_POSITIVE / 2.0, 1.0] {
+			for pivot in [tiny, -tiny] {
+				check_subnormal_solve(pivot, false);
+			}
+		}
+	}
+	#[test]
+	fn subnormal_complex_diagonal_solve() {
+		for tiny in [f32::from_bits(1), f32::MIN_POSITIVE / 2.0, 1.0] {
+			for pivot in [
+				c32::new(0.0, tiny),
+				c32::new(tiny, 0.0),
+				c32::new(tiny, tiny),
+			] {
+				check_subnormal_solve(pivot, false);
+			}
+		}
+		for tiny in [f64::from_bits(1), f64::MIN_POSITIVE / 2.0, 1.0] {
+			for pivot in [
+				c64::new(0.0, tiny),
+				c64::new(tiny, 0.0),
+				c64::new(tiny, tiny),
+			] {
+				check_subnormal_solve(pivot, false);
+			}
+		}
+	}
+	#[test]
+	fn subnormal_coupled_solve() {
+		check_subnormal_solve(f32::from_bits(1), true);
+		check_subnormal_solve(f64::from_bits(1), true);
+		check_subnormal_solve(c32::new(0.0, f32::from_bits(1)), true);
+		check_subnormal_solve(c64::new(0.0, f64::from_bits(1)), true);
+		check_subnormal_solve(
+			c32::new(f32::from_bits(1), f32::from_bits(1)),
+			true,
+		);
+		check_subnormal_solve(
+			c64::new(f64::from_bits(1), f64::from_bits(1)),
+			true,
+		);
+	}
 	#[test]
 	fn tiny_pivot_scalar_solve() {
 		fn check<T: ComplexField + Clone>(pivot: T) {
