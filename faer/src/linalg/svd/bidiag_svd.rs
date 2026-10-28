@@ -907,10 +907,16 @@ fn deflate<T: RealField>(
 			break;
 		}
 	}
+	// The entries of `diag` that are exactly zero are collected first so that the
+	// reversal below leaves them at the end, where `compute_svd_of_m` counts them
+	// as trailing zeros. The group's own order is by index, so it is only
+	// interchangeable when every member is zero: a nonzero subnormal value must
+	// keep its place in the magnitude-ordered merge, which is why this is an
+	// exact-zero test and not the `sml` tolerance used for the deflation tests.
 	perm[first] = first;
 	let mut p = 1;
 	for i in first + 1..n {
-		if diag[i].abs() < *sml {
+		if diag[i] == zero() {
 			perm[p] = i;
 			p += 1;
 		}
@@ -936,7 +942,8 @@ fn deflate<T: RealField>(
 		for i in first + 1..n {
 			let i1 = i - 1;
 			let pi = perm[i];
-			if diag[pi].abs() < *sml || diag[pi] > diag[first] {
+			// the same exact-zero classification as the group built above
+			if diag[pi] == zero() || diag[pi] > diag[first] {
 				perm[i1] = perm[i];
 			} else {
 				perm[i1] = first;
@@ -2456,6 +2463,97 @@ mod tests {
 					);
 				}
 			}
+		}
+	}
+	/// A nonzero value below `min_positive` is a real singular value, not a deflated
+	/// zero. The merge collects the exactly-zero entries into a group that the final
+	/// reversal leaves at the end; that group's own order is by index, so a nonzero
+	/// subnormal value placed in it comes out unordered. Group by an exact-zero test
+	/// instead and the spectrum stays sorted (#82).
+	fn subnormal_diag_at_split_is_ordered<T: RealField>(threshold: usize) {
+		let n = 128;
+		let tiny = min_positive::<T>().mul_pow2(from_f64::<T>(0.5));
+		assert!(tiny > zero::<T>() && tiny < min_positive::<T>());
+		for pos in [n / 2 + 1, n / 2 + 36, n - 1] {
+			let mut d = Col::<T>::zeros(n);
+			let mut e = Col::<T>::zeros(n);
+			d[0] = one();
+			d[1] = from_f64::<T>(0.5);
+			d[pos] = tiny.copy();
+			let d0 = Col::<T>::from_fn(n, |i| d[i].copy());
+			let e0 = Col::<T>::from_fn(n, |i| e[i].copy());
+			let (d0, e0) = (
+				d0.as_ref().try_as_col_major().unwrap(),
+				e0.as_ref().try_as_col_major().unwrap(),
+			);
+			let mut u = Mat::<T>::zeros(n + 1, n + 1);
+			let mut v = Mat::<T>::zeros(n, n);
+			divide_and_conquer(
+				d.as_mut().try_as_col_major_mut().unwrap(),
+				e.as_mut().try_as_col_major_mut().unwrap(),
+				MatU::Full(u.as_mut()),
+				Some(v.as_mut()),
+				Par::Seq,
+				MemStack::new(&mut MemBuffer::new(
+					divide_and_conquer_scratch::<T>(
+						n,
+						threshold,
+						true,
+						true,
+						ParShape::Seq,
+					),
+				)),
+				threshold,
+			)
+			.unwrap();
+			for i in 0..n {
+				assert!(d[i].is_finite() && d[i] >= zero());
+				if i + 1 < n {
+					assert!(
+						d[i] >= d[i + 1],
+						"pos={pos} threshold={threshold}: d[{i}] = {:?} < d[{}] = {:?}",
+						d[i],
+						i + 1,
+						d[i + 1],
+					);
+				}
+			}
+			assert!((&d[0] - one::<T>()).abs() <= eps::<T>());
+			assert!((&d[1] - from_f64::<T>(0.5)).abs() <= eps::<T>());
+			// singular values below the merge's deflation floor
+			// `8 * eps * ||B||` (the subnormal one and the zeros) are only
+			// determined to that normwise bound, which the whole spectrum
+			// `[1, 1/2, tiny, 0, ...]` must meet
+			for i in 0..n {
+				let want = match i {
+					0 => one::<T>(),
+					1 => from_f64::<T>(0.5),
+					2 => tiny.copy(),
+					_ => zero::<T>(),
+				};
+				assert!(
+					(&d[i] - want).abs() <= from_f64::<T>(8.0) * eps::<T>(),
+					"pos={pos} threshold={threshold}: d[{i}] = {:?}",
+					d[i],
+				);
+			}
+			let mut sigma = Mat::<T>::zeros(n + 1, n);
+			for i in 0..n {
+				sigma[(i, i)] = d[i].copy();
+			}
+			assert!(u.is_all_finite() && v.is_all_finite());
+			let rec = &u * &sigma * v.transpose();
+			let residual = (&rec - bidiag_to_mat2(d0, e0)).norm_max();
+			// the merge's deflated-value perturbation is `8 * eps`, which is the
+			// accuracy the reconstruction carries
+			assert!(residual <= from_f64::<T>(100.0) * eps::<T>());
+		}
+	}
+	#[test]
+	fn subnormal_diag_at_split() {
+		for threshold in [128, 4] {
+			subnormal_diag_at_split_is_ordered::<f64>(threshold);
+			subnormal_diag_at_split_is_ordered::<f32>(threshold);
 		}
 	}
 	#[test]
