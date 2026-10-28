@@ -110,32 +110,6 @@ pub mod thread {
 		}
 	}
 
-	/// the raw Rayon `iter.for_each(f)` of the regions that never used spindle, with `Team`
-	/// consuming the team of a `Team` (items dealt in static blocks, one part per member)
-	#[cfg(feature = "rayon")]
-	pub fn par_for_each<
-		T: Send,
-		I: rayon::iter::IntoParallelIterator<Item = T>,
-	>(
-		par: Par,
-		iter: I,
-		f: impl Send + Sync + Fn(T),
-	) where
-		I::Iter: rayon::iter::IndexedParallelIterator,
-	{
-		match par {
-			#[cfg(feature = "threadteam")]
-			Par::Team(team) => {
-				let width = team.size().get();
-				super::team::for_each(team, width, iter, f)
-			},
-			_ => {
-				use rayon::iter::ParallelIterator;
-				iter.into_par_iter().for_each(f)
-			},
-		}
-	}
-
 	/// `spindle::for_each` on the backend of `par`: the spindle group for `Rayon`, the team
 	/// itself for `Team`, the caller for `Seq`
 	#[cfg(feature = "rayon")]
@@ -290,7 +264,7 @@ pub mod thread {
 
 	#[cfg(all(test, feature = "rayon"))]
 	mod tests {
-		use super::{for_each_with_par, join_raw, join_sized, parallelism_degree};
+		use super::{for_each, for_each_with_par, join_raw, join_sized, parallelism_degree};
 		use crate::Par;
 		use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -344,6 +318,51 @@ pub mod thread {
 					"concurrent leaves exceed n = {n}"
 				);
 			}
+		}
+
+		// a region handed a `Par::Rayon` budget runs on the caller's held worker group. under a held
+		// group every thread of the pool is inside it, so a region dispatched through a plain Rayon
+		// iterator instead runs on the caller alone and the budget buys nothing: the block
+		// Householder apply's row split was dispatched that way (4096x256 f64 at eight threads: 14.6
+		// ms against 5.9). the wait makes this a statement about the dispatch and not about
+		// scheduling: the caller's chunk cannot finish until a worker has entered one, so a
+		// caller-alone dispatch runs into the deadline instead of passing by luck on a quiet machine
+		#[test]
+		fn for_each_region_reaches_the_held_group() {
+			use rayon::prelude::*;
+			use std::sync::atomic::{AtomicUsize, Ordering::Acquire};
+			let pool = rayon::ThreadPoolBuilder::new()
+				.num_threads(4)
+				.build()
+				.unwrap();
+			let workers = AtomicUsize::new(0);
+			let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+			pool.install(|| {
+				spindle::with_lock(4, || {
+					for_each(
+						Par::Rayon(core::num::NonZeroUsize::new(4).unwrap()),
+						4,
+						(0..4).into_par_iter(),
+						|_| {
+							if spindle::current_thread_index().is_some() {
+								workers.fetch_add(1, Ordering::AcqRel);
+								return;
+							}
+							// the caller's own chunk: hold it until a worker starts one
+							while workers.load(Ordering::Acquire) == 0
+								&& std::time::Instant::now() < deadline
+							{
+								std::hint::spin_loop();
+							}
+						},
+					);
+				});
+			});
+			let n = workers.into_inner();
+			assert!(
+				n > 0,
+				"no worker of the held group of 4 entered the region: it ran on the caller alone"
+			);
 		}
 
 		// the two halves of a sized join run on the widths they are handed: their children

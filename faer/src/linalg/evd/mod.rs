@@ -641,6 +641,41 @@ fn eigenvectors_ok<T: ComplexField>(u: MatRef<'_, T>) -> bool {
 	u.is_all_finite()
 		&& (0..u.ncols()).all(|j| u.col(j).norm_l2() > zero::<T::Real>())
 }
+/// The shift clamp `eps * sum |a_ij|` of the back substitution, summed over the
+/// upper triangle and the `subdiag` subdiagonals below it (`1` for a real
+/// Schur form, `0` for a triangular one).
+///
+/// The plain sum overflows to infinity for a finite matrix whose entries are
+/// near the top of the range, which would clamp every shift to infinity and
+/// return a wrong direction with `Ok`. `eps * |a_ij|` does not overflow there,
+/// so the sum is then recomputed term by term. It is only used in that case,
+/// because summing the scaled terms rounds them to zero for subnormal entries
+/// where the plain sum still gives a nonzero clamp.
+fn eps_norm<T: ComplexField>(A: MatRef<'_, T>, subdiag: usize) -> T::Real {
+	let n = A.nrows();
+	let eps = eps::<T::Real>();
+	let rows = |j: usize| Ord::min(j + 1 + subdiag, n);
+	let mut norm = zero::<T::Real>();
+	for j in 0..n {
+		for i in 0..rows(j) {
+			norm += A[(i, j)].abs1();
+		}
+	}
+	let mut eps_norm = &eps * &norm;
+	if !eps_norm.is_finite() {
+		let mut acc = zero::<T::Real>();
+		for j in 0..n {
+			for i in 0..rows(j) {
+				let a = &A[(i, j)];
+				// `abs1` is `|re| + |im|`, which overflows on its own for a
+				// complex entry with both parts large, so scale them apart
+				acc += &eps * &a.real().abs() + &eps * &a.imag().abs();
+			}
+		}
+		eps_norm = acc;
+	}
+	eps_norm
+}
 pub(crate) fn evd_from_real_schur_imp<T: RealField>(
 	A: MatRef<'_, T>,
 	V: MatMut<'_, T>,
@@ -651,12 +686,7 @@ pub(crate) fn evd_from_real_schur_imp<T: RealField>(
 	let zero = zero::<T>;
 	let mut V = V;
 	let n = A.nrows();
-	let mut norm = zero();
-	for j in 0..n {
-		for i in 0..Ord::min(j + 2, n) {
-			norm += A[(i, j)].abs1();
-		}
-	}
+	let eps_norm = eps_norm(A, 1);
 	let mut k = n;
 	loop {
 		if k == 0 {
@@ -673,7 +703,7 @@ pub(crate) fn evd_from_real_schur_imp<T: RealField>(
 				A.submatrix(0, 0, k, k),
 				p.copy(),
 				V.rb_mut().subrows_mut(0, k).col_mut(k),
-				norm.copy(),
+				eps_norm.copy(),
 				par.reborrow(),
 				params,
 			);
@@ -702,7 +732,7 @@ pub(crate) fn evd_from_real_schur_imp<T: RealField>(
 				p.copy(),
 				q.copy(),
 				V.rb_mut().submatrix_mut(0, k - 1, k - 1, 2),
-				norm.copy(),
+				eps_norm.copy(),
 				par.reborrow(),
 				params,
 			);
@@ -722,12 +752,7 @@ pub(crate) fn evd_from_cplx_schur_imp<T: ComplexField>(
 	let one = one::<T>;
 	let mut V = V;
 	let n = A.nrows();
-	let mut norm = zero::<T::Real>();
-	for j in 0..n {
-		for i in 0..j + 1 {
-			norm += A[(i, j)].abs1();
-		}
-	}
+	let eps_norm = eps_norm(A, 0);
 	let mut k = n;
 	loop {
 		if k == 0 {
@@ -754,7 +779,7 @@ pub(crate) fn evd_from_cplx_schur_imp<T: ComplexField>(
 			conj_A,
 			p.copy(),
 			V.rb_mut().subrows_mut(0, k).col_mut(k),
-			norm.copy(),
+			eps_norm.copy(),
 			par.reborrow(),
 			params,
 		);
@@ -766,19 +791,17 @@ fn solve_real_shifted_upper_quasi_triangular_system<T: RealField>(
 	A: MatRef<'_, T>,
 	p: T,
 	x: ColMut<'_, T>,
-	norm: T,
+	eps_norm: T,
 	mut par: Par,
 	params: EvdFromSchurParams,
 ) -> T {
 	let n = A.nrows();
 	let one = one::<T>;
 	let zero = zero::<T>;
-	let ref eps = eps::<T>();
 	let ref p = p;
 	let mut x = x;
-	let ref norm = norm;
-	// While the shift `A[i, i] - p` is clamped to `eps * norm`, back
-	// substitution can grow the solution by `1 / (eps * norm)` per row and
+	// While the shift `A[i, i] - p` is clamped to `eps_norm`, back
+	// substitution can grow the solution by `1 / eps_norm` per row and
 	// overflow for finite input. Whenever a computed entry exceeds this bound
 	// the whole slice is rescaled; the factor is also returned so the caller
 	// can apply it to the pivot entry, keeping the eigenvector direction.
@@ -800,8 +823,8 @@ fn solve_real_shifted_upper_quasi_triangular_system<T: RealField>(
 				);
 				x[i] -= dot;
 				let mut z = &A[(i, i)] - p;
-				if z.abs() < eps * norm {
-					z = eps * norm;
+				if z.abs() < eps_norm {
+					z = eps_norm.copy();
 				}
 				if x[i] != zero() {
 					x[i] /= z;
@@ -855,7 +878,7 @@ fn solve_real_shifted_upper_quasi_triangular_system<T: RealField>(
 			A11,
 			p.copy(),
 			x1.rb_mut(),
-			norm.copy(),
+			eps_norm.copy(),
 			par.reborrow(),
 			params,
 		);
@@ -877,7 +900,7 @@ fn solve_real_shifted_upper_quasi_triangular_system<T: RealField>(
 			A00,
 			p.copy(),
 			x0.rb_mut(),
-			norm.copy(),
+			eps_norm,
 			par,
 			params,
 		);
@@ -892,15 +915,13 @@ fn solve_cplx_shifted_upper_quasi_triangular_system<T: RealField>(
 	p: T,
 	q: T,
 	x: MatMut<'_, T>,
-	norm: T,
+	eps_norm: T,
 	mut par: Par,
 	params: EvdFromSchurParams,
 ) -> T {
 	let n = A.nrows();
 	let one = one::<T>;
 	let zero = zero::<T>;
-	let ref eps = eps::<T>();
-	let ref norm = norm;
 	let ref p = p;
 	let ref q = q;
 	let mut x = x;
@@ -924,8 +945,8 @@ fn solve_cplx_shifted_upper_quasi_triangular_system<T: RealField>(
 				let mut z_re = &A[(i, i)] - p;
 				let mut z_im = -q;
 				let mut z = z_re.hypot(&z_im);
-				if z < eps * norm {
-					z_re = eps * norm;
+				if z < eps_norm {
+					z_re = eps_norm.copy();
 					z_im = zero();
 					z = z_re.copy();
 				}
@@ -969,8 +990,8 @@ fn solve_cplx_shifted_upper_quasi_triangular_system<T: RealField>(
 				let mut z_re = a_re.abs2() - a_im.abs2() - b * c;
 				let mut z_im = (a_re * a_im).mul_pow2(from_f64::<T>(2.0));
 				let mut z = z_re.hypot(&z_im);
-				if z < eps * norm {
-					z_re = eps * norm;
+				if z < eps_norm {
+					z_re = eps_norm.copy();
 					z_im = zero();
 					z = z_re.copy();
 				}
@@ -1022,7 +1043,7 @@ fn solve_cplx_shifted_upper_quasi_triangular_system<T: RealField>(
 			p.copy(),
 			q.copy(),
 			x1.rb_mut(),
-			norm.copy(),
+			eps_norm.copy(),
 			par.reborrow(),
 			params,
 		);
@@ -1043,7 +1064,7 @@ fn solve_cplx_shifted_upper_quasi_triangular_system<T: RealField>(
 			p.copy(),
 			q.copy(),
 			x0.rb_mut(),
-			norm.copy(),
+			eps_norm,
 			par,
 			params,
 		);
@@ -1059,7 +1080,7 @@ fn solve_shifted_upper_triangular_system<T: ComplexField>(
 	conj_A: Conj,
 	p: T,
 	x: ColMut<'_, T>,
-	norm: T::Real,
+	eps_norm: T::Real,
 	mut par: Par,
 	params: EvdFromSchurParams,
 ) -> T::Real {
@@ -1067,8 +1088,6 @@ fn solve_shifted_upper_triangular_system<T: ComplexField>(
 	let mut scale = one::<T::Real>();
 	let one = one::<T>;
 	let zero = zero::<T>;
-	let ref eps = eps::<T::Real>();
-	let ref norm = norm;
 	let ref p = p;
 	let mut x = x;
 	let big = sqrt_max_positive::<T::Real>();
@@ -1091,8 +1110,8 @@ fn solve_shifted_upper_triangular_system<T: ComplexField>(
 			} else {
 				A[(i, i)].copy()
 			} - p;
-			if z.abs() < eps * norm {
-				z = (eps * norm).to_cplx();
+			if z.abs() < eps_norm {
+				z = eps_norm.to_cplx();
 			}
 			if x[i] != zero() {
 				x[i] *= z.recip();
@@ -1117,7 +1136,7 @@ fn solve_shifted_upper_triangular_system<T: ComplexField>(
 			conj_A,
 			p.copy(),
 			x1.rb_mut(),
-			norm.copy(),
+			eps_norm.copy(),
 			par.reborrow(),
 			params,
 		);
@@ -1140,7 +1159,7 @@ fn solve_shifted_upper_triangular_system<T: ComplexField>(
 			conj_A,
 			p.copy(),
 			x0.rb_mut(),
-			norm.copy(),
+			eps_norm,
 			par,
 			params,
 		);
@@ -2389,6 +2408,325 @@ mod eig_2131_tests {
 			run::<f64>(threshold);
 			run::<f32>(threshold);
 		}
+	}
+}
+#[cfg(test)]
+mod range_limit_vector_tests {
+	//! Regression tests for `tensor4all/faer#77`: the Schur eigenvector
+	//! extraction used the unscaled 1-norm of the Schur form as its backward
+	//! error scale, so a finite matrix near the top of the range made the shift
+	//! clamp `eps * norm` infinite and returned a wrong direction with `Ok`.
+	//! The 2x2 block solve of a conjugate pair still forms products of two
+	//! block entries, which overflow at the top of the range; there the call
+	//! must fail rather than return a wrong vector.
+	//! Residuals are measured on the dimensionless matrix `t / scale`, which is
+	//! exact for a power of two.
+	use super::*;
+	use crate::assert;
+	use dyn_stack::MemBuffer;
+
+	/// the reported Schur form `[[1, 1], [0, 1/2]]`
+	const SHIFT_2X2: [[f64; 2]; 2] = [[1.0, 1.0], [0.0, 0.5]];
+	/// real Schur form with the conjugate pair `[[0, -1], [1, 0]]` in front of
+	/// the real eigenvalue `1/2`
+	const PAIR_3X3: [[f64; 3]; 3] =
+		[[0.0, -1.0, 1.0], [1.0, 0.0, 0.0], [0.0, 0.0, 0.5]];
+	/// two conjugate pairs, `+-i` and `+-i/2`
+	const TWO_PAIRS_4X4: [[f64; 4]; 4] = [
+		[0.0, -1.0, 1.0, 0.0],
+		[1.0, 0.0, 0.0, 0.0],
+		[0.0, 0.0, 0.0, -0.5],
+		[0.0, 0.0, 0.5, 0.0],
+	];
+	/// whose repeated eigenvalue makes the shift clamp matter
+	const JORDAN_2X2: [[f64; 2]; 2] = [[1.0, 1.0], [0.0, 1.0]];
+
+	fn unit<T: RealField, const N: usize>(
+		mat: &[[f64; N]; N],
+	) -> Mat<Complex<T>> {
+		Mat::from_fn(N, N, |i, j| {
+			Complex::new(from_f64::<T>(mat[i][j]), zero::<T>())
+		})
+	}
+
+	/// the dimensionless matrix scaled by the power of two `scale`
+	fn scaled_real<T: RealField>(
+		unit: MatRef<'_, Complex<T>>,
+		scale: &T,
+	) -> Mat<T> {
+		Mat::from_fn(unit.nrows(), unit.ncols(), |i, j| {
+			&unit[(i, j)].re * scale
+		})
+	}
+
+	/// complex counterpart of `scaled_real`
+	fn scaled_cplx<T: RealField>(
+		unit: MatRef<'_, Complex<T>>,
+		scale: &T,
+	) -> Mat<Complex<T>> {
+		Mat::from_fn(unit.nrows(), unit.ncols(), |i, j| {
+			Complex::new(&unit[(i, j)].re * scale, &unit[(i, j)].im * scale)
+		})
+	}
+
+	/// the complex analogue of `PAIR_3X3`: the imaginary eigenvalue of the pair
+	/// sits on the diagonal, and the off-diagonal entries have a large real and
+	/// imaginary part, so `abs1 = |re| + |im|` overflows on its own
+	fn complex_unit<T: RealField>() -> Mat<Complex<T>> {
+		let z = |re: f64, im: f64| {
+			Complex::new(from_f64::<T>(re), from_f64::<T>(im))
+		};
+		Mat::from_fn(3, 3, |i, j| match (i, j) {
+			(0, 1) => z(-1.0, 0.5),
+			(0, 2) => z(1.0, -1.0),
+			(1, 1) => z(0.5, 0.0),
+			(2, 2) => z(0.25, 0.0),
+			_ => z(0.0, 0.0),
+		})
+	}
+
+	/// `(||a v - lambda v||_2 / (||a||_1 * ||v||_2), ||v||_2)` for the
+	/// dimensionless matrix `a`, so that no reference product overflows
+	fn residual<T: RealField>(
+		a: MatRef<'_, Complex<T>>,
+		v: &[Complex<T>],
+		lambda: &Complex<T>,
+	) -> (T, T) {
+		let n = a.nrows();
+		let mut anorm = zero::<T>();
+		for j in 0..n {
+			let mut col = zero::<T>();
+			for i in 0..n {
+				col += &a[(i, j)].re.abs() + &a[(i, j)].im.abs();
+			}
+			anorm = anorm.fmax(col);
+		}
+		let mut rnorm2 = zero::<T>();
+		let mut vnorm2 = zero::<T>();
+		for i in 0..n {
+			let mut acc = Complex::new(zero::<T>(), zero::<T>());
+			for j in 0..n {
+				acc += &a[(i, j)] * &v[j];
+			}
+			acc -= lambda * &v[i];
+			rnorm2 += acc.re.abs2() + acc.im.abs2();
+			vnorm2 += v[i].re.abs2() + v[i].im.abs2();
+		}
+		(rnorm2.sqrt() / (anorm * vnorm2.sqrt()), vnorm2.sqrt())
+	}
+
+	fn try_real_vectors<T: RealField>(t: MatRef<'_, T>) -> Option<Mat<T>> {
+		let n = t.nrows();
+		let mut x = Mat::zeros(n, n);
+		let mut mem = MemBuffer::new(eigenvectors_from_schur_scratch::<T>(n));
+		eigenvectors_from_schur_real(
+			t,
+			None,
+			x.as_mut(),
+			Par::Seq,
+			MemStack::new(&mut mem),
+			Default::default(),
+		)
+		.ok()?;
+		Some(x)
+	}
+
+	fn real_vectors<T: RealField>(t: MatRef<'_, T>) -> Mat<T> {
+		try_real_vectors(t).unwrap()
+	}
+
+	fn cplx_vectors<T: ComplexField>(t: MatRef<'_, T>) -> Mat<T> {
+		let n = t.nrows();
+		let mut x = Mat::zeros(n, n);
+		let mut mem = MemBuffer::new(eigenvectors_from_schur_scratch::<T>(n));
+		eigenvectors_from_schur_cplx(
+			t,
+			None,
+			x.as_mut(),
+			Par::Seq,
+			MemStack::new(&mut mem),
+			Default::default(),
+		)
+		.unwrap();
+		x
+	}
+
+	/// the real column `j` as a complex vector, for the diagonal eigenvalue
+	fn real_column<T: RealField>(
+		x: MatRef<'_, T>,
+		j: usize,
+	) -> Vec<Complex<T>> {
+		(0..x.nrows())
+			.map(|i| Complex::new(x[(i, j)].copy(), zero::<T>()))
+			.collect()
+	}
+
+	/// the conjugate pair `j`, `j + 1` decoded as `re + i im`
+	fn real_pair<T: RealField>(x: MatRef<'_, T>, j: usize) -> Vec<Complex<T>> {
+		(0..x.nrows())
+			.map(|i| Complex::new(x[(i, j)].copy(), x[(i, j + 1)].copy()))
+			.collect()
+	}
+
+	fn cplx_column<T: RealField>(
+		x: MatRef<'_, Complex<T>>,
+		j: usize,
+	) -> Vec<Complex<T>> {
+		(0..x.nrows()).map(|i| x[(i, j)].copy()).collect()
+	}
+
+	fn assert_eigenvector<T: RealField>(
+		unit: MatRef<'_, Complex<T>>,
+		v: &[Complex<T>],
+		lambda: &Complex<T>,
+		tol: &T,
+	) {
+		let (res, nrm) = residual(unit, v, lambda);
+		let nrm_err = (&nrm - &one::<T>()).abs();
+		assert!(nrm_err <= *tol, "unit 2-norm {nrm:?}, expected 1");
+		assert!(res <= *tol, "relative residual {res:?}");
+	}
+
+	fn check_shift_2x2<T: RealField>(scale: T, tol: T) {
+		let unit = unit::<T, 2>(&SHIFT_2X2);
+		let lambda = Complex::new(from_f64::<T>(0.5), zero::<T>());
+
+		let x = real_vectors::<T>(scaled_real(unit.as_ref(), &scale).as_ref());
+		let v = real_column(x.as_ref(), 1);
+		assert_eigenvector(unit.as_ref(), &v, &lambda, &tol);
+
+		let x = cplx_vectors::<Complex<T>>(
+			scaled_cplx(unit.as_ref(), &scale).as_ref(),
+		);
+		let v = cplx_column(x.as_ref(), 1);
+		assert_eigenvector(unit.as_ref(), &v, &lambda, &tol);
+	}
+
+	/// `Ok` must carry eigenvectors; at the top of the range the conjugate
+	/// pair's 2x2 solve may instead fail with an error.
+	fn check_pair_3x3<T: RealField>(scale: T, tol: T, may_fail: bool) {
+		let unit = unit::<T, 3>(&PAIR_3X3);
+		let Some(x) =
+			try_real_vectors::<T>(scaled_real(unit.as_ref(), &scale).as_ref())
+		else {
+			assert!(may_fail, "extraction failed at scale {scale:?}");
+			return;
+		};
+		// the positive imaginary part comes first
+		let lambda = Complex::new(zero::<T>(), one::<T>());
+		let v = real_pair(x.as_ref(), 0);
+		assert_eigenvector(unit.as_ref(), &v, &lambda, &tol);
+		let lambda = Complex::new(from_f64::<T>(0.5), zero::<T>());
+		let v = real_column(x.as_ref(), 2);
+		assert_eigenvector(unit.as_ref(), &v, &lambda, &tol);
+	}
+
+	fn check_cplx_triangular<T: RealField>(scale: T, tol: T) {
+		let unit = complex_unit::<T>();
+		let t = scaled_cplx(unit.as_ref(), &scale);
+		let x = cplx_vectors(t.as_ref());
+		for j in 0..3 {
+			let lambda = unit[(j, j)].copy();
+			let v = cplx_column(x.as_ref(), j);
+			assert_eigenvector(unit.as_ref(), &v, &lambda, &tol);
+		}
+	}
+
+	#[test]
+	fn two_by_two_at_the_range_limit() {
+		// `f32` and `c32`, then `f64` and `c64`
+		for (scale, tol) in [(1.0f32, 1e-4f32), (2.0f32.powi(127), 1e-4)] {
+			check_shift_2x2::<f32>(scale, tol);
+		}
+		for (scale, tol) in [(1.0f64, 1e-12f64), (2.0f64.powi(1023), 1e-12)] {
+			check_shift_2x2::<f64>(scale, tol);
+		}
+	}
+
+	#[test]
+	fn complex_triangular_at_the_range_limit() {
+		for (scale, tol) in [(1.0f32, 1e-4f32), (2.0f32.powi(127), 1e-4)] {
+			check_cplx_triangular::<f32>(scale, tol);
+		}
+		for (scale, tol) in [(1.0f64, 1e-12f64), (2.0f64.powi(1023), 1e-12)] {
+			check_cplx_triangular::<f64>(scale, tol);
+		}
+	}
+
+	#[test]
+	fn conjugate_pair_block_is_never_a_wrong_success() {
+		check_pair_3x3::<f32>(1.0, 1e-4, false);
+		check_pair_3x3::<f32>(2.0f32.powi(127), 1e-4, true);
+		check_pair_3x3::<f64>(1.0, 1e-12, false);
+		check_pair_3x3::<f64>(2.0f64.powi(1023), 1e-12, true);
+		// the second pair's vector goes through the 2x2 solve of the first
+		// pair with a complex shift
+		for (scale, tol, may_fail) in
+			[(1.0, 1e-12, false), (2.0f64.powi(1023), 1e-12, true)]
+		{
+			let unit = unit::<f64, 4>(&TWO_PAIRS_4X4);
+			let t = scaled_real(unit.as_ref(), &scale);
+			match try_real_vectors::<f64>(t.as_ref()) {
+				Some(x) => {
+					for (j, im) in [(0, 1.0), (2, 0.5)] {
+						let v = real_pair(x.as_ref(), j);
+						assert_eigenvector(
+							unit.as_ref(),
+							&v,
+							&Complex::new(0.0, im),
+							&tol,
+						);
+					}
+				},
+				None => assert!(may_fail, "two pairs failed at scale 1"),
+			}
+		}
+		// the shifted diagonal `A[i, i] - p` of the pair overflows here
+		let s = 2.0f64.powi(1023);
+		let t = crate::mat![[s, -s, 1.0], [s, s, 0.0], [0.0, 0.0, -s]];
+		if let Some(x) = try_real_vectors::<f64>(t.as_ref()) {
+			let unit = Mat::from_fn(3, 3, |i, j| {
+				Complex::new(t[(i, j)] / s, 0.0)
+			});
+			let v = real_pair(x.as_ref(), 0);
+			assert_eigenvector(
+				unit.as_ref(),
+				&v,
+				&Complex::new(1.0, 1.0),
+				&1e-12,
+			);
+		}
+	}
+
+	/// A pair whose off-diagonal entries span the whole range is solved by the
+	/// ordinary block arithmetic, and must stay solved.
+	#[test]
+	fn conjugate_pair_with_a_wide_dynamic_range() {
+		let t = crate::mat![
+			[0.0, -2.0f64.powi(1023), 1.0],
+			[2.0f64.powi(-1022), 0.0, 0.0],
+			[0.0, 0.0, 0.5],
+		];
+		let x = real_vectors::<f64>(t.as_ref());
+		assert!(x.is_all_finite());
+		let unit = Mat::from_fn(3, 3, |i, j| Complex::new(t[(i, j)], 0.0));
+		let lambda = Complex::new(0.5, 0.0);
+		let v = real_column(x.as_ref(), 2);
+		assert_eigenvector(unit.as_ref(), &v, &lambda, &1e-12);
+	}
+
+	/// A subnormal Schur form must keep the clamp the plain norm gives: summing
+	/// the terms as `eps * |a_ij|` instead rounds the floor to zero and loses
+	/// the only eigenvector of a repeated eigenvalue.
+	#[test]
+	fn subnormal_shift_clamp_is_unchanged() {
+		let scale = 2.0f64.powi(-1023);
+		let unit = unit::<f64, 2>(&JORDAN_2X2);
+		let x =
+			real_vectors::<f64>(scaled_real(unit.as_ref(), &scale).as_ref());
+		let lambda = Complex::new(1.0, 0.0);
+		let v = real_column(x.as_ref(), 1);
+		assert_eigenvector(unit.as_ref(), &v, &lambda, &1e-12);
 	}
 }
 #[cfg(test)]

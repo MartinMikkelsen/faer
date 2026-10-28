@@ -99,6 +99,36 @@ fn eigenvector_ratios(
 	};
 	(residual, normerr / (n.max(1) as Real * Real::EPSILON))
 }
+// Each output mode is an independently rounded spectrum, and the CHKHS
+// budget holds each one to 20 epsilons of the exact spectrum (scaled by
+// `||A||_1`). Two such spectra can then differ by the sum of their budgets,
+// so the mode-vs-mode comparison uses the composed budget (#78). The residual
+// and unit-norm checks keep their own threshold of 20.
+const MODE_AGREEMENT_BUDGET: Real = 2.0 * 20.0;
+#[test]
+fn lapack_nonsymmetric_evd_mode_agreement_budget_composes() {
+	let eps = Real::EPSILON;
+	// 1 + 15 eps and 1 - 15 eps are both within 20 of the exact 1, and their
+	// gap of 30 is within the composed budget but not within 20.
+	let above = [(1.0 + 15.0 * eps, 0.0)];
+	let below = [(1.0 - 15.0 * eps, 0.0)];
+	crate::assert!(spectrum_matches_scaled(&above, &[(1.0, 0.0)], 1.0, 20.0));
+	crate::assert!(spectrum_matches_scaled(&below, &[(1.0, 0.0)], 1.0, 20.0));
+	crate::assert!(!spectrum_matches_scaled(&above, &below, 1.0, 20.0));
+	crate::assert!(spectrum_matches_scaled(
+		&above,
+		&below,
+		1.0,
+		MODE_AGREEMENT_BUDGET
+	));
+	// a gap beyond both budgets combined is still rejected
+	crate::assert!(!spectrum_matches_scaled(
+		&[(1.0 + 25.0 * eps, 0.0)],
+		&[(1.0 - 25.0 * eps, 0.0)],
+		1.0,
+		MODE_AGREEMENT_BUDGET
+	));
+}
 #[test]
 fn lapack_nonsymmetric_evd_checkers_require_pair_signs() {
 	let a = Mat::from_fn(2, 2, |i, j| {
@@ -235,7 +265,7 @@ fn full_evd_case(
 								&values,
 								before,
 								norm_one(input.as_ref()),
-								20.0,
+								MODE_AGREEMENT_BUDGET,
 							),
 						);
 					} else {

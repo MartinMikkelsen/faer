@@ -937,6 +937,7 @@ pub fn pseudoinverse_from_svd_with_tolerance<T: ComplexField>(
 }
 #[cfg(test)]
 mod tests {
+	mod qr_stall;
 	// Instantiate the same cases and checks at each native precision.
 	mod lapack_svd_f64 {
 		type Real = f64;
@@ -1738,6 +1739,56 @@ mod tests {
 		});
 		cplx_phase_reduction_is_scale_exact::<f64>(|r, _| r);
 		cplx_phase_reduction_is_scale_exact::<f32>(|r, _| r as f32);
+	}
+	/// `svd` promises nonnegative singular values in nonincreasing order, for any
+	/// finite input. This 128 x 128 matrix with three nonzero entries
+	/// bidiagonalises to a cascade whose spectrum reaches the subnormal range; the
+	/// divide-and-conquer merge used to classify a nonzero subnormal value with the
+	/// deflated zeros and return `[0.596..., 1.9e-310, 0, ..., 6.3e-4, ...]` (#82).
+	#[test]
+	fn test_sorted_with_subnormal_at_split() {
+		let n = 128;
+		// (row, column, real part, imaginary part) of each nonzero entry, as
+		// reported in #82.
+		let entries = [
+			(41, 80, -1.3368711811580607e-64, 3.48452997681476e-64),
+			(67, 80, -5.871970588424443e-1, -1.065196368760547e-1),
+			(5, 112, -2.8153454475366503e-4, 5.652970997533713e-4),
+		];
+		let mut a = Mat::<c64>::zeros(n, n);
+		for (row, col, re, im) in entries {
+			a[(row, col)] = c64::new(re, im);
+		}
+		let svd = a.as_ref().svd(Par::Seq).unwrap();
+		let s = svd.S().column_vector();
+		let values: std::vec::Vec<f64> =
+			(0..s.nrows()).map(|i| s[i].re).collect();
+		for i in 0..n {
+			assert!(values[i] >= 0.0);
+			assert!(s[i].im == 0.0);
+			if i + 1 < n {
+				assert!(
+					values[i] >= values[i + 1],
+					"s[{i}] = {:e} < s[{}] = {:e}",
+					values[i],
+					i + 1,
+					values[i + 1],
+				);
+			}
+		}
+		// the two nonzero values of the input, as `zgesdd` reports them
+		assert!((values[0] - 0.596780377486914).abs() <= 1e-14);
+		assert!((values[1] - 6.315239590698253e-4).abs() <= 1e-17);
+		let u = svd.U();
+		let v = svd.V();
+		let rec = &u * svd.S() * v.adjoint();
+		assert!((&rec - &a).norm_max() <= 1e-14);
+		assert!(
+			(u.adjoint() * &u - Mat::<c64>::identity(n, n)).norm_max() <= 1e-14
+		);
+		assert!(
+			(v.adjoint() * &v - Mat::<c64>::identity(n, n)).norm_max() <= 1e-14
+		);
 	}
 	/// full factors must be orthogonal even when the caller's output buffers
 	/// hold old entries; the tall/wide QR path used to leave the top-right block
