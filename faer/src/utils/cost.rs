@@ -808,19 +808,17 @@ pub(crate) fn halves_pays<T: crate::ComplexField>(
 }
 
 /// Estimated serial time of a block Householder apply with an `m x n` basis on an `m x k`
-/// target: the two products of the update, `products * m * n * k` multiply-adds at the GEMM rate
-/// (`products` is 2, or 1 when the row split already did the reduction), plus a streaming term
-/// per target element (the temporaries and the triangular steps, `m * k` elements at the rank one
-/// apply rate). Fitted over `m` 24 to 512, `n` 2 to 32 with one thread: the median error is 7
-/// percent (f64), 4 percent (c64); a single rate per multiply-add was 1.0 to 2.7 times too low
-/// for the narrow bases (`n` 2 to 8).
+/// target: the two products of the update, `2 * m * n * k` multiply-adds at the GEMM rate, plus a
+/// streaming term per target element (the temporaries and the triangular steps, `m * k` elements at
+/// the rank one apply rate). Fitted over `m` 24 to 512, `n` 2 to 32 with one thread: the median
+/// error is 7 percent (f64), 4 percent (c64); a single rate per multiply-add was 1.0 to 2.7 times
+/// too low for the narrow bases (`n` 2 to 8).
 pub(crate) fn block_apply_estimate<T: crate::ComplexField>(
 	m: usize,
 	n: usize,
 	k: usize,
-	products: usize,
 ) -> Duration {
-	block_apply_estimate_with::<T>(rates(), m, n, k, products)
+	block_apply_estimate_with::<T>(rates(), m, n, k)
 }
 
 /// [`block_apply_estimate`] on the row `rt`.
@@ -829,9 +827,8 @@ pub(crate) fn block_apply_estimate_with<T: crate::ComplexField>(
 	m: usize,
 	n: usize,
 	k: usize,
-	products: usize,
 ) -> Duration {
-	let macs = m.saturating_mul(n).saturating_mul(k).saturating_mul(products);
+	let macs = m.saturating_mul(n).saturating_mul(k).saturating_mul(2);
 	// summed in nanoseconds: one `Duration`, not two and an addition (a gate asked per block apply)
 	let ns = macs as f64 * rt.block_apply_mac.of::<T>() + m.saturating_mul(k) as f64 * rt.householder_rank_one.of::<T>();
 	Duration::from_secs_f64(ns * 1e-9)
@@ -1531,7 +1528,7 @@ mod tests {
 		let team = ParShape::Team(nz(6), DispatchCosts::for_class(threadteam::HostClass::Aarch64Apple));
 		let pays = |m: usize| {
 			let (n, k) = (8, m - 8);
-			pays_at(block_apply_estimate_with::<f64>(M5, m, n, k, 2), 1, team.dispatch_cost(nz(6)))
+			pays_at(block_apply_estimate_with::<f64>(M5, m, n, k), 1, team.dispatch_cost(nz(6)))
 		};
 		assert!(!pays(72));
 		assert!(pays(80));
@@ -1541,7 +1538,7 @@ mod tests {
 		};
 		assert!(!gemm_only(88) && gemm_only(96));
 		// complex values: the streaming term is 0.54 ns per element, the GEMM 0.162 per multiply-add
-		let c = block_apply_estimate_with::<c64>(M5, 100, 8, 92, 2).as_secs_f64() * 1e9;
+		let c = block_apply_estimate_with::<c64>(M5, 100, 8, 92).as_secs_f64() * 1e9;
 		let want = 2.0 * 100.0 * 8.0 * 92.0 * M5.block_apply_mac.cplx + 100.0 * 92.0 * M5.householder_rank_one.cplx;
 		assert!((c - want).abs() < 2.0, "{c} {want}");
 	}
